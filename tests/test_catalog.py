@@ -167,6 +167,32 @@ class TestCatalog(unittest.TestCase):
             with self.assertRaises(OSError):
                 _catalog.build(self.tmp)
 
+    def test_stat_error_propagates(self):
+        """CAT-11: an OSError while checking a file or a SKILL.md makes build() raise."""
+        _copy_repo(self.tmp)
+        real_lstat, real_stat = os.lstat, os.stat
+        target = os.path.join('ears-notation', 'references', 'patterns.md')
+
+        def fake_lstat(path, *args, **kwargs):
+            if os.fspath(path).endswith(target):
+                raise PermissionError(13, 'denied', os.fspath(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch('os.lstat', side_effect=fake_lstat):
+            with self.assertRaises(OSError):
+                _catalog.build(self.tmp)
+
+        skill_md = os.path.join('new-mcp', 'SKILL.md')
+
+        def fake_stat(path, *args, **kwargs):
+            if os.fspath(path).endswith(skill_md):
+                raise PermissionError(13, 'denied', os.fspath(path))
+            return real_stat(path, *args, **kwargs)
+
+        with mock.patch('os.stat', side_effect=fake_stat):
+            with self.assertRaises(OSError):
+                _catalog.build(self.tmp)
+
     @unittest.skipUnless(hasattr(os, 'symlink'), 'symlinks not supported')
     def test_symlink_skipped(self):
         """CAT-11: symlinked files and folders are not hashed."""

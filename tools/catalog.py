@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import stat
 import sys
 
 _LINT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lint.py')
@@ -46,7 +47,9 @@ def _hash_files(folder):
             if name == '.DS_Store':
                 continue
             full = os.path.join(dirpath, name)
-            if os.path.islink(full) or not os.path.isfile(full):
+            # lstat, not os.path.isfile/islink: those hide OSErrors, and a
+            # symlink is never a regular file here.
+            if not stat.S_ISREG(os.lstat(full).st_mode):
                 continue
             rel = os.path.relpath(full, folder).replace(os.sep, '/')
             with open(full, 'rb') as handle:
@@ -73,12 +76,21 @@ def _entry(root, section, name):
     return entry
 
 
+def _has_skill_md(folder):
+    """True if folder/SKILL.md is a file. Only "does not exist" counts as no."""
+    try:
+        mode = os.stat(os.path.join(folder, 'SKILL.md')).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return stat.S_ISREG(mode)
+
+
 def _section(root, section):
     names = []
     for name in os.listdir(os.path.join(root, section)):
         if section == '.held' and name == CANARY:
             continue  # FRS-19: the canary is never published
-        if os.path.isfile(os.path.join(root, section, name, 'SKILL.md')):
+        if _has_skill_md(os.path.join(root, section, name)):
             names.append(name)
     return [_entry(root, section, name) for name in sorted(names)]
 
