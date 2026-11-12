@@ -196,7 +196,7 @@ def scrub_findings(root, scrub=None):
     try:
         return scrub.scan_tree(root, names)
     except scrub.ScrubError as err:
-        raise CheckError('scrub: ' + str(err))
+        raise CheckError(str(err))
 
 
 def main(argv=None):
@@ -237,7 +237,8 @@ def main(argv=None):
         print('scrub: %d findings' % len(findings))
         failed = failed or bool(findings)
     except CheckError as err:
-        print('scrub: error: ' + str(err), file=sys.stderr)
+        # A scrub error can name a path; keep listed names out of it too.
+        print('scrub: error: ' + redact(str(err), names), file=sys.stderr)
         errored = True
 
     if errored:

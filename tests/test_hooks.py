@@ -354,6 +354,21 @@ class ExclusionCheckTest(HookTestCase):
         self.assertIn('skills/[excluded]/leak.md:1: github-token', out)
         self.assertNotIn('hidden', out.lower())
 
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root reads any file')
+    def test_scrub_error_path_redacted(self):
+        self.write_exclude(HIDDEN + NL)
+        rel = os.path.join('docs', HIDDEN + '.md')
+        self.write(rel, 'clean' + NL)
+        self.git('add', '-A')
+        full = os.path.join(self.repo, rel)
+        os.chmod(full, 0)
+        self.addCleanup(os.chmod, full, 0o644)
+        result = self.checks()
+        out = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('scrub: error: cannot read docs/[excluded].md', out)
+        self.assertNotIn('hidden', out.lower())
+
     def test_unreadable_list_is_an_error_without_contents(self):
         with open(self.exclude, 'wb') as handle:
             handle.write(b'\xff\xfe' + HIDDEN.encode('ascii'))
