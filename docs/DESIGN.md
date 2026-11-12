@@ -17,6 +17,19 @@ The repository is public. That is decided.
 
 None. All design questions are decided. Your own `~/.claude/skills` and `~/.agents/skills` install copies from catalog releases through `tools/install-local` (a copy at a tag, not a link to a working tree), so personal sessions are pinned the same way the bots are. MCP-9 is unblocked.
 
+### Decided on 2026-11-11
+
+| Question | Decision | Where it lands |
+| --- | --- | --- |
+| SDD skills | The ten `sdd-*` skills join the catalog as **held** skills (`catalog-consumers: "none"`, stored under `.held/`). The private `sdd_framework` stays their canonical source, and only the ten `SKILL.md` folders are published, after the scrub. No consumer reads them until the SDD switch gate passes: not sdd_framework's installer, not research-mcp, not the M3 rollout. | 3.2, SPEC SDD-1 to SDD-5 |
+| Local-only skills | Publish agent-debug, ctxd-brief, new-agent, new-mcp and repo-matrix after the scrub. current-time-check and profile-photo-crop stay in claude.ai and are not published. | 3.1 |
+| prd-synch | Third-party (the mcpmarket skill prd-sync-google-docs-to-local). Dropped from the canonical set; removed from ecc-customization by that repo's own PR. | 3.1, inventory |
+| Host CLIs | Updated. The native `claude` on iwb's PATH (`~/.local/bin`) is 2.1.311, the nvm `claude` is 2.1.322, and `codex` is 0.167.2. Evals pin and record the versions they ran on (7.3). | 7.3 |
+| FastMCP | M4 pins an exact 4.2.0 alpha and records the upgrade path to 4.2.0 stable. | 4.4 |
+| Eval budget | No dollar budget. Evals use the bots' subscription CLIs, run only on change, are capped by run count, and yield to pipeline work. | 7.7 |
+| Alerts | A `freshness-alert` issue on this repo in the shape iwb's intake accepts, plus one Slack message in `#github-feed` through OpenClaw, with deduplication and a cooldown. | 7.8 |
+| Personal skill folders | `~/.claude/skills` and `~/.agents/skills` install copies from catalog releases through `tools/install-local`. | 4.4, MCP-9 |
+
 ## 1. What the inventory found
 
 The full tables are in the inventory. These are the headline facts that shaped the design (rescan of 2026-11-11, after the local exclusion list in section 5.1 is applied; the catalog's own checkout is not counted):
