@@ -16,7 +16,9 @@ the working tree, so they see exactly what will be committed or pushed.
   this clone has that commit. For a new ref, or a remote sha this clone
   lacks, the pushed ref's whole history is checked: tracking refs can be
   stale, so they are never trusted. That can recheck historical commits.
-  Deleting a ref checks nothing.
+  Deleting a ref checks nothing. Each annotated tag object being pushed,
+  including any tag it points to, has its message read by the exclusion
+  check, even when the tagged commit is already on the remote.
 
 Two checks run, and both always run:
 
@@ -32,7 +34,8 @@ Two checks run, and both always run:
   including the private repo list default, and prints `path:line: kind`.
 
 In pre-push mode each finding starts with the short commit id, as in
-`1a2b3c4:notes.md:2: excluded skill name`.
+`1a2b3c4:notes.md:2: excluded skill name` or
+`1a2b3c4:(tag message):1: excluded skill name`.
 
 Exit status: 0 clean, 1 findings, 2 error. Diagnostics never quote either
 list. Python 3.9+, standard library only.
@@ -49,6 +52,7 @@ DEFAULT_EXCLUDE_FILE = os.path.join('~', '.config', 'skills-catalog', 'exclude.t
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 REDACTED = '[excluded]'
 MESSAGE_PATH = '(commit message)'
+TAG_MESSAGE_PATH = '(tag message)'
 # Regular files, executables and symlinks; gitlinks (submodules) have no blob.
 BLOB_MODES = (b'100644', b'100755', b'120000')
 # git's binary heuristic: a NUL byte in the first 8000 bytes.
@@ -227,6 +231,45 @@ def pushed_commits(root, ref_lines, remote=None):
     return commits
 
 
+def pushed_tags(root, ref_lines):
+    """Annotated tag object ids being pushed, in input order, without repeats.
+
+    A tag that points to another tag yields both.
+    """
+    seen = set()
+    tags = []
+    for raw in ref_lines:
+        fields = raw.split()
+        if not fields:
+            continue
+        if len(fields) != 4:
+            raise CheckError('unexpected pre-push input')
+        sha = fields[1]
+        if _is_zero(sha):
+            continue
+        visited = set()
+        while sha not in visited:
+            visited.add(sha)
+            _, kind = _git(root, ['cat-file', '-t', sha])
+            if kind.strip() != b'tag':
+                break
+            if sha not in seen:
+                seen.add(sha)
+                tags.append(sha)
+            _, body = _git(root, ['cat-file', 'tag', sha])
+            target = None
+            for line in body.split(b'\n'):
+                if not line:
+                    break
+                if line.startswith(b'object '):
+                    target = line[len(b'object '):].strip().decode('ascii')
+                    break
+            if target is None:
+                break
+            sha = target
+    return tags
+
+
 def commit_items(root, commit):
     """[(label, path, oid)] for each blob the commit adds or changes.
 
@@ -260,6 +303,12 @@ def commit_items(root, commit):
 
 def commit_message(root, commit):
     _, out = _git(root, ['cat-file', 'commit', commit])
+    _, _, message = out.partition(b'\n\n')
+    return message
+
+
+def tag_message(root, tag):
+    _, out = _git(root, ['cat-file', 'tag', tag])
     _, _, message = out.partition(b'\n\n')
     return message
 
@@ -303,9 +352,9 @@ def run_checks(root, items, messages, names, scrub, private_names, path_word, re
         for label, path, oid in wanted:
             for line in exclusion_line_hits(blobs[oid], lowered):
                 hits.append((label, path, line))
-        for label, message in messages:
+        for label, path, message in messages:
             for line in exclusion_line_hits(message, lowered):
-                hits.append((label, MESSAGE_PATH, line))
+                hits.append((label, path, line))
         for label, path, line in hits:
             print('%s%s:%d: excluded skill name' % (label, redact(path, names), line))
         paths = len({path for _, path, _ in wanted if any(n in path.lower() for n in lowered)})
@@ -373,7 +422,9 @@ def main(argv=None, stdin=None):
             items = []
             for commit in pushed_commits(root, lines, remote):
                 items.extend(commit_items(root, commit))
-                messages.append((commit[:7] + ':', commit_message(root, commit)))
+                messages.append((commit[:7] + ':', MESSAGE_PATH, commit_message(root, commit)))
+            for tag in pushed_tags(root, lines):
+                messages.append((tag[:7] + ':', TAG_MESSAGE_PATH, tag_message(root, tag)))
             path_word = 'pushed'
         else:
             items = index_items(root)
