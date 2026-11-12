@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SKILL.md frontmatter",
+  "type": "object",
+  "required": [
+    "name",
+    "description",
+    "metadata"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 64
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "license": {
+      "type": "string"
+    },
+    "compatibility": {
+      "type": "string"
+    },
+    "allowed-tools": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "catalog-version",
+        "catalog-owner",
+        "catalog-provenance",
+        "catalog-targets",
+        "catalog-last-verified",
+        "catalog-max-age-days"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "catalog-version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "catalog-last-verified": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "catalog-consumers": {
+          "enum": [
+            "all",
+            "none"
+          ]
+        }
+      }
+    }
+  },
+  "x-claude-only": [
+    "argument-hint",
+    "arguments",
+    "disable-model-invocation",
+    "user-invocable",
+    "model",
+    "effort",
+    "context",
+    "agent",
+    "paths",
+    "hooks",
+    "shell",
+    "disallowed-tools"
+  ],
+  "x-license-allowlist": [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "CC-BY-4.0"
+  ]
+}
