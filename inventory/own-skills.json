@@ -1,0 +1,952 @@
+{
+  "generated_by": "tools/inventory.py",
+  "owner": "kennylhilljr",
+  "summary": {
+    "skill_md_files_scanned": 1771,
+    "distinct_names_scanned": 1520,
+    "third_party_repo_files": 1486,
+    "own_repo_files": 285,
+    "own_repo_vendored_third_party": 86,
+    "own_repo_checkout_duplicates": 165,
+    "own_skills_public_repos": 24,
+    "own_skills_private_repos": 10,
+    "global_installs": 153,
+    "global_own_linked": 1,
+    "global_own_local": 7,
+    "global_third_party": 143,
+    "global_third_party_likely_name_match": 2,
+    "installed_claude_plugins": 15,
+    "clusters": 26,
+    "clusters_with_duplicates": 15,
+    "proposed_canonical": 12
+  },
+  "own_skills_public": [
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "kit/.agents/skills/review-change",
+      "dir_name": "review-change",
+      "name": "review-change",
+      "description": "Review a unit's changes against the specification, the test plan and AGENTS.md, and report findings by severity. Use as the author's self-review before handoff, and as the PR reviewer or verifier.",
+      "lines": 21,
+      "sha256": "5a7ed985dea940c6661f98a35ef8b2e0f502941d556640669b7fa00c1f3651a2",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "review-change"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "kit/.agents/skills/run-project",
+      "dir_name": "run-project",
+      "name": "run-{{SLUG}}",
+      "description": "How to build, launch and drive {{NAME}} in an isolated scratch setup, so a change can be watched working. Use before verify-change, and whenever you need to run the project or one of its modules by hand.",
+      "lines": 38,
+      "sha256": "b30f2c6fc4e935107a13b9fda8655fa0c88c44dffed0310a161b0531c39e125e",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "run-project"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "kit/.agents/skills/security-review",
+      "dir_name": "security-review",
+      "name": "security-review",
+      "description": "Security review for changes to secrets, redaction, network access, storage, auth, untrusted input or .orchestration. Use for high-risk units and whenever a change handles credentials, untrusted content or network access.",
+      "lines": 18,
+      "sha256": "cdd52f6281d8c7eeccfbec93104a74f477d434c6b166e6022dff869a6b4ea8a4",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "security-review"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "kit/.agents/skills/simplify-change",
+      "dir_name": "simplify-change",
+      "name": "simplify-change",
+      "description": "Remove unnecessary complexity from the code you changed without changing behavior or tests. Use once the change works and its tests pass, before verify-change and review.",
+      "lines": 16,
+      "sha256": "8a06fcdb77a462a3efffbf4cd7e954ccc3cd05c14f6d6d1eb2649ac7c247ee96",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "simplify-change"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "kit/.agents/skills/verify-change",
+      "dir_name": "verify-change",
+      "name": "verify-change",
+      "description": "Confirm a change actually works end to end, not only that tests and types pass. Use after the acceptance commands and {{FAST_GATE_CMD}} pass, before review or handoff.",
+      "lines": 14,
+      "sha256": "764447ebb969a9eb1872b413902a66515958837e46d22212443ee41d896bc528",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "verify-change"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "skills/ears-notation",
+      "dir_name": "ears-notation",
+      "name": "ears-notation",
+      "description": "This skill should be used when the user asks about \"EARS syntax\", \"EARS notation\", \"acceptance criteria format\", \"SHALL patterns\", \"formal requirements\", \"WHEN THE SHALL\", or needs guidance on writing testable requirements using EARS (Easy Approach to Requirements Syntax).",
+      "lines": 104,
+      "sha256": "6299d3a8c72f46b6478d364264ab4afa9e42f01ef03ce1341ef3a25291790fd6",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "ears-notation"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "skills/ecc-operator",
+      "dir_name": "ecc-operator",
+      "name": "ecc-operator",
+      "description": "Operate the ECC agent team on a project - set a repository up for ECC, start or continue a milestone run, read why a drive stopped and follow its next steps. Use when asked to kick off, drive, resume or check an ECC run, or to make a new project ECC-ready.",
+      "lines": 37,
+      "sha256": "f544e1d80d7d8f3f7c8e8bb7781fd945e671cbe16244e392a66c6fdfec8e4e91",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "ecc-operator"
+    },
+    {
+      "slug": "kennylhilljr/ecc-customization",
+      "checkout": "ecc-customization",
+      "rel_dir": "skills/prd-synch",
+      "dir_name": "prd-synch",
+      "name": "product-requirements",
+      "description": "Interactive Product Owner skill for requirements gathering, analysis, and PRD generation. Triggers when users request product requirements, feature specification, PRD creation, or need help understanding and documenting project requirements. Uses quality scoring and iterative dialogue to ensure comprehensive requirements before generating professional PRD documents.",
+      "lines": 363,
+      "sha256": "30142294b1d5a80adeea0d5da192e88b1cb0c887aa2d12e5fd79022eaa0f8080",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "provenance_flag": "frontmatter suggests outside origin: metadata.mcpmarket-version",
+      "cluster": "product-requirements"
+    },
+    {
+      "slug": "kennylhilljr/pr-review-bots",
+      "checkout": "pr-review-bots",
+      "rel_dir": "skills/cross-review",
+      "dir_name": "cross-review",
+      "name": "cross-review",
+      "description": "Review a pull request in Kenny's (kennylhilljr) GitHub repos and post feedback as the right bot. Use when asked to review a PR, reply to review comments, post any comment on a PR or issue, or open a PR of your own. Codex reviews what Claude wrote and Claude reviews what Codex wrote; feedback is posted as claude-pr-gh[bot] or codex-pr-gh[bot], never under Kenny's account.",
+      "lines": 81,
+      "sha256": "4af71a2a635f8a634b898a1792bc6824f414edb36d56d3c7da5bce1a9af186fb",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "cross-review"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/review-change",
+      "dir_name": "review-change",
+      "name": "review-change",
+      "description": "Review a unit's changes against the component's LLD (docs/lld, newest version), its PRD acceptance criteria, the test plan (docs/test) and AGENTS.md, and report findings by severity. Use as the author's self-review before handoff, and as the PR reviewer or verifier.",
+      "lines": 30,
+      "sha256": "31e1f2803a6c88b047066a42ee6297116110a262e0af6941aab4fe8121fcf792",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "review-change"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/run-research-mcp",
+      "dir_name": "run-research-mcp",
+      "name": "run-research-mcp",
+      "description": "How to build, launch and drive Research MCP v2 in an isolated scratch setup, so a change can be watched working. Use before verify-change, and whenever you need to run the server, the CLI, the stdio shim or a module by hand.",
+      "lines": 53,
+      "sha256": "51ec8d65997f92ba56835e893b086f2ebf64ecbd6b4cd82b9744041435f5d6b6",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "run-project"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-adopt",
+      "dir_name": "sdd-adopt",
+      "name": "sdd-adopt",
+      "description": "Bring the SDD framework into an existing, running application without breaking it: analyze the repository, add the framework files, list the information people still need to supply, and draft specs for existing behavior. Use for brownfield repositories, adopt SDD, map this codebase, or add the framework to this repo.",
+      "lines": 66,
+      "sha256": "057027a99058ed4696acd3c9b504812aead4879695f24bca29068260bffe2d95",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-adopt"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-clarify",
+      "dir_name": "sdd-clarify",
+      "name": "sdd-clarify",
+      "description": "Find gaps, conflicts and ambiguous criteria in the PRDs and ask the owner only what is missing, then prepare Gate 1. Use after sdd-spec, before asking the owner to approve the requirements.",
+      "lines": 70,
+      "sha256": "70458b711df30bf6cba7645eabca166461486501f7332a7a5d2bcf41b7140c1d",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-clarify"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-hld",
+      "dir_name": "sdd-hld",
+      "name": "sdd-hld",
+      "description": "Draft the system high-level design (the SPEC) and ADR options with tradeoffs from approved PRDs. Use after Gate 1, when the requirements are approved and the system shape needs designing or changing.",
+      "lines": 63,
+      "sha256": "1107e7278db436fca77721edfb64678d5bb122981ae96ad2de6efe7e9d09b8d9",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-hld"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-implement",
+      "dir_name": "sdd-implement",
+      "name": "sdd-implement",
+      "description": "Build one planned task tests first, with @spec annotations that cite the acceptance criteria, then write the handoff. Use when a milestone plan exists and a task is next in the queue.",
+      "lines": 66,
+      "sha256": "e95c798fb2d289b01a4c173e366c1a03f51f98d54c827dcc5741425b0fe1697d",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-implement"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-intake",
+      "dir_name": "sdd-intake",
+      "name": "sdd-intake",
+      "description": "Interview the owner with the twelve seed questions and turn the answers into Section 1 of the parent PRD. Use when starting a new product, feature or initiative, or when someone asks for a new spec, a new PRD or to capture requirements.",
+      "lines": 79,
+      "sha256": "5b46c33d8490bfc63cc394291a9f9a298ab6242e932c5610bb29969043841a1a",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-intake"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-lld",
+      "dir_name": "sdd-lld",
+      "name": "sdd-lld",
+      "description": "Write one low-level design per component from the approved SPEC: contracts, schema, algorithms, errors, configuration, observability and the test plan. Use after Gate 2, when a component is ready for detailed design.",
+      "lines": 61,
+      "sha256": "3bcd4227f792a26376bab2cee5830b0eaae6ae7380bede9f7e29536b4a623850",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-lld"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-spec",
+      "dir_name": "sdd-spec",
+      "name": "sdd-spec",
+      "description": "Turn an approved problem framing into requirements: user stories with priority, functional requirements and EARS acceptance criteria with stable IDs, in the parent and component PRDs. Use after sdd-intake, or when a bug or small change needs its criteria updated.",
+      "lines": 71,
+      "sha256": "cd7d79c460729724a3b2ded7da2239fa685ae5a0a65b100cffea590a7d3f850e",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-spec"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-tasks",
+      "dir_name": "sdd-tasks",
+      "name": "sdd-tasks",
+      "description": "Break an approved LLD into a milestone plan of small, dependency-ordered tasks, each traced to criterion IDs. Use after Gate 3, or to plan a fix on the short path.",
+      "lines": 63,
+      "sha256": "0da6b95323c18375193655e744389541e793269eb7063ea97a8d4a5fb5c35728",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-tasks"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-triage",
+      "dir_name": "sdd-triage",
+      "name": "sdd-triage",
+      "description": "Classify support work (failures, bugs, spec gaps, blockers and drift), assign a severity from S0 to S4, cite the affected criteria and place it in the queue. Use for incidents, bug reports, broken builds, blocked work or verifier findings.",
+      "lines": 77,
+      "sha256": "23a7a54f420346be6eb6b35535a0931000a25d94f7cf377957df91f7f675ee28",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-triage"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/sdd-verify",
+      "dir_name": "sdd-verify",
+      "name": "sdd-verify",
+      "description": "Independently check that tests and code still match the approved spec: run spec-lint and trace-check, regenerate coverage, update the audit index and report drift and annotation reach. Use after implementation, before a merge, or on a schedule.",
+      "lines": 73,
+      "sha256": "a799953fe196a46d1a1fa9e5c4e07713e1cc554ec109aaf446243f332f898ec2",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "sdd-verify"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/security-review",
+      "dir_name": "security-review",
+      "name": "security-review",
+      "description": "Security review for changes to secrets, redaction, HTTP, stores, the app, the shim, auth, tests/security or .orchestration. Use for high-risk units and whenever a change handles credentials, untrusted content or network access.",
+      "lines": 27,
+      "sha256": "0c85eca95a6f74cb9602b31071e4850264a84d4907aeaabfcbb76509066d3f1d",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "security-review"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/simplify-change",
+      "dir_name": "simplify-change",
+      "name": "simplify-change",
+      "description": "Remove unnecessary complexity from the code you changed without changing behavior or tests. Use once the change works and its tests pass, before verify-change and review.",
+      "lines": 25,
+      "sha256": "0f82b4f9c968ab302a7170281a1854490a58ced529dd6e0e71ea0f9698dd1946",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "simplify-change"
+    },
+    {
+      "slug": "kennylhilljr/research-mcp",
+      "checkout": "research-mcp",
+      "rel_dir": ".agents/skills/verify-change",
+      "dir_name": "verify-change",
+      "name": "verify-change",
+      "description": "Confirm a change actually works end to end, not only that tests and types pass. Use after the acceptance commands and tools/ci.sh --python-only pass, before review or handoff.",
+      "lines": 23,
+      "sha256": "0f5fa477d4e8292c9fbb439c1a28b6db4ea4084284328f4d1e3deafd4cb8b4c8",
+      "visibility": "PUBLIC",
+      "class": "own",
+      "cluster": "verify-change"
+    }
+  ],
+  "own_skills_private_restricted": [
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-adopt",
+      "sha256": "057027a99058ed4696acd3c9b504812aead4879695f24bca29068260bffe2d95",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-adopt",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-clarify",
+      "sha256": "2d4cda06b25cbc2f7652f33f0c4c6681b4d8ce8cb66f743f894f02f6d4fab0f3",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-clarify",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-hld",
+      "sha256": "45329c5ab2e42e73d7160a9ce232732c1921fcb2836fb561a2b7e9e9ccf3c3b7",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-hld",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-implement",
+      "sha256": "e95c798fb2d289b01a4c173e366c1a03f51f98d54c827dcc5741425b0fe1697d",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-implement",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-intake",
+      "sha256": "c9eb6af598275815af85f8558e9015831e0e0b33d0ae0f754c70d4579d61dcf0",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-intake",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-lld",
+      "sha256": "d756d094c9e82f61f44fe26bbc6df4ed233382af11a1191083f8066591a4bad7",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-lld",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-spec",
+      "sha256": "75947d2c76ec5aa87f00c8ec7502c1dfb6c455e2693058bb28e82d2886a0f5c4",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-spec",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-tasks",
+      "sha256": "6d1d5056fd35c7d36a4945f216481f17da162016cfd81c4265daa5c895a77368",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-tasks",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-triage",
+      "sha256": "23a7a54f420346be6eb6b35535a0931000a25d94f7cf377957df91f7f675ee28",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-triage",
+      "restricted": true
+    },
+    {
+      "repo": "sdd_framework",
+      "dir_name": "sdd-verify",
+      "sha256": "3ff26a5281b8ae3e7b5906e41cb60276f6db1603d8d56e9bb40a5c3c4d8031f9",
+      "visibility": "PRIVATE",
+      "class": "own",
+      "cluster": "sdd-verify",
+      "restricted": true
+    }
+  ],
+  "global_installs_own": [
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "agent-debug",
+      "sha256": "f7e6a63b4540ba2517a5841c755cba5e27670557bfb8d2dc304f7bfe014f9da6",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "agent-debug"
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "cross-review",
+      "class": "own-linked",
+      "linked_repo": "kennylhilljr/pr-review-bots",
+      "linked_rel_dir": "skills/cross-review",
+      "sha256": "4af71a2a635f8a634b898a1792bc6824f414edb36d56d3c7da5bce1a9af186fb",
+      "also_in": [
+        "~/.codex/skills"
+      ]
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "ctxd-brief",
+      "sha256": "f61c91430a3ff57d4c4edf0c79c68a78b0ea1ecf11c6fa46d26eb15a63d7d3e1",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "ctxd-brief"
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "new-agent",
+      "sha256": "ecbbdf4512efd12c35ca17f4f69cab555fc5169097aae3e5c952e276fc792830",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "new-agent"
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "new-mcp",
+      "sha256": "97c37a67df149d5a9c537c746224e1a6a6d80702541310bfaa133f4e565ea27c",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "new-mcp"
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "repo-matrix",
+      "sha256": "4a951dc09d81d7b0d0f3852ccf15a79331cd9e5cfff47f69d5e6f604f13e8271",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "repo-matrix"
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "current-time-check",
+      "sha256": "002c671cf90d398885947414d6b62d085460941800545cab0a7650164247d54f",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "current-time-check"
+    },
+    {
+      "location": "~/.claude/skills",
+      "dir_name": "profile-photo-crop",
+      "sha256": "7699a8c2986a5803cd3bbc1d68f49299b436db422c86da59c8a37445682386e7",
+      "class": "own-local",
+      "also_in": [],
+      "restricted": true,
+      "cluster": "profile-photo-crop"
+    }
+  ],
+  "global_installs_third_party_likely": [
+    {
+      "dir_name": "ai-regression-testing",
+      "match": "name match: affaan-m/ECC (everything-claude-code)",
+      "location": "~/.claude/skills"
+    },
+    {
+      "dir_name": "architecture-decision-records",
+      "match": "name match: affaan-m/ECC (everything-claude-code)",
+      "location": "~/.claude/skills"
+    }
+  ],
+  "third_party_counts": {
+    "repo_clones": {
+      "ComposioHQ/awesome-codex-skills": 880,
+      "NousResearch/hermes-agent": 169,
+      "openclaw/openclaw": 128,
+      "scenario-labs/skills": 80,
+      "n8n-io/n8n": 41,
+      "mattpocock/skills": 39,
+      "addyosmani/agent-skills": 25,
+      "tirth8205/code-review-graph": 18,
+      "thedotmack/claude-mem": 15,
+      "obra/superpowers": 15,
+      "garrytan/gstack": 12,
+      "DietrichGebert/ponytail": 12,
+      "luongnv89/claude-howto": 8,
+      "ConardLi/garden-skills": 7,
+      "HKUDS/DeepCode": 7,
+      "hogancv/coordinate-agents": 5,
+      "multica-ai/multica": 5,
+      "sipeed/picoclaw": 5,
+      "truecourse-ai/truecourse": 4,
+      "guillaumemeyer/watermarks-remover": 3,
+      "vignesh07/codex": 2,
+      "HKUDS/CLI-Anything": 1,
+      "anthropics/claude-code": 1,
+      "multica-ai/andrej-karpathy-skills": 1,
+      "Cocoon-AI/architecture-diagram-generator": 1,
+      "vignesh07/opencode": 1,
+      "cloudflare/security-audit-skill": 1
+    },
+    "vendored_in_own_repos": {
+      "affaan-m/ECC (everything-claude-code)": 78,
+      "truecourse-ai/truecourse": 4,
+      "tirth8205/code-review-graph": 4
+    },
+    "checkout_duplicates_in_own_repos": {
+      "openclaw-ecc-orchestrator (.claude/worktrees)": 78,
+      "openclaw-ecc-orchestrator-readme": 78,
+      "ecc-customization-event-router": 8,
+      "pr-review-bots-queue": 1
+    },
+    "global_installs": {
+      "mattpocock/skills": 27,
+      "addyosmani/agent-skills": 25,
+      "anthropic (claude.ai built-in, synced)": 19,
+      "frontmatter source: community": 9,
+      "rtk-ai/rtk (inferred: content targets RTK)": 7,
+      "third-party, unknown collection (2026-04-18 install batch)": 6,
+      "DietrichGebert/ponytail": 6,
+      "ComposioHQ/awesome-codex-skills": 5,
+      "rtk-ai/rtk (inferred: installed with the RTK set)": 5,
+      "openai/codex (bundled .system)": 5,
+      "openclaw/openclaw": 4,
+      "leonardomso/33-js-concepts (inferred)": 3,
+      "Readdle Spark MCP extension (third-party)": 3,
+      "frontmatter source: ECC": 2,
+      "f/prompts.chat (inferred)": 2,
+      "agentscope-ai/agentscope (inferred)": 1,
+      "f/prompts.chat (inferred: content targets The Interactive Book of Prompting)": 1,
+      "anthropics/claude-cookbooks (inferred)": 1,
+      "metabase/metabase (inferred: Metabase docs style)": 1,
+      "vercel-labs/skills": 1,
+      "ConardLi/garden-skills": 1,
+      "safishamsi/graphify": 1,
+      "Shpigford/skills": 1,
+      "guillaumemeyer/watermarks-remover": 1,
+      "REA tool bundle (third-party)": 1,
+      "obra/superpowers-lab": 1,
+      "yamadashy/repomix (inferred: Repomix website)": 1,
+      "f/prompts.chat (inferred: targets the prompts.chat feed)": 1,
+      "tldraw/tldraw (inferred: tldraw examples app)": 1,
+      "openai/skills (Codex curated)": 1
+    },
+    "claude_plugins_by_marketplace": {
+      "anthropics/claude-plugins-official": 10,
+      "local directory marketplace (restricted)": 3,
+      "affaan-m/ECC": 1,
+      "guillaumemeyer/watermarks-remover": 1
+    }
+  },
+  "clusters": [
+    {
+      "cluster": "agent-debug",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "agent-debug",
+      "owner": "kennylhilljr",
+      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "cross-review",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 0,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "cross-review",
+      "owner": "pr-review-bots",
+      "reason": "Single copy, already public and linked into ~/.claude/skills and ~/.codex/skills from pr-review-bots. Moves to the catalog; pr-review-bots consumes it through the submodule.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "ctxd-brief",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "ctxd-brief",
+      "owner": "kennylhilljr",
+      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "current-time-check",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "current-time-check",
+      "owner": "kennylhilljr",
+      "reason": "claude.ai plugin skill synced locally. Decide whether claude.ai stays its home or the catalog does.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "ears-notation",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 0,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "ears-notation",
+      "owner": "ecc-customization",
+      "reason": "Single copy. Needs a freshness fix before import: it references scripts/ears-validator.js, which does not exist in the skill folder.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "ecc-operator",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 0,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "ecc-operator",
+      "owner": "ecc-customization",
+      "reason": "Single copy, specific to operating ECC but used across repos.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "new-agent",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "new-agent",
+      "owner": "kennylhilljr",
+      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "new-mcp",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "new-mcp",
+      "owner": "kennylhilljr",
+      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "product-requirements",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 0,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "product-requirements",
+      "owner": "ecc-customization",
+      "reason": "Folder prd-synch, frontmatter name product-requirements and mcpmarket-version metadata: likely third-party origin. Needs provenance and license review before it can be promoted; until then it is treated as third-party.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "profile-photo-crop",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "drop",
+      "canonical_name": "profile-photo-crop",
+      "owner": "kennylhilljr",
+      "reason": "claude.ai custom skill for a one-off task; not an agent engineering skill. Leave it in claude.ai.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "repo-matrix",
+      "members": 1,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "keep",
+      "canonical_name": "repo-matrix",
+      "owner": "kennylhilljr",
+      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "review-change",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 0,
+      "diffs": [
+        {
+          "from": "kennylhilljr/research-mcp:.agents/skills/review-change",
+          "to": "kennylhilljr/ecc-customization:kit/.agents/skills/review-change",
+          "similarity": 0.55,
+          "lines_added": 7,
+          "lines_removed": 16
+        }
+      ],
+      "decision": "merge",
+      "canonical_name": "review-change",
+      "owner": "ecc-customization",
+      "reason": "One generic reviewer skill. Start from the research-mcp 1.1.0 text (SDD trace rules), strip project paths and refer to the project's AGENTS.md for the spec location and gates.",
+      "notes_on_diff": "research-mcp is the kit template rendered for one project plus the 1.1.0 SDD adoption: LLD paths, @spec docstring rule, project scope rules and a changelog. The kit text is the generic base."
+    },
+    {
+      "cluster": "run-project",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 0,
+      "diffs": [
+        {
+          "from": "kennylhilljr/research-mcp:.agents/skills/run-research-mcp",
+          "to": "kennylhilljr/ecc-customization:kit/.agents/skills/run-project",
+          "similarity": 0.59,
+          "lines_added": 11,
+          "lines_removed": 26
+        }
+      ],
+      "decision": "drop",
+      "canonical_name": "run-project",
+      "owner": "ecc-customization",
+      "reason": "Project-specific by design (how to run this repo). Stays a kit template rendered into each project; not shared content.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-adopt",
+      "members": 2,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-adopt",
+      "owner": "sdd_framework",
+      "reason": "SDD skills are owned by the private sdd_framework and shipped by its installer. research-mcp holds a public copy. Whether the catalog should carry them is an open question.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-clarify",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-clarify",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-hld",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-hld",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-implement",
+      "members": 2,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-implement",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. Public copy matches the private source.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-intake",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-intake",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-lld",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-lld",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-spec",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-spec",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-tasks",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-tasks",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-triage",
+      "members": 2,
+      "distinct_contents": 1,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-triage",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. Public copy matches the private source.",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "sdd-verify",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 1,
+      "diffs": [],
+      "decision": "defer",
+      "canonical_name": "sdd-verify",
+      "owner": "sdd_framework",
+      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
+      "notes_on_diff": ""
+    },
+    {
+      "cluster": "security-review",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 0,
+      "diffs": [
+        {
+          "from": "kennylhilljr/research-mcp:.agents/skills/security-review",
+          "to": "kennylhilljr/ecc-customization:kit/.agents/skills/security-review",
+          "similarity": 0.44,
+          "lines_added": 8,
+          "lines_removed": 17
+        }
+      ],
+      "decision": "merge",
+      "canonical_name": "security-review",
+      "owner": "ecc-customization",
+      "reason": "Keep the seven generic checks; project-specific citations (LLD sections, ADR numbers) move to the project's AGENTS.md or a project overlay skill.",
+      "notes_on_diff": "research-mcp adds LLD/ADR citations to each of the seven checks, Keychain specifics and a longer high-risk path list."
+    },
+    {
+      "cluster": "simplify-change",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 0,
+      "diffs": [
+        {
+          "from": "kennylhilljr/research-mcp:.agents/skills/simplify-change",
+          "to": "kennylhilljr/ecc-customization:kit/.agents/skills/simplify-change",
+          "similarity": 0.68,
+          "lines_added": 2,
+          "lines_removed": 11
+        }
+      ],
+      "decision": "merge",
+      "canonical_name": "simplify-change",
+      "owner": "ecc-customization",
+      "reason": "Nearly identical; only the gate command and spec wording differ.",
+      "notes_on_diff": "{{FAST_GATE_CMD}} vs tools/ci.sh --python-only; 'specification' vs 'LLDs'; version metadata and changelog."
+    },
+    {
+      "cluster": "verify-change",
+      "members": 2,
+      "distinct_contents": 2,
+      "restricted_members": 0,
+      "diffs": [
+        {
+          "from": "kennylhilljr/research-mcp:.agents/skills/verify-change",
+          "to": "kennylhilljr/ecc-customization:kit/.agents/skills/verify-change",
+          "similarity": 0.49,
+          "lines_added": 5,
+          "lines_removed": 14
+        }
+      ],
+      "decision": "merge",
+      "canonical_name": "verify-change",
+      "owner": "ecc-customization",
+      "reason": "Same template/instance drift as review-change. Replace the {{FAST_GATE_CMD}} placeholder with 'the fast gate named in AGENTS.md' so one file serves every repo.",
+      "notes_on_diff": "Placeholder {{FAST_GATE_CMD}} vs tools/ci.sh --python-only; spec vs LLD wording; example claim and changelog added in research-mcp."
+    }
+  ]
+}

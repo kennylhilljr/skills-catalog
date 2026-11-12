@@ -1,0 +1,163 @@
+{
+  "_comment": "Proposed canonical set, keyed by cluster. decision: keep | merge | drop | defer. tools/inventory.py merges this into own-skills.{json,md}. Skills marked 'local only' are not in any public repo; importing them is gated on the owner confirming they are his and passing the M1 scrub.",
+  "review-change": {
+    "decision": "merge",
+    "canonical_name": "review-change",
+    "owner": "ecc-customization",
+    "reason": "One generic reviewer skill. Start from the research-mcp 1.1.0 text (SDD trace rules), strip project paths and refer to the project's AGENTS.md for the spec location and gates.",
+    "notes_on_diff": "research-mcp is the kit template rendered for one project plus the 1.1.0 SDD adoption: LLD paths, @spec docstring rule, project scope rules and a changelog. The kit text is the generic base."
+  },
+  "verify-change": {
+    "decision": "merge",
+    "canonical_name": "verify-change",
+    "owner": "ecc-customization",
+    "reason": "Same template/instance drift as review-change. Replace the {{FAST_GATE_CMD}} placeholder with 'the fast gate named in AGENTS.md' so one file serves every repo.",
+    "notes_on_diff": "Placeholder {{FAST_GATE_CMD}} vs tools/ci.sh --python-only; spec vs LLD wording; example claim and changelog added in research-mcp."
+  },
+  "security-review": {
+    "decision": "merge",
+    "canonical_name": "security-review",
+    "owner": "ecc-customization",
+    "reason": "Keep the seven generic checks; project-specific citations (LLD sections, ADR numbers) move to the project's AGENTS.md or a project overlay skill.",
+    "notes_on_diff": "research-mcp adds LLD/ADR citations to each of the seven checks, Keychain specifics and a longer high-risk path list."
+  },
+  "simplify-change": {
+    "decision": "merge",
+    "canonical_name": "simplify-change",
+    "owner": "ecc-customization",
+    "reason": "Nearly identical; only the gate command and spec wording differ.",
+    "notes_on_diff": "{{FAST_GATE_CMD}} vs tools/ci.sh --python-only; 'specification' vs 'LLDs'; version metadata and changelog."
+  },
+  "run-project": {
+    "decision": "drop",
+    "canonical_name": "run-project",
+    "owner": "ecc-customization",
+    "reason": "Project-specific by design (how to run this repo). Stays a kit template rendered into each project; not shared content."
+  },
+  "cross-review": {
+    "decision": "keep",
+    "canonical_name": "cross-review",
+    "owner": "pr-review-bots",
+    "reason": "Single copy, already public and linked into ~/.claude/skills and ~/.codex/skills from pr-review-bots. Moves to the catalog; pr-review-bots consumes it through the submodule."
+  },
+  "ears-notation": {
+    "decision": "keep",
+    "canonical_name": "ears-notation",
+    "owner": "ecc-customization",
+    "reason": "Single copy. Needs a freshness fix before import: it references scripts/ears-validator.js, which does not exist in the skill folder."
+  },
+  "ecc-operator": {
+    "decision": "keep",
+    "canonical_name": "ecc-operator",
+    "owner": "ecc-customization",
+    "reason": "Single copy, specific to operating ECC but used across repos."
+  },
+  "product-requirements": {
+    "decision": "defer",
+    "canonical_name": "product-requirements",
+    "owner": "ecc-customization",
+    "reason": "Folder prd-synch, frontmatter name product-requirements and mcpmarket-version metadata: likely third-party origin. Needs provenance and license review before it can be promoted; until then it is treated as third-party."
+  },
+  "sdd-adopt": {
+    "decision": "defer",
+    "canonical_name": "sdd-adopt",
+    "owner": "sdd_framework",
+    "reason": "SDD skills are owned by the private sdd_framework and shipped by its installer. research-mcp holds a public copy. Whether the catalog should carry them is an open question."
+  },
+  "sdd-clarify": {
+    "decision": "defer",
+    "canonical_name": "sdd-clarify",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "sdd-hld": {
+    "decision": "defer",
+    "canonical_name": "sdd-hld",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "sdd-implement": {
+    "decision": "defer",
+    "canonical_name": "sdd-implement",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. Public copy matches the private source."
+  },
+  "sdd-intake": {
+    "decision": "defer",
+    "canonical_name": "sdd-intake",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "sdd-lld": {
+    "decision": "defer",
+    "canonical_name": "sdd-lld",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "sdd-spec": {
+    "decision": "defer",
+    "canonical_name": "sdd-spec",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "sdd-tasks": {
+    "decision": "defer",
+    "canonical_name": "sdd-tasks",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "sdd-triage": {
+    "decision": "defer",
+    "canonical_name": "sdd-triage",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. Public copy matches the private source."
+  },
+  "sdd-verify": {
+    "decision": "defer",
+    "canonical_name": "sdd-verify",
+    "owner": "sdd_framework",
+    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+  },
+  "agent-debug": {
+    "decision": "keep",
+    "canonical_name": "agent-debug",
+    "owner": "kennylhilljr",
+    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+  },
+  "ctxd-brief": {
+    "decision": "keep",
+    "canonical_name": "ctxd-brief",
+    "owner": "kennylhilljr",
+    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+  },
+  "new-agent": {
+    "decision": "keep",
+    "canonical_name": "new-agent",
+    "owner": "kennylhilljr",
+    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+  },
+  "new-mcp": {
+    "decision": "keep",
+    "canonical_name": "new-mcp",
+    "owner": "kennylhilljr",
+    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+  },
+  "repo-matrix": {
+    "decision": "keep",
+    "canonical_name": "repo-matrix",
+    "owner": "kennylhilljr",
+    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+  },
+  "current-time-check": {
+    "decision": "defer",
+    "canonical_name": "current-time-check",
+    "owner": "kennylhilljr",
+    "reason": "claude.ai plugin skill synced locally. Decide whether claude.ai stays its home or the catalog does."
+  },
+  "profile-photo-crop": {
+    "decision": "drop",
+    "canonical_name": "profile-photo-crop",
+    "owner": "kennylhilljr",
+    "reason": "claude.ai custom skill for a one-off task; not an agent engineering skill. Leave it in claude.ai."
+  }
+}
