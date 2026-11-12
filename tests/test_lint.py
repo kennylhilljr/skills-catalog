@@ -30,7 +30,7 @@ class TestFrontmatterLinter(unittest.TestCase):
     def _make_skill(self, name='good-skill', desc='Do a thing. Use when needed.',
                     extra=None, meta_overrides=None, raw_meta=None, parent='skills', files=None):
         """Create a test skill in a temporary directory.
-        
+
         Returns the skill directory path.
         """
         if extra is None:
@@ -351,6 +351,58 @@ class TestFrontmatterLinter(unittest.TestCase):
         result = self._lint(skill_dir)
         self.assertEqual(result, '', f'Valid skill with references should have no findings, got: {result}')
 
+    def test_valid_anchor_link_is_not_a_file_reference(self):
+        """Test CAT-7: a pure anchor link such as ](#changelog) is not a file reference."""
+        skill_dir = self._make_skill()
+        skill_file = os.path.join(skill_dir, 'SKILL.md')
+        content = open(skill_file).read().replace('# Body', 'See [log](#changelog)')
+        with open(skill_file, 'w') as f:
+            f.write(content)
+        result = self._lint(skill_dir)
+        self.assertEqual(result, '', f'Anchor link should not be a finding, got: {result}')
+
+    def test_cat5_optional_metadata_value_must_be_string(self):
+        """Test CAT-5: every metadata value is a string, not only the required ones."""
+        skill_dir = self._make_skill(raw_meta=['  catalog-requires: 42'])
+        result = self._lint(skill_dir)
+        self.assertIn('CAT-5', result)
+        self.assertIn('catalog-requires', result)
+
+    def test_cat4_unknown_key_reported_without_metadata(self):
+        """Test CAT-4: an unknown top-level key is reported even when metadata is missing."""
+        skill_dir = self._make_skill()
+        skill_file = os.path.join(skill_dir, 'SKILL.md')
+        text = '---\nname: good-skill\ndescription: Use when x.\nversion: 1\n---\n'
+        with open(skill_file, 'w') as f:
+            f.write(text)
+        result = self._lint(skill_dir)
+        self.assertIn('unknown key "version"', result)
+
+    def test_cat14_first_row_must_name_source(self):
+        """Test CAT-14: the first changelog row, not just any row, names the source commit."""
+        skill_dir = self._make_skill()
+        skill_file = os.path.join(skill_dir, 'SKILL.md')
+        content = open(skill_file).read().replace(
+            '| --- | --- | --- |\n',
+            '| --- | --- | --- |\n| 1.0.1 | 2026-11-12 | Edited locally |\n')
+        with open(skill_file, 'w') as f:
+            f.write(content)
+        result = self._lint(skill_dir)
+        self.assertIn('CAT-14', result)
+
+    def test_parse_rejects_lines_outside_subset(self):
+        """Test CAT-4: lines outside the YAML subset raise ValueError."""
+        bad = [
+            '---\nname: a\n  stray: x\n---\n',
+            '---\nname: a\nmetadata:\n    deep: "x"\n---\n',
+            '---\nlicense:MIT\n---\n',
+            '---\nname: a\nname: b\n---\n',
+            '---\nmetadata:\n  k: "a"\n  k: "b"\n---\n',
+        ]
+        for text in bad:
+            with self.assertRaises(ValueError, msg=repr(text)):
+                _lint.parse_frontmatter(text)
+
     # Parse frontmatter tests
     def test_parse_quoted_value_stays_string(self):
         """Test parse_frontmatter: quoted values stay as strings."""
@@ -379,10 +431,10 @@ class TestFrontmatterLinter(unittest.TestCase):
     def test_lint_tree_repo_clean(self):
         """Test lint_tree: all 22 catalog skills lint clean."""
         results = _lint.lint_tree(self.repo_root)
-        
+
         # Check we have 22 skills
         self.assertEqual(len(results), 22, f'Expected 22 skills, got {len(results)}')
-        
+
         # Check all are clean
         for skill_name, findings in results.items():
             self.assertEqual(findings, [], f'{skill_name} has findings: {findings}')
