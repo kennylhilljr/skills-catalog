@@ -132,6 +132,9 @@ class DetectionKinds(unittest.TestCase):
         self.assertEqual(kinds('x ' + 'a1' * 20), [])
         # Email local parts are dot-atoms; domains need a dot.
         self.assertIn('email', kinds('mail first.last' + AT + 'example.com'))
+        # Punycode IDN TLDs count as a last label.
+        self.assertIn('email', kinds('mail jane' + AT + 'example.xn--p1ai'))
+        self.assertIn('email', kinds('mail jane' + AT + 'xn--80ak6aa92e.xn--p1ai'))
         for text in ['first.' + AT + 'example.com', 'a..b' + AT + 'example.com',
                      'uses actions/checkout' + AT + 'v4', 'npm i pkg' + AT + 'latest']:
             with self.subTest(text=text):

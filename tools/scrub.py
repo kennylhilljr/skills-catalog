@@ -56,10 +56,12 @@ _SIMPLE_PATTERNS = (
 
 # A dot-atom local part (no leading, trailing or doubled dot) and a dotted
 # domain. Single-label domains are left out on purpose: `actions/checkout@v4`
-# and `pkg@latest` are common in skill docs and are not addresses.
+# and `pkg@latest` are common in skill docs and are not addresses. The last
+# label is alphabetic or a punycode IDN TLD (`xn--...`).
 _EMAIL = re.compile(
     r'(?<![A-Za-z0-9._%+-])([A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*)@'
-    r'((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,})(?![A-Za-z0-9-])'
+    r'((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
+    r'(?:[A-Za-z]{2,}|[Xx][Nn]--[A-Za-z0-9-]*[A-Za-z0-9]))(?![A-Za-z0-9-])'
 )
 _EMAIL_EXEMPT_LOCAL = 'noreply'
 _EMAIL_EXEMPT_DOMAIN = 'users.noreply.github.com'
