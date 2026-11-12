@@ -8,13 +8,13 @@ Skills in private repos and in local-only folders show only location, skill fold
 
 | Measure | Count |
 | --- | --- |
-| skill md files scanned | 1771 |
+| skill md files scanned | 1770 |
 | distinct names scanned | 1520 |
 | third party repo files | 1486 |
-| own repo files | 285 |
+| own repo files | 284 |
 | own repo vendored third party | 86 |
 | own repo checkout duplicates | 165 |
-| own skills public repos | 24 |
+| own skills public repos | 23 |
 | own skills private repos | 10 |
 | global installs | 153 |
 | global own linked | 1 |
@@ -22,40 +22,48 @@ Skills in private repos and in local-only folders show only location, skill fold
 | global third party | 143 |
 | global third party likely name match | 2 |
 | installed claude plugins | 15 |
-| clusters | 26 |
+| clusters | 25 |
 | clusters with duplicates | 15 |
-| proposed canonical | 12 |
+| proposed canonical | 22 |
+| proposed canonical held | 10 |
 
 ## Proposed canonical set
 
-| Cluster | Decision | Canonical name | Members | Distinct contents | Owner | Reason |
-| --- | --- | --- | --- | --- | --- | --- |
-| agent-debug | keep | agent-debug | 1 | 1 | kennylhilljr | Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill. |
-| cross-review | keep | cross-review | 1 | 1 | pr-review-bots | Single copy, already public and linked into ~/.claude/skills and ~/.codex/skills from pr-review-bots. Moves to the catalog; pr-review-bots consumes it through the submodule. |
-| ctxd-brief | keep | ctxd-brief | 1 | 1 | kennylhilljr | Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill. |
-| ears-notation | keep | ears-notation | 1 | 1 | ecc-customization | Single copy. Needs a freshness fix before import: it references scripts/ears-validator.js, which does not exist in the skill folder. |
-| ecc-operator | keep | ecc-operator | 1 | 1 | ecc-customization | Single copy, specific to operating ECC but used across repos. |
-| new-agent | keep | new-agent | 1 | 1 | kennylhilljr | Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill. |
-| new-mcp | keep | new-mcp | 1 | 1 | kennylhilljr | Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill. |
-| repo-matrix | keep | repo-matrix | 1 | 1 | kennylhilljr | Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill. |
-| review-change | merge | review-change | 2 | 2 | ecc-customization | One generic reviewer skill. Start from the research-mcp 1.1.0 text (SDD trace rules), strip project paths and refer to the project's AGENTS.md for the spec location and gates. |
-| security-review | merge | security-review | 2 | 2 | ecc-customization | Keep the seven generic checks; project-specific citations (LLD sections, ADR numbers) move to the project's AGENTS.md or a project overlay skill. |
-| simplify-change | merge | simplify-change | 2 | 2 | ecc-customization | Nearly identical; only the gate command and spec wording differ. |
-| verify-change | merge | verify-change | 2 | 2 | ecc-customization | Same template/instance drift as review-change. Replace the {{FAST_GATE_CMD}} placeholder with 'the fast gate named in AGENTS.md' so one file serves every repo. |
-| profile-photo-crop | drop | profile-photo-crop | 1 | 1 | kennylhilljr | claude.ai custom skill for a one-off task; not an agent engineering skill. Leave it in claude.ai. |
-| run-project | drop | run-project | 2 | 2 | ecc-customization | Project-specific by design (how to run this repo). Stays a kit template rendered into each project; not shared content. |
-| current-time-check | defer | current-time-check | 1 | 1 | kennylhilljr | claude.ai plugin skill synced locally. Decide whether claude.ai stays its home or the catalog does. |
-| product-requirements | defer | product-requirements | 1 | 1 | ecc-customization | Folder prd-synch, frontmatter name product-requirements and mcpmarket-version metadata: likely third-party origin. Needs provenance and license review before it can be promoted; until then it is treated as third-party. |
-| sdd-adopt | defer | sdd-adopt | 2 | 1 | sdd_framework | SDD skills are owned by the private sdd_framework and shipped by its installer. research-mcp holds a public copy. Whether the catalog should carry them is an open question. |
-| sdd-clarify | defer | sdd-clarify | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
-| sdd-hld | defer | sdd-hld | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
-| sdd-implement | defer | sdd-implement | 2 | 1 | sdd_framework | See sdd-adopt. Public copy matches the private source. |
-| sdd-intake | defer | sdd-intake | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
-| sdd-lld | defer | sdd-lld | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
-| sdd-spec | defer | sdd-spec | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
-| sdd-tasks | defer | sdd-tasks | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
-| sdd-triage | defer | sdd-triage | 2 | 1 | sdd_framework | See sdd-adopt. Public copy matches the private source. |
-| sdd-verify | defer | sdd-verify | 2 | 2 | sdd_framework | See sdd-adopt. The public copy and the private source differ (hash). |
+Consumers `none` means held: in the catalog under `.held/`, checked, but delivered to no consumer (DESIGN 3.2).
+
+| Cluster | Decision | Consumers | Canonical name | Members | Distinct contents | Owner | Reason |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| agent-debug | keep | all | agent-debug | 1 | 1 | kennylhilljr | Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths. |
+| cross-review | keep | all | cross-review | 1 | 1 | pr-review-bots | Single copy, already public and linked into ~/.claude/skills and ~/.codex/skills from pr-review-bots. Moves to the catalog; pr-review-bots consumes it through the submodule. |
+| ctxd-brief | keep | all | ctxd-brief | 1 | 1 | kennylhilljr | Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths. |
+| ears-notation | keep | all | ears-notation | 1 | 1 | ecc-customization | Single copy. Needs a freshness fix before import: it references scripts/ears-validator.js, which does not exist in the skill folder. |
+| ecc-operator | keep | all | ecc-operator | 1 | 1 | ecc-customization | Single copy, specific to operating ECC but used across repos. |
+| new-agent | keep | all | new-agent | 1 | 1 | kennylhilljr | Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths. |
+| new-mcp | keep | all | new-mcp | 1 | 1 | kennylhilljr | Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths. |
+| repo-matrix | keep | all | repo-matrix | 1 | 1 | kennylhilljr | Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths. |
+| sdd-adopt | keep | none | sdd-adopt | 2 | 1 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). |
+| sdd-clarify | keep | none | sdd-clarify | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| sdd-hld | keep | none | sdd-hld | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| sdd-implement | keep | none | sdd-implement | 2 | 1 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). Public copy matches the... |
+| sdd-intake | keep | none | sdd-intake | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| sdd-lld | keep | none | sdd-lld | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| sdd-spec | keep | none | sdd-spec | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| sdd-tasks | keep | none | sdd-tasks | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| sdd-triage | keep | none | sdd-triage | 2 | 1 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). Public copy matches the... |
+| sdd-verify | keep | none | sdd-verify | 2 | 2 | sdd_framework | Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the... |
+| review-change | merge | all | review-change | 2 | 2 | ecc-customization | One generic reviewer skill. Start from the research-mcp 1.1.0 text (SDD trace rules), strip project paths and refer to the project's AGENTS.md for the spec location and gates. |
+| security-review | merge | all | security-review | 2 | 2 | ecc-customization | Keep the seven generic checks; project-specific citations (LLD sections, ADR numbers) move to the project's AGENTS.md or a project overlay skill. |
+| simplify-change | merge | all | simplify-change | 2 | 2 | ecc-customization | Nearly identical; only the gate command and spec wording differ. |
+| verify-change | merge | all | verify-change | 2 | 2 | ecc-customization | Same template/instance drift as review-change. Replace the {{FAST_GATE_CMD}} placeholder with 'the fast gate named in AGENTS.md' so one file serves every repo. |
+| current-time-check | drop |  | current-time-check | 1 | 1 | kennylhilljr | claude.ai plugin skill. Stays in claude.ai; not published. |
+| profile-photo-crop | drop |  | profile-photo-crop | 1 | 1 | kennylhilljr | claude.ai custom skill for a one-off task. Stays in claude.ai; not published. |
+| run-project | drop |  | run-project | 2 | 2 | ecc-customization | Project-specific by design (how to run this repo). Stays a kit template rendered into each project; not shared content. |
+
+Decisions whose skill no longer has a copy on this machine:
+
+| Cluster | Decision | Owner | Reason |
+| --- | --- | --- | --- |
+| product-requirements | drop | ecc-customization | Third-party: the mcpmarket skill prd-sync-google-docs-to-local (folder prd-synch, frontmatter name product-requirements, mcpmarket-version metadata). Not the owner's, so it is not in the canonical set. It was removed ... |
 
 ## Duplicate clusters and their diffs
 
@@ -138,8 +146,7 @@ Skills in private repos and in local-only folders show only location, skill fold
 | kennylhilljr/ecc-customization | `kit/.agents/skills/simplify-change` | simplify-change | Remove unnecessary complexity from the code you changed without changing behavior or tests. Use once the change works and its tests pass, before verify-chang... | 16 | `8a06fcdb77a4` |
 | kennylhilljr/ecc-customization | `kit/.agents/skills/verify-change` | verify-change | Confirm a change actually works end to end, not only that tests and types pass. Use after the acceptance commands and {{FAST_GATE_CMD}} pass, before review o... | 14 | `764447ebb969` |
 | kennylhilljr/ecc-customization | `skills/ears-notation` | ears-notation | This skill should be used when the user asks about "EARS syntax", "EARS notation", "acceptance criteria format", "SHALL patterns", "formal requirements", "WH... | 104 | `6299d3a8c72f` |
-| kennylhilljr/ecc-customization | `skills/ecc-operator` | ecc-operator | Operate the ECC agent team on a project - set a repository up for ECC, start or continue a milestone run, read why a drive stopped and follow its next steps.... | 37 | `f544e1d80d7d` |
-| kennylhilljr/ecc-customization | `skills/prd-synch` | product-requirements | Interactive Product Owner skill for requirements gathering, analysis, and PRD generation. Triggers when users request product requirements, feature specifica... (provenance: frontmatter suggests outside origin: metadata.mcpmarket-version) | 363 | `30142294b1d5` |
+| kennylhilljr/ecc-customization | `skills/ecc-operator` | ecc-operator | Operate the ECC agent team on a project - set a repository up for ECC, record plan approval, start or continue a milestone run, read why a drive stopped and ... | 104 | `0496f5ddcbeb` |
 | kennylhilljr/pr-review-bots | `skills/cross-review` | cross-review | Review a pull request in Kenny's (kennylhilljr) GitHub repos and post feedback as the right bot. Use when asked to review a PR, reply to review comments, pos... | 81 | `4af71a2a635f` |
 | kennylhilljr/research-mcp | `.agents/skills/review-change` | review-change | Review a unit's changes against the component's LLD (docs/lld, newest version), its PRD acceptance criteria, the test plan (docs/test) and AGENTS.md, and rep... | 30 | `31e1f2803a6c` |
 | kennylhilljr/research-mcp | `.agents/skills/run-research-mcp` | run-research-mcp | How to build, launch and drive Research MCP v2 in an isolated scratch setup, so a change can be watched working. Use before verify-change, and whenever you n... | 53 | `51ec8d65997f` |

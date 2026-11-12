@@ -2,13 +2,13 @@
   "generated_by": "tools/inventory.py",
   "owner": "kennylhilljr",
   "summary": {
-    "skill_md_files_scanned": 1771,
+    "skill_md_files_scanned": 1770,
     "distinct_names_scanned": 1520,
     "third_party_repo_files": 1486,
-    "own_repo_files": 285,
+    "own_repo_files": 284,
     "own_repo_vendored_third_party": 86,
     "own_repo_checkout_duplicates": 165,
-    "own_skills_public_repos": 24,
+    "own_skills_public_repos": 23,
     "own_skills_private_repos": 10,
     "global_installs": 153,
     "global_own_linked": 1,
@@ -16,9 +16,10 @@
     "global_third_party": 143,
     "global_third_party_likely_name_match": 2,
     "installed_claude_plugins": 15,
-    "clusters": 26,
+    "clusters": 25,
     "clusters_with_duplicates": 15,
-    "proposed_canonical": 12
+    "proposed_canonical": 22,
+    "proposed_canonical_held": 10
   },
   "own_skills_public": [
     {
@@ -105,26 +106,12 @@
       "rel_dir": "skills/ecc-operator",
       "dir_name": "ecc-operator",
       "name": "ecc-operator",
-      "description": "Operate the ECC agent team on a project - set a repository up for ECC, start or continue a milestone run, read why a drive stopped and follow its next steps. Use when asked to kick off, drive, resume or check an ECC run, or to make a new project ECC-ready.",
-      "lines": 37,
-      "sha256": "f544e1d80d7d8f3f7c8e8bb7781fd945e671cbe16244e392a66c6fdfec8e4e91",
+      "description": "Operate the ECC agent team on a project - set a repository up for ECC, record plan approval, start or continue a milestone run, read why a drive stopped and follow its next steps. Use when asked to approve a plan, kick off, drive, resume or check an ECC run, or to make a new project ECC-ready.",
+      "lines": 104,
+      "sha256": "0496f5ddcbebad6bea95b89166510b73777d1f5a0c56c2223435fca4a1ce2951",
       "visibility": "PUBLIC",
       "class": "own",
       "cluster": "ecc-operator"
-    },
-    {
-      "slug": "kennylhilljr/ecc-customization",
-      "checkout": "ecc-customization",
-      "rel_dir": "skills/prd-synch",
-      "dir_name": "prd-synch",
-      "name": "product-requirements",
-      "description": "Interactive Product Owner skill for requirements gathering, analysis, and PRD generation. Triggers when users request product requirements, feature specification, PRD creation, or need help understanding and documenting project requirements. Uses quality scoring and iterative dialogue to ensure comprehensive requirements before generating professional PRD documents.",
-      "lines": 363,
-      "sha256": "30142294b1d5a80adeea0d5da192e88b1cb0c887aa2d12e5fd79022eaa0f8080",
-      "visibility": "PUBLIC",
-      "class": "own",
-      "provenance_flag": "frontmatter suggests outside origin: metadata.mcpmarket-version",
-      "cluster": "product-requirements"
     },
     {
       "slug": "kennylhilljr/pr-review-bots",
@@ -605,8 +592,9 @@
       "decision": "keep",
       "canonical_name": "agent-debug",
       "owner": "kennylhilljr",
-      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
-      "notes_on_diff": ""
+      "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "cross-review",
@@ -618,7 +606,8 @@
       "canonical_name": "cross-review",
       "owner": "pr-review-bots",
       "reason": "Single copy, already public and linked into ~/.claude/skills and ~/.codex/skills from pr-review-bots. Moves to the catalog; pr-review-bots consumes it through the submodule.",
-      "notes_on_diff": ""
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "ctxd-brief",
@@ -629,8 +618,9 @@
       "decision": "keep",
       "canonical_name": "ctxd-brief",
       "owner": "kennylhilljr",
-      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
-      "notes_on_diff": ""
+      "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "current-time-check",
@@ -638,11 +628,12 @@
       "distinct_contents": 1,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "drop",
       "canonical_name": "current-time-check",
       "owner": "kennylhilljr",
-      "reason": "claude.ai plugin skill synced locally. Decide whether claude.ai stays its home or the catalog does.",
-      "notes_on_diff": ""
+      "reason": "claude.ai plugin skill. Stays in claude.ai; not published.",
+      "notes_on_diff": "",
+      "consumers": ""
     },
     {
       "cluster": "ears-notation",
@@ -654,7 +645,8 @@
       "canonical_name": "ears-notation",
       "owner": "ecc-customization",
       "reason": "Single copy. Needs a freshness fix before import: it references scripts/ears-validator.js, which does not exist in the skill folder.",
-      "notes_on_diff": ""
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "ecc-operator",
@@ -666,7 +658,8 @@
       "canonical_name": "ecc-operator",
       "owner": "ecc-customization",
       "reason": "Single copy, specific to operating ECC but used across repos.",
-      "notes_on_diff": ""
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "new-agent",
@@ -677,8 +670,9 @@
       "decision": "keep",
       "canonical_name": "new-agent",
       "owner": "kennylhilljr",
-      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
-      "notes_on_diff": ""
+      "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "new-mcp",
@@ -689,20 +683,9 @@
       "decision": "keep",
       "canonical_name": "new-mcp",
       "owner": "kennylhilljr",
-      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
-      "notes_on_diff": ""
-    },
-    {
-      "cluster": "product-requirements",
-      "members": 1,
-      "distinct_contents": 1,
-      "restricted_members": 0,
-      "diffs": [],
-      "decision": "defer",
-      "canonical_name": "product-requirements",
-      "owner": "ecc-customization",
-      "reason": "Folder prd-synch, frontmatter name product-requirements and mcpmarket-version metadata: likely third-party origin. Needs provenance and license review before it can be promoted; until then it is treated as third-party.",
-      "notes_on_diff": ""
+      "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "profile-photo-crop",
@@ -713,8 +696,9 @@
       "decision": "drop",
       "canonical_name": "profile-photo-crop",
       "owner": "kennylhilljr",
-      "reason": "claude.ai custom skill for a one-off task; not an agent engineering skill. Leave it in claude.ai.",
-      "notes_on_diff": ""
+      "reason": "claude.ai custom skill for a one-off task. Stays in claude.ai; not published.",
+      "notes_on_diff": "",
+      "consumers": ""
     },
     {
       "cluster": "repo-matrix",
@@ -725,8 +709,9 @@
       "decision": "keep",
       "canonical_name": "repo-matrix",
       "owner": "kennylhilljr",
-      "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill.",
-      "notes_on_diff": ""
+      "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+      "notes_on_diff": "",
+      "consumers": "all"
     },
     {
       "cluster": "review-change",
@@ -746,7 +731,8 @@
       "canonical_name": "review-change",
       "owner": "ecc-customization",
       "reason": "One generic reviewer skill. Start from the research-mcp 1.1.0 text (SDD trace rules), strip project paths and refer to the project's AGENTS.md for the spec location and gates.",
-      "notes_on_diff": "research-mcp is the kit template rendered for one project plus the 1.1.0 SDD adoption: LLD paths, @spec docstring rule, project scope rules and a changelog. The kit text is the generic base."
+      "notes_on_diff": "research-mcp is the kit template rendered for one project plus the 1.1.0 SDD adoption: LLD paths, @spec docstring rule, project scope rules and a changelog. The kit text is the generic base.",
+      "consumers": "all"
     },
     {
       "cluster": "run-project",
@@ -766,7 +752,8 @@
       "canonical_name": "run-project",
       "owner": "ecc-customization",
       "reason": "Project-specific by design (how to run this repo). Stays a kit template rendered into each project; not shared content.",
-      "notes_on_diff": ""
+      "notes_on_diff": "",
+      "consumers": ""
     },
     {
       "cluster": "sdd-adopt",
@@ -774,11 +761,12 @@
       "distinct_contents": 1,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-adopt",
       "owner": "sdd_framework",
-      "reason": "SDD skills are owned by the private sdd_framework and shipped by its installer. research-mcp holds a public copy. Whether the catalog should carry them is an open question.",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-clarify",
@@ -786,11 +774,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-clarify",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-hld",
@@ -798,11 +787,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-hld",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-implement",
@@ -810,11 +800,12 @@
       "distinct_contents": 1,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-implement",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. Public copy matches the private source.",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). Public copy matches the private source.",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-intake",
@@ -822,11 +813,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-intake",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-lld",
@@ -834,11 +826,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-lld",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-spec",
@@ -846,11 +839,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-spec",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-tasks",
@@ -858,11 +852,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-tasks",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-triage",
@@ -870,11 +865,12 @@
       "distinct_contents": 1,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-triage",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. Public copy matches the private source.",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). Public copy matches the private source.",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "sdd-verify",
@@ -882,11 +878,12 @@
       "distinct_contents": 2,
       "restricted_members": 1,
       "diffs": [],
-      "decision": "defer",
+      "decision": "keep",
       "canonical_name": "sdd-verify",
       "owner": "sdd_framework",
-      "reason": "See sdd-adopt. The public copy and the private source differ (hash).",
-      "notes_on_diff": ""
+      "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+      "notes_on_diff": "",
+      "consumers": "none"
     },
     {
       "cluster": "security-review",
@@ -906,7 +903,8 @@
       "canonical_name": "security-review",
       "owner": "ecc-customization",
       "reason": "Keep the seven generic checks; project-specific citations (LLD sections, ADR numbers) move to the project's AGENTS.md or a project overlay skill.",
-      "notes_on_diff": "research-mcp adds LLD/ADR citations to each of the seven checks, Keychain specifics and a longer high-risk path list."
+      "notes_on_diff": "research-mcp adds LLD/ADR citations to each of the seven checks, Keychain specifics and a longer high-risk path list.",
+      "consumers": "all"
     },
     {
       "cluster": "simplify-change",
@@ -926,7 +924,8 @@
       "canonical_name": "simplify-change",
       "owner": "ecc-customization",
       "reason": "Nearly identical; only the gate command and spec wording differ.",
-      "notes_on_diff": "{{FAST_GATE_CMD}} vs tools/ci.sh --python-only; 'specification' vs 'LLDs'; version metadata and changelog."
+      "notes_on_diff": "{{FAST_GATE_CMD}} vs tools/ci.sh --python-only; 'specification' vs 'LLDs'; version metadata and changelog.",
+      "consumers": "all"
     },
     {
       "cluster": "verify-change",
@@ -946,7 +945,16 @@
       "canonical_name": "verify-change",
       "owner": "ecc-customization",
       "reason": "Same template/instance drift as review-change. Replace the {{FAST_GATE_CMD}} placeholder with 'the fast gate named in AGENTS.md' so one file serves every repo.",
-      "notes_on_diff": "Placeholder {{FAST_GATE_CMD}} vs tools/ci.sh --python-only; spec vs LLD wording; example claim and changelog added in research-mcp."
+      "notes_on_diff": "Placeholder {{FAST_GATE_CMD}} vs tools/ci.sh --python-only; spec vs LLD wording; example claim and changelog added in research-mcp.",
+      "consumers": "all"
+    }
+  ],
+  "decided_without_copies": [
+    {
+      "cluster": "product-requirements",
+      "decision": "drop",
+      "owner": "ecc-customization",
+      "reason": "Third-party: the mcpmarket skill prd-sync-google-docs-to-local (folder prd-synch, frontmatter name product-requirements, mcpmarket-version metadata). Not the owner's, so it is not in the canonical set. It was removed from ecc-customization by that repo's own PR (#33)."
     }
   ]
 }

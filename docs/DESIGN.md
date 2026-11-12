@@ -1,47 +1,53 @@
 ---
 title: "skills-catalog: one source of truth for Kenny's agent skills"
 type: design
-version: 1
+version: 2
 status: draft
 owner: "Kenny Hill"
 date: 2026-11-11
 ---
 
-# skills-catalog design (v1)
+# skills-catalog design (v2)
 
 This repository will hold the de-duplicated set of agent skills that Kenny writes and owns. Every consumer reads from it at a pinned commit, and a freshness bot keeps the skills current as Claude Code, Codex and the skill format change. Requirements and acceptance criteria are in [SPEC.md](SPEC.md). The inventory behind the numbers in this document is in [inventory/own-skills.md](../inventory/own-skills.md).
 
 The repository is public. That is decided.
 
-## 0. Open questions for Kenny
+## 0. Open question for Kenny
 
-Each question has a recommendation. Work on M1 and M2 can start before any of them is answered.
+1. **Your own machines.** For interactive use, should your own `~/.claude/skills` and `~/.agents/skills` install copies from catalog releases? *Recommendation:* yes, through `tools/install-local` (a copy at a tag, not a link to a working tree), so personal sessions are pinned the same way the bots are. Until this is answered, MCP-9 is not built.
 
-1. **SDD skills.** The ten `sdd-*` skills are owned by the private `sdd_framework` and installed by its installer. `research-mcp` holds a public copy, and 7 of the 10 differ from the source. Should the catalog carry them? *Recommendation:* not in v1. `sdd_framework` stays their owner, and the catalog lists them as externally owned so the freshness bot can still check the public copies.
-2. **Local-only global skills.** Seven skills exist only in `~/.claude/skills` or `~/.codex/skills`: agent-debug, ctxd-brief, new-agent, new-mcp, repo-matrix, current-time-check and profile-photo-crop. Are they all yours, and may they be published once scrubbed? *Recommendation:* yes for the first five. Leave the two claude.ai-synced ones in claude.ai. Skills on the owner's local exclusion list (section 5.1) are out of scope and not counted here.
-3. **prd-synch provenance.** `ecc-customization/skills/prd-synch` has frontmatter name `product-requirements` and `mcpmarket-version` metadata, so it probably came from a marketplace. Do you know its source and license? *Recommendation:* treat it as third-party until reviewed.
-4. **CLI versions on the Mac.** Claude Code on the host is 2.1.112, while the current npm release is 2.1.322. Codex is 0.158.0-alpha.7, while 0.167.2 is current. Behavioral evals measure whatever router the installed CLI has, and `claude plugin eval` needs 2.1.269 or later. *Recommendation:* update both CLIs (you, through `/update` or a terminal) before M6. The freshness bot reports host CLI lag from M2 on.
-5. **FastMCP pre-release.** The skills provider is documented as new in FastMCP 4.2.0, but PyPI has only `4.2.0a1` to `4.2.0a4` (latest stable is 4.1.8). *Recommendation:* build M4 against a pinned alpha behind a flag, and switch to 4.2.0 when it ships. The upstream watch tracks the release.
-6. **Eval budget.** *Recommendation:* $5 per nightly run, $40 per month, and at most 3 runs per case. Behavioral evals run only for skills whose content, or whose target CLI version, changed since the last pass.
-7. **Alert channel.** *Recommendation:* a GitHub issue labeled `freshness-alert` on this repo, plus an OpenClaw ops message for anything that stalls longer than its dwell limit. No email.
-8. **Your own machines.** For interactive use, should `~/.claude/skills` and `~/.agents/skills` read from a local catalog checkout? *Recommendation:* yes, through `tools/install-local` (a copy at a tag, not a link to a working tree), so personal sessions are pinned the same way the bots are.
+### Decided on 2026-11-11
+
+| Question | Decision | Where it lands |
+| --- | --- | --- |
+| SDD skills | The ten `sdd-*` skills join the catalog as **held** skills (`catalog-consumers: "none"`, stored under `.held/`). The private `sdd_framework` stays their canonical source, and only the ten `SKILL.md` folders are published, after the scrub. No consumer reads them until the SDD switch gate passes: not sdd_framework's installer, not research-mcp, not the M3 rollout. | 3.2, SPEC SDD-1 to SDD-5 |
+| Local-only skills | Publish agent-debug, ctxd-brief, new-agent, new-mcp and repo-matrix after the scrub. current-time-check and profile-photo-crop stay in claude.ai and are not published. | 3.1 |
+| prd-synch | Third-party (the mcpmarket skill prd-sync-google-docs-to-local). Dropped from the canonical set; removed from ecc-customization by that repo's own PR. | 3.1, inventory |
+| Host CLIs | Updated. The native `claude` on iwb's PATH (`~/.local/bin`) is 2.1.311, the nvm `claude` is 2.1.322, and `codex` is 0.167.2. Evals pin and record the versions they ran on (7.3). | 7.3 |
+| FastMCP | M4 pins an exact 4.2.0 alpha and records the upgrade path to 4.2.0 stable. | 4.4 |
+| Eval budget | No dollar budget. Evals use the bots' subscription CLIs, run only on change, are capped by run count, and yield to pipeline work. | 7.7 |
+| Alerts | A `freshness-alert` issue on this repo in the shape iwb's intake accepts, plus one Slack message in `#github-feed` through OpenClaw, with deduplication and a cooldown. | 7.8 |
 
 ## 1. What the inventory found
 
-The full tables are in the inventory. These are the headline facts that shaped the design (scan of 2026-11-11, after the local exclusion list in section 5.1 is applied):
+The full tables are in the inventory. These are the headline facts that shaped the design (rescan of 2026-11-11, after the local exclusion list in section 5.1 is applied; the catalog's own checkout is not counted):
 
 | Fact | Number |
 | --- | --- |
-| `SKILL.md` files under `~/Documents/GitHub` (excluding `node_modules`, `.venv`, `venv`, `site-packages`) | 1,771 (1,520 distinct folder names) |
+| `SKILL.md` files under `~/Documents/GitHub` (excluding `node_modules`, `.venv`, `venv`, `site-packages`) | 1,770 (1,520 distinct folder names) |
 | In third-party clones | 1,486 (84%) |
-| In Kenny's own repos | 285 |
+| In Kenny's own repos | 284 |
 | ...of which vendored third-party copies (ECC in `.kimi-code/`, truecourse and code-review-graph in a generated app) | 86 |
 | ...of which second checkouts or `.claude/worktrees` copies of the same repo | 165 |
-| ...of which own skills in public repos | 24 |
+| ...of which own skills in public repos | 23 |
 | ...of which own skills in private repos (`sdd_framework`) | 10 |
 | Global installs (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, deduplicated) | 153: 143 third-party (including 5 Codex bundled system skills), 2 probably third-party, 1 own linked to a public repo, 7 own local-only |
-| Clusters of own skills | 26, 15 with more than one copy |
-| Proposed canonical set (keep or merge) | 12, plus 12 deferred |
+| Clusters of own skills | 25, 15 with more than one copy |
+| Canonical set (keep or merge) | 22: 12 delivered to consumers, 10 held (`sdd-*`) |
+| Dropped | 4: run-project, current-time-check, profile-photo-crop, product-requirements (prd-synch) |
+
+The first scan counted 1,771 files and 24 own public skills. The difference is prd-synch, which has since been removed from ecc-customization.
 
 Three findings changed the plan:
 
@@ -71,8 +77,8 @@ skills-catalog/
   skills/<name>/SKILL.md           one folder per skill; folder name == frontmatter name
   skills/<name>/references/ scripts/ assets/   optional, per the Agent Skills spec
   skills/<name>/evals.json         behavioral and trigger cases (M6)
-  externals.json                   skills owned elsewhere that the bot still checks (sdd-*, promoted third-party pins)
-  catalog.json                     generated manifest: name, version, sha256 of every file, targets, last_verified
+  .held/<name>/SKILL.md            held skills: checked like any skill, delivered to nobody (3.2); also zz-canary
+  catalog.json                     generated manifest: name, version, sha256 of every file, targets, last_verified, consumers
   schema/frontmatter.schema.json   the catalog's frontmatter contract (section 4.1)
   schema/upstream.json             the watched upstream sources and their last-seen fingerprints (section 7.1)
   freshness/                       the freshness bot (checks, upstream watch, eval runner, reporters)
@@ -82,22 +88,33 @@ skills-catalog/
   docs/                            DESIGN.md, SPEC.md
 ```
 
-Skills sit flat under `skills/`, with no category folders. Codex scans nested folders, but a flat tree keeps the Claude Code link step (4.3) trivial and makes name clashes impossible.
+Skills sit flat under `skills/`, with no category folders. Codex scans nested folders, but a flat tree keeps the Claude Code link step (4.3) trivial and makes name clashes impossible. The one exception is `.held/` (3.2).
 
-### 3.1 The proposed v1 set
+### 3.1 The v1 set
 
-| Skill | Decision | Owner | From |
-| --- | --- | --- | --- |
-| review-change | merge | ecc-customization | kit template + research-mcp 1.1.0 |
-| verify-change | merge | ecc-customization | kit template + research-mcp 1.1.0 |
-| security-review | merge | ecc-customization | kit template + research-mcp 1.1.0 |
-| simplify-change | merge | ecc-customization | kit template + research-mcp 1.1.0 |
-| cross-review | keep | pr-review-bots | pr-review-bots/skills |
-| ears-notation | keep (fix dead `scripts/ears-validator.js` reference) | ecc-customization | ecc-customization/skills |
-| ecc-operator | keep | ecc-customization | ecc-customization/skills |
-| agent-debug, ctxd-brief, new-agent, new-mcp, repo-matrix | keep, after open question 2 | kennylhilljr | local only |
+| Skill | Decision | Consumers | Owner | From |
+| --- | --- | --- | --- | --- |
+| review-change | merge | all | ecc-customization | kit template + research-mcp 1.1.0 |
+| verify-change | merge | all | ecc-customization | kit template + research-mcp 1.1.0 |
+| security-review | merge | all | ecc-customization | kit template + research-mcp 1.1.0 |
+| simplify-change | merge | all | ecc-customization | kit template + research-mcp 1.1.0 |
+| cross-review | keep | all | pr-review-bots | pr-review-bots/skills |
+| ears-notation | keep (fix dead `scripts/ears-validator.js` reference) | all | ecc-customization | ecc-customization/skills |
+| ecc-operator | keep | all | ecc-customization | ecc-customization/skills |
+| agent-debug, ctxd-brief, new-agent, new-mcp, repo-matrix | keep (owner-approved for publication, after the scrub) | all | kennylhilljr | local only |
+| sdd-adopt, sdd-clarify, sdd-hld, sdd-implement, sdd-intake, sdd-lld, sdd-spec, sdd-tasks, sdd-triage, sdd-verify | keep, **held** (owner-approved for publication, after the scrub) | none | sdd_framework | sdd_framework (private) |
 
-Dropped: `run-project` (stays a kit template) and `profile-photo-crop` (stays in claude.ai). Deferred: the 10 `sdd-*` skills, `product-requirements`, and one claude.ai plugin skill (`current-time-check`). The reasons for each are in the inventory.
+That is 22 skills: 12 delivered and 10 held. Dropped: `run-project` (stays a kit template), `current-time-check` and `profile-photo-crop` (stay in claude.ai), and `product-requirements`, the folder `prd-synch` (third-party, from mcpmarket; removed from ecc-customization). The reasons for each are in the inventory.
+
+### 3.2 Held skills
+
+A held skill is in the catalog and goes through the same lint, scrub, manifest and freshness checks as any other, but no consumer receives it. It exists so a skill can be published and kept current before the repos that use it switch over. Today the held skills are the ten `sdd-*` skills, plus `zz-canary`, which must never reach a consumer either.
+
+- **Marked twice.** The frontmatter says `catalog-consumers: "none"`, and the folder sits under `.held/<name>/` instead of `skills/<name>/`. The linter fails when the two disagree (SPEC CAT-22).
+- **Why a dot folder.** A consumer's submodule holds the whole catalog tree, and Codex scans `.agents/skills/shared/` to depth 6, so a held skill under `skills/` would load in every Codex session of every consumer. The Codex skill loader skips entries whose name starts with `.` (`codex-rs/core/src/skills/loader.rs`, January 2026 source), so `.held/` stays invisible to Codex. Claude Code sees only what `tools/link-consumer` links, and it never links `.held/`. M3 proves both on the installed CLIs (SPEC SUB-17).
+- **Never delivered.** `catalog.json` lists held skills in a separate `held` array. `tools/link-consumer`, the bump bot, `tools/install-local` and the MCP server skip them, and a bump PR lists changes to them only under "held, not delivered" (SPEC INV-8).
+- **Mirror of a private source.** The ten `sdd-*` folders mirror `sdd_framework`, which stays their canonical source until the switch. The catalog copy keeps the source body verbatim and changes only the frontmatter to the catalog schema (4.1) and the first changelog row. Nothing else from `sdd_framework` is published. A sync PR refreshes the mirror, and the Mac half of the freshness bot reports a held-drift finding, with folder names and hashes only, when a mirror differs from its source (SPEC SDD-1).
+- **The switch.** SDD moves to the catalog only through the gate in SPEC SDD-2 to SDD-5: Kenny approves it in an issue, M5 and the sdd-* evals have passed, one catalog PR moves the folders to `skills/` and sets `catalog-consumers: "all"`, and the consumer changes (sdd_framework's installer, research-mcp's copies) follow as PRs in those repos.
 
 ## 4. Architecture
 
@@ -137,6 +154,7 @@ metadata:
   catalog-source-sha: ""            # promoted only: 40-hex commit the copy was taken from
   catalog-source-license: ""        # promoted only: SPDX id, checked on promotion
   catalog-targets: "claude,codex"   # where it must load and pass evals
+  catalog-consumers: "all"          # all (default) | none: held, under .held/, delivered to nobody (3.2)
   catalog-last-verified: "2026-11-11"
   catalog-max-age-days: "90"
   catalog-requires: "git,gh"        # commands the skill runs; the bot checks they exist (7.2)
@@ -148,6 +166,7 @@ Rules the linter enforces (SPEC M1):
 - `name` is 1 to 64 characters of `a-z`, `0-9` and single hyphens, and matches the folder name. This is stricter than Claude Code, which also takes the folder name, and matches the Agent Skills spec, which Codex follows.
 - `description` is 1 to 1,024 characters (the spec limit), and front-loads the use case. Codex shortens descriptions when the skill list exceeds 2% of context, and Claude Code truncates `description` plus `when_to_use` at 1,536 characters. It must contain a "Use when", "Use after", "Use before" or "Use for" clause. `when_to_use` is not used, because it is a Claude Code-only field.
 - Claude Code-only fields (`argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `paths`, `hooks`, `shell`, `disallowed-tools`) are allowed only when `catalog-targets` is `claude`. Otherwise they belong in an overlay (4.3).
+- `catalog-consumers` is optional. When present it is `all` or `none`; `none` is required under `.held/` and refused under `skills/`.
 - `SKILL.md` stays under 500 lines, and file references are relative and one level deep (spec guidance).
 - No placeholders such as `{{...}}`, no absolute paths, no home paths, and no secrets (M1 scrub).
 
@@ -191,7 +210,7 @@ Token note: the analysis and work clones run with a bot installation token in th
 
 ### 4.3 Making Claude Code see the submodule
 
-Codex finds `.agents/skills/shared/<name>/SKILL.md` on its own. Claude Code needs `.claude/skills/<name>`. `tools/link-consumer` (shipped in the catalog, run by the bump PR automation) writes one **relative, in-repo** symlink per shared skill:
+Codex finds `.agents/skills/shared/skills/<name>/SKILL.md` on its own, and skips `.held/` (3.2). Claude Code needs `.claude/skills/<name>`. `tools/link-consumer` (shipped in the catalog, run by the bump PR automation) writes one **relative, in-repo** symlink per shared skill under `skills/`, and none for `.held/`:
 
 ```text
 .claude/skills/verify-change -> ../../.agents/skills/shared/skills/verify-change
@@ -209,7 +228,11 @@ A project that needs a project-specific variant (for example the research-mcp se
 - With `experimental_skills=True`, clients that speak the [Skills extension (SEP-2640)](https://modelcontextprotocol.io/seps/2640-skills-extension) can call `skills/list` and get each skill's description and a hashed file manifest. Few hosts speak it yet, and FastMCP marks it experimental.
 - Tools: `search_skills(query)` (name and description match, catalog only) and `skill_status(name)` (version, last verified, open freshness findings), so an agent can see that a skill is stale before using it.
 - Transport: stdio for local clients, and streamable HTTP on loopback for OpenClaw. No remote exposure.
-- `sync_skills()` from a FastMCP client can install the served skills into `~/.claude/skills` or `~/.agents/skills` on a machine. That is the path `tools/install-local` wraps (open question 8).
+- `sync_skills()` from a FastMCP client can install the served skills into `~/.claude/skills` or `~/.agents/skills` on a machine. That is the path `tools/install-local` wraps (open question 1).
+
+The server does not serve `.held/`.
+
+**FastMCP version.** The skills provider ships in FastMCP 4.2.0, which on 2026-11-11 exists only as pre-releases (`4.2.0a1` to `4.2.0a4`; latest stable 4.1.8). M4 pins an exact pre-release (`fastmcp==4.2.0a4`, or the newest alpha when M4 starts) in `server/pyproject.toml` and its lock file, never a range. Upgrade path: the upstream watch (7.1) opens an `upstream-change` issue when 4.2.0 stable appears on PyPI; that issue moves the pin to `fastmcp==4.2.0` exactly, re-runs MCP-1 to MCP-7, and removes the pre-release notice that MCP-8 requires. A newer alpha before then is taken only if it fixes something M4 needs, in its own PR.
 
 Limits, stated plainly: the extension is experimental, and FastMCP's skills support is in pre-release (4.2.0a4 at the time of writing). Claude Code and Codex read skills from disk, so for them the server is a browsing and installing aid, not the delivery path. Bots never depend on it (section 11).
 
@@ -225,7 +248,7 @@ iwb's policy (`path_rules`) and the orchestrator's unit scopes must treat the su
 
 | Asset or risk | Control |
 | --- | --- |
-| Publishing private content | M1 CI scrub: secrets, tokens, emails, internal hostnames and IPs, absolute and home paths, and a denylist of private repo names in skill bodies. `tools/inventory.py` emits only name and hash for private and local-only skills. |
+| Publishing private content | M1 CI scrub: secrets, tokens, emails, internal hostnames and IPs, absolute and home paths, and a denylist of private repo names in skill bodies. `tools/inventory.py` emits only name and hash for private and local-only skills. A skill from a private repo or a local-only folder is imported only when `inventory/decisions.json` marks it `publish: owner-approved`, and only its `SKILL.md` folder, after the scrub (SPEC INV-9). |
 | A skill that tells an agent to do harm (prompt injection in a skill body) | Every catalog change is a PR, reviewed through cross-review and by Kenny for new skills. Promoted third-party skills are copied and pinned, never fetched live. Skill scripts are reviewed like code. |
 | Repointing the submodule | URL allowlist in the submodule check (4.2); `.gitmodules` is a protected path. |
 | Drift mid-run | Gitlink pin; bots never read the catalog live. |
@@ -256,7 +279,7 @@ New rule:
 
 ## 7. The freshness bot
 
-"Dated skills get ignored by agents." The agent-skills eval notes show it directly: the same test-driven-development description fired 6 of 6 runs on Claude Code 2.1.283 and 1 of 6 on 2.1.312 with no change to the skill. The router under it changed. Freshness is therefore a first-class component with its own state, budget and alerts, not a lint step.
+"Dated skills get ignored by agents." The agent-skills eval notes show it directly: the same test-driven-development description fired 6 of 6 runs on Claude Code 2.1.283 and 1 of 6 on 2.1.312 with no change to the skill. The router under it changed. Freshness is therefore a first-class component with its own state, run limits and alerts, not a lint step.
 
 ### 7.1 Upstream watch
 
@@ -284,7 +307,7 @@ A watched source that fails to fetch 3 times in a row raises an alert. Silence i
 
 ### 7.2 Per-skill checks
 
-These run nightly over every skill and externally owned entry, and on every catalog PR over the changed skills:
+These run nightly over every skill under `skills/` and `.held/`, and on every catalog PR over the changed skills:
 
 | Check | Fails when |
 | --- | --- |
@@ -305,7 +328,7 @@ These run nightly over every skill and externally owned entry, and on every cata
 The pattern follows addyosmani/agent-skills `evals/` (MIT), adapted to two CLIs:
 
 - `skills/<name>/evals.json` has positive prompts (the skill must fire), adjacent negative prompts (it must not), and one or two execution cases with `expectations[]` graded from the transcript.
-- **Trigger tier:** each prompt runs headless (`claude -p --output-format stream-json`, `codex exec --json`) in a temp repo whose `.claude/skills` and `.agents/skills` hold only the catalog. "Fired" means the trace shows the Skill tool call (Claude Code) or a read of the skill's `SKILL.md` (Codex). Each case runs with a pinned model and records the CLI version.
+- **Trigger tier:** each prompt runs headless (`claude -p --output-format stream-json`, `codex exec --json`) in a temp repo whose `.claude/skills` and `.agents/skills` hold only the catalog. "Fired" means the trace shows the Skill tool call (Claude Code) or a read of the skill's `SKILL.md` (Codex). Each case runs with a pinned model, a pinned CLI binary (the one on iwb's PATH, so evals see the router the bots see) and records the CLI version. On 2026-11-11 that is the native `claude` 2.1.311 in `~/.local/bin` and `codex` 0.167.2; the nvm `claude` (2.1.322) is not used for evals. A version change is itself an eval trigger (7.7).
 - **Behavior tier:** execution cases run with a fixed permission mode in a throwaway git repo, and an LLM grader scores `expectations[]` against the trace. Only completed traces are graded.
 - **Regression rule:** a skill is flagged when its fire rate on positive prompts drops by more than 25 points against its last pass, when any negative prompt fires it more than once in 3 runs, or when behavior expectations fail on 2 of 3 runs. The finding names the CLI versions on both sides, since a router change shows up as exactly this.
 - For Claude Code 2.1.269 or later, `claude plugin eval` over a generated plugin wrapping the catalog gives a with-and-without delta per case as a second signal.
@@ -320,7 +343,7 @@ For each entry with `catalog-provenance: promoted`, the bot fetches the upstream
 | --- | --- |
 | Mechanical: model ID rename, dead path fixed by a known move, new optional schema field, link moved with a 301, `last-verified` bump after a clean run | a PR from the freshness bot, labeled `freshness`, small and single-purpose, through the normal cross-review |
 | Needs judgment: description rewrite, skill stopped triggering, behavior regression, upstream format change | an issue labeled `freshness` with evidence (diff, eval numbers, CLI versions), written as an iwb-ready task with acceptance criteria |
-| Runtime fault: watch source failing, eval harness broken, budget hit | an alert issue labeled `freshness-alert`, plus an ops message |
+| Runtime fault: watch source failing, eval harness broken, evals held back by the run cap for 3 days | an alert (7.8): an issue labeled `freshness-alert` plus one Slack message |
 
 iwb's analyze, plan, cross-review, code and auto-merge pipeline picks up the issues once skills-catalog joins its repos (M5). Merged changes reach consumers through bump PRs.
 
@@ -338,22 +361,53 @@ The Mac job writes its results to a `freshness/state.json` and opens PRs and iss
 
 | State | Max dwell | Alert |
 | --- | --- | --- |
-| Nightly Actions run not completed | 26 h since the last success | issue + ops message |
-| Mac launchd job not completed | 26 h since the last success (Mac asleep counts) | issue + ops message |
+| Nightly Actions run not completed | 26 h since the last success | alert (7.8) |
+| Mac launchd job not completed | 26 h since the last success (Mac asleep counts) | alert (7.8) |
 | A watched source failing to fetch | 3 consecutive runs | issue |
 | Freshness PR open without review | 7 days | ping on the PR, then an issue |
-| Freshness issue not picked up by iwb (after M5) | 3 days | issue comment + ops message |
-| Skill past max age | 14 days in `re-review` | marked `stale` + ops message |
-| Bump PR open in a consumer | 7 days | ops message |
+| Freshness issue not picked up by iwb (after M5) | 3 days | issue comment + Slack message (7.8) |
+| Skill past max age | 14 days in `re-review` | marked `stale` + Slack message (7.8) |
+| Bump PR open in a consumer | 7 days | Slack message (7.8) |
 
-The canary: `skills/zz-canary/` is a tiny skill with a known-dead link, a known-deprecated model ID and a stale `last-verified` date. Every nightly run must report exactly those three findings, deduplicated against its standing issue. If a run reports fewer, the checks are broken, and the bot raises a `freshness-alert` instead of a green result. Its evals have one positive prompt that must fire, which proves the eval harness and the CLIs work end to end. `zz-canary` is excluded from `catalog.json`, so consumers never see it.
+The canary: `.held/zz-canary/` is a tiny held skill (3.2) with a known-dead link, a known-deprecated model ID and a stale `last-verified` date. Every nightly run must report exactly those three findings, deduplicated against its standing issue. If a run reports fewer, the checks are broken, and the bot raises a `freshness-alert` instead of a green result. Its evals have one positive prompt that must fire, which proves the eval harness and the CLIs work end to end. `zz-canary` is excluded from `catalog.json` and sits under `.held/`, so consumers never see it.
 
-### 7.7 Cost and budget
+### 7.7 Cost: no dedicated budget
 
-- Static checks and the watch cost nothing in tokens. The one LLM classification call per changed upstream source is capped at 10 per day.
-- Evals run only for skills whose content changed, or for every skill when a target CLI version changes (a router change is the main regression source). Otherwise each skill re-runs on a weekly rotation.
-- Per-run ceiling, per-month ceiling and runs per case follow open question 6 (recommended: $5, $40, 3). The runner tracks spend from the CLIs' JSON usage output. When the next case would cross the ceiling, it stops, records the skipped skills, and raises a `freshness-alert` "budget reached", so a budget stop is never silent.
+Evals have no dollar budget, because they run through the same subscription-authenticated `claude` and `codex` CLIs on the Mac that the bots use, so there is no per-token bill, only a share of the same usage limits. They are therefore limited by run count and by priority, not by money: they run only when something changed, and they always give way to pipeline work.
+
+- **Static checks** (7.2) and the upstream watch run nightly and use no model.
+- **Evals run only on change.** A skill's evals run when its content changes, when the installed `claude` or `codex` version or the pinned model changes, or when the upstream watch reports a format change that affects it. An unchanged skill is never re-run on a schedule.
+- **Run caps, not dollars.** At most 3 runs per case per trigger, and at most 40 eval sessions per CLI per day (configurable in `freshness/config.json`). Skills over the cap wait for the next day, in a queue recorded in `freshness/state.json`; a skill held back for 3 days raises an alert (7.8).
+- **Yield to the pipeline.** Before each session the runner checks that no iwb pass holds `work.lock` or `tick.lock` and that no prbot review is running, and it does not start while one does. When a CLI reports a usage limit (Codex hits its limit today), the runner stops using that CLI and backs off for 1 hour, doubling to at most 8 hours, so evals never take quota the bots need.
+- **The upstream classifier** (7.1) is one CLI call per changed source, capped at 10 per day, and runs in the Mac job for the same reason.
 - Models are pinned per eval run (the agent-skills notes show results change with the default model), and the pin itself is checked against the model ID table in 7.1.
+
+### 7.8 Alerts
+
+An alert is raised for a runtime fault: an exceeded dwell limit (7.6), a watched source failing 3 runs in a row, a canary mismatch, a broken eval harness, a stale heartbeat, or a skill held back by the run cap for 3 days. Every alert is a GitHub issue plus one Slack message.
+
+**The issue is the record, in the shape iwb's intake takes.** iwb's `qualifies()` accepts an issue whose opener is the owner or an account in `trusted_openers` in iwb's `config.json`, or one the owner labeled `bot:work`. It skips issues labeled `bot:skip` or `bot:stop` and issues assigned to a person. So:
+
+- The freshness bot's GitHub App opens the issue, and M5 adds its `<app-slug>[bot]` login to `trusted_openers` together with PIP-1 (an ops change in iwb's config). Until then iwb ignores alert issues unless Kenny adds `bot:work`.
+- Alert issues are never assigned and never labeled `bot:skip`. They are labeled `freshness-alert` and the alert kind.
+- Title: `freshness-alert: <kind>: <subject>`, at most 100 characters. Body sections, in the order iwb's planner works from: **What happened** (state, since when, the dwell limit), **Evidence** (run ids, heartbeat lines, CLI versions; scrubbed, no paths outside the repo), **What to change** (the likely starting file, or, for a fault outside the repo, "investigate; a no-code answer that names the fix is acceptable"), **Files** (repo-relative paths that exist on `main`), and **Acceptance** (verbatim `python3 -B -c` probes with no shell syntax that fail now, or "none: closes when the next run is clean"). A hidden line `<!-- freshness-fingerprint: <hex> -->` carries the deduplication key.
+
+**The Slack message, and why this path.** `prbot.openclaw_attention`, which iwb calls for blocked issues, ready plans and questions, appends an `attention.required` event to the orchestrator's OpenClaw event log. The ecc-orchestrator OpenClaw plugin shows it in its Control UI tab and in `/ecc attention`, but it never posts to Slack: its README lists "no push notification" as a known limit. The existing path that does reach Slack is `openclaw message send --channel slack --target channel:<id> -m <text>`, which ecc-customization's `lib/gh_command_drain.py` uses for its own alerts. The Mac job therefore does both:
+
+1. calls `prbot.openclaw_attention("freshness-alert: <kind>", {url, title, problem})`, loading prbot from `PRBOT_PATH` the way iwb does, so the alert sits next to iwb's items in OpenClaw;
+2. runs `openclaw message send --channel slack --target channel:<#github-feed id> -m "skills-catalog freshness-alert: <kind> <subject>: <issue url>"`. The channel id comes from local config on the Mac, not from this repository.
+
+`#github-feed` is the destination because Kenny's reply there starts an ops agent turn (the channel does not require a mention), so an alert can be acted on where it lands. The github-event-router plugin queues only posts from the GitHub Slack app, so OpenClaw's own message adds no iwb or prbot work. The GitHub Slack app also posts the new issue to `#github-feed` when the repo is subscribed, and that post is what wakes iwb through the router. The Actions half cannot reach OpenClaw, so it only opens the issue; the Mac job sends the Slack message for any open alert issue it has not announced yet. When the Mac job itself is down, the Actions half's "Mac launchd job not completed" issue and the GitHub app's post are the only signal.
+
+**Deduplication and cooldown,** so one stale skill cannot spam:
+
+- The fingerprint is the sha256 of `<kind>:<subject>` (the subject is a skill name, a source id or a job name). It lives in the issue body and in `freshness/state.json`.
+- An open issue with the same fingerprint is reused: no new issue, and a comment only when the evidence changed, at most once per 24 hours.
+- An issue with the same fingerprint closed less than 7 days ago is reopened with a comment instead of a new issue, so a flapping fault stays one thread.
+- Slack gets one message when an issue opens or reopens, then at most one reminder per fingerprint per 24 hours while it stays open. Comments and closes send nothing. Across all fingerprints the bot sends at most 6 Slack messages a day; past that it sends one digest listing the rest, then nothing until the next day.
+- The bot opens at most 5 new alert issues a day. Beyond that it opens one `freshness-alert: storm` issue that lists the rest, since a burst usually has one cause.
+- The bot closes an alert issue itself once the condition is clear on 2 consecutive runs, with a comment naming the clean runs.
+- A failed `openclaw message send` is logged in `freshness/state.json` and retried on the next run. The issue exists either way.
 
 ## 8. Sync and bump flow
 
@@ -386,7 +440,7 @@ The diff of a bump PR is the gitlink line plus link additions or removals. "One-
 | --- | --- |
 | **Symlinks from bot repos to a catalog checkout** (`.agents/skills/shared -> ~/Documents/GitHub/skills-catalog/skills`) | iwb and the orchestrator work in fresh clones and worktrees, where an absolute link to Kenny's home folder dangles or, worse, resolves to whatever that working tree holds. A link is not pinned, so skills can change mid-run. The orchestrator's lessons step writes into `.agents/skills` and would write through the link into the catalog working tree. Codex's sandbox may refuse reads outside the repository. (In-repo relative links into the pinned submodule, section 4.3, have none of these problems.) |
 | **A live MCP server as the bots' skill source** | Claude Code and Codex load skills from disk, not from MCP, so bots would need a sync step at run start anyway. A server is one more thing that can be down, and a down server means silently missing skills. Skills would change mid-run and could not be reproduced afterwards. The Skills extension is experimental, and few hosts speak it. |
-| **Serving the whole `~/Documents/GitHub` skill folder (all 1,771 files)** | About 84% is third-party content with mixed licenses and no review. It would publish other people's work and private-repo content, flood agents' skill lists (Codex drops skills over its 2% context budget, and Claude Code truncates descriptions), and keep every duplicate this project exists to remove. |
+| **Serving the whole `~/Documents/GitHub` skill folder (all 1,770 files)** | About 84% is third-party content with mixed licenses and no review. It would publish other people's work and private-repo content, flood agents' skill lists (Codex drops skills over its 2% context budget, and Claude Code truncates descriptions), and keep every duplicate this project exists to remove. |
 | A git subtree or vendored copy per consumer | Copies drift again; the update is a large diff instead of one line; the catalog's history is lost in each consumer. |
 | A package (npm or PyPI) per release | Adds a registry and an install step to every bot clone for what is a folder of Markdown; it does not pin any better than a gitlink. |
 | Claude Code plugin marketplace as the only channel | Codex does not read Claude plugins, and plugin skills are namespaced (`/plugin:skill`), which changes how they trigger. It may be added later as an extra channel for interactive use. |
