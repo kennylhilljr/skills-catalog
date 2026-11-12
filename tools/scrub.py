@@ -38,7 +38,7 @@ _SIMPLE_PATTERNS = (
     ('github-token', re.compile(r'(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{22,}')),
     ('anthropic-key', re.compile(r'(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}')),
     ('openai-key', re.compile(r'(?<![A-Za-z0-9])sk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{20,}')),
-    ('aws-key', re.compile(r'(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}')),
+    ('aws-key', re.compile(r'(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])')),
     ('slack-token', re.compile(r'(?<![A-Za-z0-9])xox[abposr]-[A-Za-z0-9-]{10,}')),
     ('private-key', re.compile(r'-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----')),
     (
@@ -54,9 +54,14 @@ _SIMPLE_PATTERNS = (
     ('home-path', re.compile(r'(?<![A-Za-z0-9_.~-])/(?:Users|home)/[A-Za-z0-9._-]+/')),
 )
 
+# A dot-atom local part (no leading, trailing or doubled dot) and a dotted
+# domain. Single-label domains are left out on purpose: `actions/checkout@v4`
+# and `pkg@latest` are common in skill docs and are not addresses. The last
+# label is alphabetic or a punycode IDN TLD (`xn--...`).
 _EMAIL = re.compile(
-    r'(?<![A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+)@'
-    r'((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,})(?![A-Za-z0-9-])'
+    r'(?<![A-Za-z0-9._%+-])([A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*)@'
+    r'((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
+    r'(?:[A-Za-z]{2,}|[Xx][Nn]--[A-Za-z0-9-]*[A-Za-z0-9]))(?![A-Za-z0-9-])'
 )
 _EMAIL_EXEMPT_LOCAL = 'noreply'
 _EMAIL_EXEMPT_DOMAIN = 'users.noreply.github.com'
@@ -76,6 +81,13 @@ _LOWER_HEX = re.compile(r'[0-9a-f]+')
 _FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 _FRONTMATTER_DELIMITER = re.compile(r'^---\s*$')
 _CATALOG_OWNER = re.compile(r'^  catalog-owner:')
+# The value of a `  catalog-owner:` line: a quoted scalar, or a plain scalar
+# that ends before an inline ` #` comment. Only this span is exempt.
+_CATALOG_OWNER_VALUE = re.compile(
+    r'^(  catalog-owner:[ \t]*)'
+    r'("(?:[^"\\]|\\.)*"|\'(?:[^\']|\'\')*\'|[^ \t#"\'].*?|)'
+    r'(?=[ \t]+#|[ \t]*$)'
+)
 
 _PRIVATE_PREFIXES = ('skills/', '.held/')
 _HELD_PREFIX = '.held/'
@@ -143,6 +155,18 @@ def _frontmatter_end(lines):
     if all(_CATALOG_OWNER.match(line) or not line.strip() for line in lines):
         return len(lines)
     return 0
+
+
+def _without_owner_value(line):
+    """The catalog-owner line with only its value blanked out.
+
+    When the value cannot be parsed, the whole line is checked, so the
+    exemption never widens past the value.
+    """
+    m = _CATALOG_OWNER_VALUE.match(line)
+    if m is None:
+        return line
+    return m.group(1) + ' ' * len(m.group(2)) + line[m.end(2):]
 
 
 def _scan_line(line, kinds_out, check_entropy):
@@ -213,13 +237,27 @@ def scan_text(text, path='', private_names=()):
         _scan_line(line, kinds, check_entropy)
 
         if name_patterns:
-            exempt = held and index < owner_limit and _CATALOG_OWNER.match(line)
-            if not exempt and any(p.search(line) for p in name_patterns):
+            checked = line
+            if held and index < owner_limit and _CATALOG_OWNER.match(line):
+                checked = _without_owner_value(line)
+            if any(p.search(checked) for p in name_patterns):
                 kinds.add('private-repo')
 
         for kind in kinds:
             findings.add((number, kind))
     return sorted(findings)
+
+
+def _git_prefix(root):
+    """Path of root relative to its work tree top, with a trailing slash."""
+    probe = subprocess.run(
+        ['git', '-C', root, 'rev-parse', '--show-prefix'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        raise ScrubError('git rev-parse failed')
+    return os.fsdecode(probe.stdout.strip())
 
 
 def _git_files(root):
@@ -271,8 +309,13 @@ def scan_tree(root='.', private_names=()):
     if not os.path.isdir(root):
         raise ScrubError('scan root is not a directory')
     files = _git_files(root)
+    # Private names count by repo-relative path, so a scan rooted at skills/
+    # or .held/ inside a work tree still classifies its files correctly.
+    prefix = ''
     if files is None:
         files = _walk_files(root)
+    else:
+        prefix = _git_prefix(root)
 
     findings = []
     for rel in sorted(set(files)):
@@ -291,7 +334,7 @@ def scan_tree(root='.', private_names=()):
             text = data.decode('utf-8')
         except UnicodeDecodeError:
             continue
-        for line, kind in scan_text(text, rel, private_names):
+        for line, kind in scan_text(text, prefix + rel, private_names):
             findings.append((rel, line, kind))
     return findings
 
