@@ -134,6 +134,14 @@ class TestInventory(unittest.TestCase):
             "Use when testing skill exclusion mechanism.",
         )
 
+        # CAT-18: the excluded SKILL.md files are unreadable, so inventory.py
+        # fails if it reads or hashes an excluded skill before skipping it.
+        for excluded_dir in (
+            cls.T_path / "root" / "fixpub" / "skills" / exclude_name,
+            cls.T_path / "home" / ".claude" / "skills" / exclude_name,
+        ):
+            os.chmod(excluded_dir / "SKILL.md", 0)
+
         # Run inventory.py
         repo_root = Path(__file__).resolve().parent.parent
         inventory_script = repo_root / "tools" / "inventory.py"
@@ -311,7 +319,7 @@ class TestInventory(unittest.TestCase):
         users_part = "Users"
         home_part = "home"
         private_part = "private"
-        path_pattern = re.compile(r"(?<![\\w~.])/(?:" + users_part + "|" + home_part + "|" + private_part + "|var|tmp)/")
+        path_pattern = re.compile(r"(?<![\w~.])/(?:" + users_part + "|" + home_part + "|" + private_part + "|var|tmp)/")
 
         self.assertIsNone(path_pattern.search(json_search), "Absolute path found in JSON")
         self.assertIsNone(path_pattern.search(md_search), "Absolute path found in MD")
@@ -331,6 +339,11 @@ class TestInventory(unittest.TestCase):
         for rec in private_records:
             self.assertNotEqual(rec.get("dir_name"), "zqfix-ecc-skill")
             self.assertNotEqual(rec.get("dir_name"), "zqfix-thirdparty-copy")
+
+        # CAT-15: vendored fixture names never appear anywhere in either output
+        for vendored_name in ("zqfix-ecc-skill", "zqfix-thirdparty-copy"):
+            self.assertNotIn(vendored_name, self.json_text)
+            self.assertNotIn(vendored_name, self.md_text)
 
         # Check vendored count
         summary = output.get("summary", {})
@@ -386,7 +399,7 @@ class TestInventory(unittest.TestCase):
         self.assertEqual(summary.get("global_installs"), 1, "Expected 1 global install (excluding excluded)")
 
     def test_public_own_listed(self):
-        """Public own skills are properly listed."""
+        """CAT-15: a public own skill is listed with its rel_dir; only restricted records are reduced."""
         output = self.output
         public_records = output.get("own_skills_public", [])
 
