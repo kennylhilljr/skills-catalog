@@ -103,6 +103,11 @@ class HookTestCase(unittest.TestCase):
         result = self.git('commit', '-q', '-m', message)
         return result, result.stdout + result.stderr
 
+    def stage_gitlink(self, rel, sha):
+        """Stage a gitlink (mode 160000) at rel that points at commit sha."""
+        staged = self.git('update-index', '--add', '--cacheinfo', '160000,%s,%s' % (sha, rel))
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+
     def hook_path(self, name, repo=None):
         return os.path.join(repo or self.repo, '.git', 'hooks', name)
 
@@ -464,6 +469,32 @@ class PrePushRefsTest(HookTestCase):
                 self.assertIn(sha[:7] + ':notes.md:2: excluded skill name', out)
                 self.assertNotIn('hidden', out.lower())
 
+    def test_gitlink_path_counted(self):
+        # A gitlink has no blob: its path is counted and no content is read.
+        base = self.git('rev-parse', 'HEAD').stdout.strip()
+        self.write_exclude(HIDDEN + NL)
+        self.stage_gitlink('vendor/clean-sub', base)
+        self.assertEqual(self.git('commit', '-q', '--no-verify', '-m', 'clean sub').returncode, 0)
+        clean = self.git('rev-parse', 'HEAD').stdout.strip()
+        push = self.git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertTrue(self.remote_has('refs/heads/main', clean))
+
+        # Committed directly, without the helper's add -A.
+        self.stage_gitlink('vendor/' + HIDDEN.upper(), base)
+        self.assertEqual(self.git('commit', '-q', '--no-verify', '-m', 'sub').returncode, 0)
+        sha = self.git('rev-parse', 'HEAD').stdout.strip()
+        push = self.git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        out = push.stdout + push.stderr
+        self.assertNotEqual(push.returncode, 0, out)
+        self.assertIn('exclusion check: 1 pushed path(s) contain an excluded skill name', out)
+        self.assertIn('exclusion check: 1 findings', out)
+        self.assertIn('scrub: 0 findings', out)
+        self.assertNotIn('hidden', out.lower())
+        self.assertNotIn('local checks: error', out)
+        self.assertFalse(self.remote_has('refs/heads/main', sha))
+        self.assertTrue(self.remote_has('refs/heads/main', clean), 'the remote tip moved')
+
     def test_known_remote_sha_excludes_its_ancestry(self):
         self.write_exclude(HIDDEN + NL)
         leak = self.publish_leak('notes.md', 'x' + NL + HIDDEN + NL)
@@ -565,6 +596,30 @@ class ExclusionCheckTest(HookTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('1 staged path(s) contain an excluded skill name', result.stdout)
         self.assertNotIn('hidden', (result.stdout + result.stderr).lower())
+
+    def test_gitlink_path_counted(self):
+        # A gitlink has no blob: its path is counted and no content is read.
+        self.write_exclude(HIDDEN + NL)
+        self.write('notes.md', 'clean' + NL)
+        result, out = self.commit('base')
+        self.assertEqual(result.returncode, 0, out)
+        base = self.git('rev-parse', 'HEAD').stdout.strip()
+        self.stage_gitlink('vendor/clean-sub', base)
+        result = self.checks()
+        out = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, out)
+        self.assertIn('exclusion check: 0 findings', out)
+        self.assertNotIn('local checks: error', out)
+
+        self.stage_gitlink('vendor/' + HIDDEN, base)
+        result = self.checks()
+        out = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, out)
+        self.assertIn('exclusion check: 1 staged path(s) contain an excluded skill name', out)
+        self.assertIn('exclusion check: 1 findings', out)
+        self.assertIn('scrub: 0 findings', out)
+        self.assertNotIn('hidden', out.lower())
+        self.assertNotIn('local checks: error', out)
 
     def test_name_in_path_and_content_redacted(self):
         self.write_exclude(HIDDEN + NL)

@@ -29,7 +29,8 @@ Two checks run, and both always run:
   string, in any letter case, line by line; binary files are skipped. A
   finding prints `path:line: excluded skill name`, never the name or the
   line. A listed name inside a printed path shows as `[excluded]`. Checked
-  paths that contain a listed name are counted, not printed.
+  paths that contain a listed name are counted, not printed. Gitlink
+  (submodule) paths count too; they have no blob, so no content is read.
 - Scrub (CAT-10). Runs tools/scrub.py's scan_text with the same rules as CI,
   including the private repo list default, and prints `path:line: kind`.
 
@@ -55,6 +56,9 @@ MESSAGE_PATH = '(commit message)'
 TAG_MESSAGE_PATH = '(tag message)'
 # Regular files, executables and symlinks; gitlinks (submodules) have no blob.
 BLOB_MODES = (b'100644', b'100755', b'120000')
+# A gitlink records a commit id, not a blob. Its path is still checked, so
+# gitlinks are kept as items whose oid is None and their content never read.
+GITLINK_MODE = b'160000'
 # git's binary heuristic: a NUL byte in the first 8000 bytes.
 BINARY_PROBE = 8000
 
@@ -175,7 +179,10 @@ def read_blobs(root, wanted):
 
 
 def index_items(root):
-    """[(label, path, oid)] for every blob staged in the index."""
+    """[(label, path, oid)] for every blob or gitlink staged in the index.
+
+    A gitlink's oid is None: its path is checked, it has no content to read.
+    """
     _, out = _git(root, ['ls-files', '--stage', '-z'])
     items = []
     for record in out.split(b'\0'):
@@ -183,9 +190,15 @@ def index_items(root):
             continue
         meta, _, raw_path = record.partition(b'\t')
         fields = meta.split()
-        if len(fields) != 3 or fields[0] not in BLOB_MODES:
+        if len(fields) != 3:
             continue
-        items.append(('', os.fsdecode(raw_path), fields[1].decode('ascii')))
+        if fields[0] in BLOB_MODES:
+            oid = fields[1].decode('ascii')
+        elif fields[0] == GITLINK_MODE:
+            oid = None
+        else:
+            continue
+        items.append(('', os.fsdecode(raw_path), oid))
     return items
 
 
@@ -271,9 +284,10 @@ def pushed_tags(root, ref_lines):
 
 
 def commit_items(root, commit):
-    """[(label, path, oid)] for each blob the commit adds or changes.
+    """[(label, path, oid)] for each blob or gitlink the commit adds or changes.
 
-    A merge is compared with its first parent; a root commit with nothing.
+    A gitlink's oid is None, as in index_items. A merge is compared with its
+    first parent; a root commit with nothing.
     """
     _, parents = _git(root, ['rev-list', '--parents', '-n', '1', commit])
     ids = parents.decode('ascii').split()
@@ -295,9 +309,15 @@ def commit_items(root, commit):
         fields = meta[1:].split()
         path = os.fsdecode(parts[index + 1])
         index += 2
-        if len(fields) < 4 or fields[1] not in BLOB_MODES:
+        if len(fields) < 4:
             continue
-        items.append((label, path, fields[3].decode('ascii')))
+        if fields[1] in BLOB_MODES:
+            oid = fields[3].decode('ascii')
+        elif fields[1] == GITLINK_MODE:
+            oid = None
+        else:
+            continue
+        items.append((label, path, oid))
     return items
 
 
@@ -329,6 +349,7 @@ def run_checks(root, items, messages, names, scrub, private_names, path_word, re
     """Print findings for items [(label, path, oid)]; return (failed, errored).
 
     names is None when there is no exclusion list; report_skip says so.
+    An item whose oid is None is a gitlink: only its path is checked.
     """
     failed = False
     wanted = []
@@ -337,8 +358,9 @@ def run_checks(root, items, messages, names, scrub, private_names, path_word, re
         if (path, oid) not in seen:
             seen.add((path, oid))
             wanted.append((label, path, oid))
+    contents = [item for item in wanted if item[2] is not None]
     try:
-        blobs = read_blobs(root, [(path, oid) for _, path, oid in wanted])
+        blobs = read_blobs(root, [(path, oid) for _, path, oid in contents])
     except CheckError as err:
         print('local checks: error: ' + redact(str(err), names), file=sys.stderr)
         return failed, True
@@ -349,7 +371,7 @@ def run_checks(root, items, messages, names, scrub, private_names, path_word, re
     else:
         lowered = [name.lower() for name in names]
         hits = []
-        for label, path, oid in wanted:
+        for label, path, oid in contents:
             for line in exclusion_line_hits(blobs[oid], lowered):
                 hits.append((label, path, line))
         for label, path, message in messages:
@@ -364,7 +386,7 @@ def run_checks(root, items, messages, names, scrub, private_names, path_word, re
         failed = failed or bool(hits) or bool(paths)
 
     findings = []
-    for label, path, oid in wanted:
+    for label, path, oid in contents:
         try:
             text = blobs[oid].decode('utf-8')
         except UnicodeDecodeError:
