@@ -1,5 +1,5 @@
 {
-  "_comment": "Proposed canonical set, keyed by cluster. decision: keep | merge | drop | defer. tools/inventory.py merges this into own-skills.{json,md}. Skills marked 'local only' are not in any public repo; importing them is gated on the owner confirming they are his and passing the M1 scrub.",
+  "_comment": "Canonical set, keyed by cluster. decision: keep | merge | drop | defer. consumers: all (default) | none; none means held: the skill is in the catalog under .held/ and checked, but no consumer, link, bump PR, install or MCP response delivers it (DESIGN 3.2). publish: owner-approved marks a skill from a private repo or a local-only folder that the owner approved for publication; it is imported only after the M1 scrub. tools/inventory.py merges this into own-skills.{json,md}.",
   "review-change": {
     "decision": "merge",
     "canonical_name": "review-change",
@@ -53,111 +53,136 @@
     "reason": "Single copy, specific to operating ECC but used across repos."
   },
   "product-requirements": {
-    "decision": "defer",
+    "decision": "drop",
     "canonical_name": "product-requirements",
     "owner": "ecc-customization",
-    "reason": "Folder prd-synch, frontmatter name product-requirements and mcpmarket-version metadata: likely third-party origin. Needs provenance and license review before it can be promoted; until then it is treated as third-party."
+    "reason": "Third-party: the mcpmarket skill prd-sync-google-docs-to-local (folder prd-synch, frontmatter name product-requirements, mcpmarket-version metadata). Not the owner's, so it is not in the canonical set. It was removed from ecc-customization in kennylhilljr/ecc-customization#33."
   },
   "sdd-adopt": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-adopt",
     "owner": "sdd_framework",
-    "reason": "SDD skills are owned by the private sdd_framework and shipped by its installer. research-mcp holds a public copy. Whether the catalog should carry them is an open question."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-clarify": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-clarify",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-hld": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-hld",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-implement": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-implement",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. Public copy matches the private source."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). Public copy matches the private source.",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-intake": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-intake",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-lld": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-lld",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-spec": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-spec",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-tasks": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-tasks",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-triage": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-triage",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. Public copy matches the private source."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). Public copy matches the private source.",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "sdd-verify": {
-    "decision": "defer",
+    "decision": "keep",
     "canonical_name": "sdd-verify",
     "owner": "sdd_framework",
-    "reason": "See sdd-adopt. The public copy and the private source differ (hash)."
+    "reason": "Owner approved publishing. Canonical source stays the private sdd_framework; the catalog holds a held mirror under .held/ that no consumer reads until the SDD switch gate (SPEC SDD-1 to SDD-5). The public copy and the private source differ (hash).",
+    "consumers": "none",
+    "publish": "owner-approved"
   },
   "agent-debug": {
     "decision": "keep",
     "canonical_name": "agent-debug",
     "owner": "kennylhilljr",
-    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+    "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+    "publish": "owner-approved"
   },
   "ctxd-brief": {
     "decision": "keep",
     "canonical_name": "ctxd-brief",
     "owner": "kennylhilljr",
-    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+    "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+    "publish": "owner-approved"
   },
   "new-agent": {
     "decision": "keep",
     "canonical_name": "new-agent",
     "owner": "kennylhilljr",
-    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+    "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+    "publish": "owner-approved"
   },
   "new-mcp": {
     "decision": "keep",
     "canonical_name": "new-mcp",
     "owner": "kennylhilljr",
-    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+    "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+    "publish": "owner-approved"
   },
   "repo-matrix": {
     "decision": "keep",
     "canonical_name": "repo-matrix",
     "owner": "kennylhilljr",
-    "reason": "Local only (~/.claude/skills or ~/.codex/skills). Import after the owner confirms it is his, then it goes through the M1 scrub and lint like any new skill."
+    "reason": "Local only (~/.claude/skills). The owner confirmed it is their own and approved publishing it. Imported after the M1 scrub, with a 'Use when' description and generic paths.",
+    "publish": "owner-approved"
   },
   "current-time-check": {
-    "decision": "defer",
+    "decision": "drop",
     "canonical_name": "current-time-check",
     "owner": "kennylhilljr",
-    "reason": "claude.ai plugin skill synced locally. Decide whether claude.ai stays its home or the catalog does."
+    "reason": "claude.ai plugin skill. Stays in claude.ai; not published."
   },
   "profile-photo-crop": {
     "decision": "drop",
     "canonical_name": "profile-photo-crop",
     "owner": "kennylhilljr",
-    "reason": "claude.ai custom skill for a one-off task; not an agent engineering skill. Leave it in claude.ai."
+    "reason": "claude.ai custom skill for a one-off task. Stays in claude.ai; not published."
   }
 }

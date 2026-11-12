@@ -149,6 +149,8 @@ def main() -> int:
     ap.add_argument("--visibility", default=None, help="JSON {repo: PUBLIC|PRIVATE} overrides")
     ap.add_argument("--exclude-file", default="~/.config/skills-catalog/exclude.txt",
                     help="local, untracked list of skill folder names to skip entirely")
+    ap.add_argument("--self-repo", default="skills-catalog",
+                    help="the catalog's own repo name; its checkouts are the destination, not a source, and are skipped")
     args = ap.parse_args()
 
     root = Path(os.path.expanduser(args.root)).resolve()
@@ -184,6 +186,8 @@ def main() -> int:
                 info = {**info, "own": False, "slug": lock[f.parent.name], "visibility": "THIRD_PARTY"}
         else:
             info = repos.info(top)
+            if info["own"] and info["slug"].split("/")[1].lower() == args.self_repo.lower():
+                continue
         raw = f.read_bytes()
         text = raw.decode("utf-8", "replace")
         fm = frontmatter(text)
@@ -378,6 +382,7 @@ def main() -> int:
             "restricted_members": restricted, "diffs": diffs,
             "decision": d.get("decision", "undecided"), "canonical_name": d.get("canonical_name", key),
             "owner": d.get("owner", ""), "reason": d.get("reason", ""), "notes_on_diff": d.get("notes_on_diff", ""),
+            "consumers": d.get("consumers", "all") if d.get("decision") in ("keep", "merge") else "",
         })
 
     # 6. Emit.
@@ -442,6 +447,7 @@ def main() -> int:
         "clusters": len(cluster_out),
         "clusters_with_duplicates": sum(1 for c in cluster_out if c["members"] > 1),
         "proposed_canonical": len(canonical),
+        "proposed_canonical_held": sum(1 for c in canonical if c["consumers"] == "none"),
     }
     doc = {
         "generated_by": "tools/inventory.py", "owner": args.owner, "summary": summary,
@@ -454,6 +460,10 @@ def main() -> int:
                                "global_installs": dict(g_tp.most_common()),
                                "claude_plugins_by_marketplace": dict(by_mkt.most_common())},
         "clusters": cluster_out,
+        "decided_without_copies": [
+            {"cluster": k, "decision": v.get("decision", ""), "owner": v.get("owner", ""), "reason": v.get("reason", "")}
+            for k, v in sorted(decisions.items())
+            if not k.startswith("_") and k not in {c["cluster"] for c in cluster_out}],
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "own-skills.json").write_text(json.dumps(doc, indent=2, sort_keys=False) + "\n")
@@ -478,12 +488,18 @@ def render_md(doc: dict) -> str:
     for k, v in s.items():
         L.append(f"| {k.replace('_', ' ')} | {v} |")
     L += ["", "## Proposed canonical set", "",
-          "| Cluster | Decision | Canonical name | Members | Distinct contents | Owner | Reason |",
-          "| --- | --- | --- | --- | --- | --- | --- |"]
-    order = {"keep": 0, "merge": 1, "drop": 2, "undecided": 3}
-    for c in sorted(doc["clusters"], key=lambda c: (order.get(c["decision"], 9), c["cluster"])):
-        L.append(f"| {c['cluster']} | {c['decision']} | {c['canonical_name']} | {c['members']} | "
+          "Consumers `none` means held: in the catalog under `.held/`, checked, but delivered to no consumer (DESIGN 3.2).", "",
+          "| Cluster | Decision | Consumers | Canonical name | Members | Distinct contents | Owner | Reason |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    order = {"keep": 0, "merge": 1, "drop": 2, "defer": 3, "undecided": 4}
+    for c in sorted(doc["clusters"], key=lambda c: (order.get(c["decision"], 9), c["consumers"], c["cluster"])):
+        L.append(f"| {c['cluster']} | {c['decision']} | {c['consumers']} | {c['canonical_name']} | {c['members']} | "
                  f"{c['distinct_contents']} | {c['owner']} | {md_escape(c['reason'], 220)} |")
+    if doc.get("decided_without_copies"):
+        L += ["", "Decisions whose skill no longer has a copy on this machine:", "",
+              "| Cluster | Decision | Owner | Reason |", "| --- | --- | --- | --- |"]
+        for c in doc["decided_without_copies"]:
+            L.append(f"| {c['cluster']} | {c['decision']} | {c['owner']} | {md_escape(c['reason'], 220)} |")
     L += ["", "## Duplicate clusters and their diffs", ""]
     for c in doc["clusters"]:
         if c["members"] < 2:
