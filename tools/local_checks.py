@@ -11,8 +11,11 @@ the working tree, so they see exactly what will be committed or pushed.
 - With --pre-push they read the ref lines git gives a pre-push hook on stdin
   (`<local ref> <local sha> <remote ref> <remote sha>`) and check every
   commit being pushed: each file the commit adds or changes, read at that
-  commit, plus the commit message for the exclusion check. Commits already
-  on the remote ref, or for a new ref on any ref of REMOTE, are skipped.
+  commit, plus the commit message for the exclusion check. Commits reachable
+  from the remote sha git reports for that ref are skipped, but only when
+  this clone has that commit. For a new ref, or a remote sha this clone
+  lacks, the pushed ref's whole history is checked: tracking refs can be
+  stale, so they are never trusted. That can recheck historical commits.
   Deleting a ref checks nothing.
 
 Two checks run, and both always run:
@@ -194,9 +197,13 @@ def _commit_exists(root, sha):
 def pushed_commits(root, ref_lines, remote=None):
     """Commit ids being pushed, oldest first, without repeats.
 
-    For an update the remote already has, the range is remote_sha..local_sha.
-    For a new ref, or a remote sha this clone lacks, every commit not on a
-    ref of `remote` (any remote when it is not a configured remote name).
+    For an update whose remote sha this clone has, the range is
+    remote_sha..local_sha. For a new ref, or a remote sha this clone lacks,
+    every commit reachable from local_sha. Remote-tracking refs are never
+    used to skip commits, because a stale one (after `git remote set-url`,
+    say) would hide commits the remote does not have. The cost is that a
+    new ref rechecks historical commits. `remote` is accepted for the hook's
+    calling convention and does not change the result.
     """
     seen = set()
     commits = []
@@ -212,10 +219,6 @@ def pushed_commits(root, ref_lines, remote=None):
         args = ['rev-list', '--reverse', local_sha]
         if not _is_zero(remote_sha) and _commit_exists(root, remote_sha):
             args += ['--not', remote_sha]
-        elif remote:
-            args += ['--not', '--remotes=' + remote]
-        else:
-            args += ['--not', '--remotes']
         _, out = _git(root, args)
         for line in out.decode('ascii').split():
             if line not in seen:

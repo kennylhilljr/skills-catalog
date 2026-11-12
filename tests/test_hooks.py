@@ -311,8 +311,8 @@ class PrePushRefsTest(HookTestCase):
         self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
         self.assertTrue(self.remote_has('refs/heads/main', sha))
 
-    def test_new_branch_skips_commits_the_remote_has(self):
-        # main on the remote is clean; a new branch adds one clean commit.
+    def test_clean_new_branch_push_passes(self):
+        # A new branch whose whole history is clean pushes without findings.
         sha = self.leak_commit('more.md', 'clean too' + NL, message='more')
         push = self.git('push', '-q', 'origin', sha + ':refs/heads/topic')
         self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
@@ -339,6 +339,100 @@ class PrePushRefsTest(HookTestCase):
         )
         push = self.git('push', '-q', 'origin', ':refs/heads/old')
         self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+
+    # Stale remote-tracking refs (issue: tracking refs hid pushed commits).
+
+    def retarget_origin(self):
+        """Point origin at a new empty bare repository; origin/main stays stale."""
+        second = os.path.join(self.tmp, 'second.git')
+        subprocess.run(['git', 'init', '-q', '--bare', second], env=self.env, check=True)
+        self.assertEqual(self.git('remote', 'set-url', 'origin', second).returncode, 0)
+        return second
+
+    def publish_leak(self, rel, content):
+        """Commit and push a leak with --no-verify, so origin/main points at it."""
+        sha = self.leak_commit(rel, content)
+        push = self.git('push', '-q', '--no-verify', 'origin', 'HEAD:refs/heads/main')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertEqual(self.git('fetch', '-q', 'origin').returncode, 0)
+        self.assertEqual(self.git('rev-parse', 'origin/main').stdout.strip(), sha)
+        return sha
+
+    def missing_commit(self):
+        """A commit id made in a separate repository, so this clone lacks it."""
+        other = os.path.join(self.tmp, 'other')
+        subprocess.run(['git', 'init', '-q', other], env=self.env, check=True)
+        subprocess.run(
+            ['git', '-C', other, 'commit', '-q', '--allow-empty', '-m', 'elsewhere'],
+            env=self.env, check=True,
+        )
+        sha = subprocess.run(
+            ['git', '-C', other, 'rev-parse', 'HEAD'],
+            env=self.env, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertNotEqual(self.git('cat-file', '-e', sha + '^{commit}').returncode, 0)
+        return sha
+
+    def pre_push(self, stdin, *args):
+        return subprocess.run(
+            [sys.executable, os.path.join(self.repo, 'tools', 'local_checks.py'), '--pre-push']
+            + list(args),
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env=self.env,
+            cwd=self.repo,
+        )
+
+    def second_has_main(self, second):
+        got = subprocess.run(
+            ['git', '--git-dir', second, 'rev-parse', '--verify', '-q', 'refs/heads/main'],
+            capture_output=True, env=self.env,
+        )
+        return got.returncode == 0
+
+    def test_stale_tracking_ref_does_not_hide_commits(self):
+        self.write_exclude(HIDDEN + NL)
+        sha = self.publish_leak('notes.md', 'x' + NL + HIDDEN + NL)
+        second = self.retarget_origin()
+        push = self.git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        out = push.stdout + push.stderr
+        self.assertEqual(push.returncode, 1, out)
+        self.assertIn(sha[:7] + ':notes.md:2: excluded skill name', out)
+        self.assertNotIn('hidden', out.lower())
+        self.assertFalse(self.second_has_main(second), 'the blocked push reached the remote')
+
+    def test_stale_tracking_ref_does_not_hide_scrub_findings(self):
+        sha = self.publish_leak('t.md', 'token ' + GH_TOKEN + NL)
+        second = self.retarget_origin()
+        push = self.git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        out = push.stdout + push.stderr
+        self.assertEqual(push.returncode, 1, out)
+        self.assertIn(sha[:7] + ':t.md:1: github-token', out)
+        self.assertNotIn(GH_TOKEN, out)
+        self.assertFalse(self.second_has_main(second), 'the blocked push reached the remote')
+
+    def test_missing_remote_sha_ignores_tracking_refs(self):
+        self.write_exclude(HIDDEN + NL)
+        sha = self.publish_leak('notes.md', 'x' + NL + HIDDEN + NL)
+        absent = self.missing_commit()
+        stdin = 'refs/heads/main %s refs/heads/main %s%s' % (sha, absent, NL)
+        for args in (('origin', self.remote), ()):
+            with self.subTest(args=args):
+                result = self.pre_push(stdin, *args)
+                out = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 1, out)
+                self.assertIn(sha[:7] + ':notes.md:2: excluded skill name', out)
+                self.assertNotIn('hidden', out.lower())
+
+    def test_known_remote_sha_excludes_its_ancestry(self):
+        self.write_exclude(HIDDEN + NL)
+        leak = self.publish_leak('notes.md', 'x' + NL + HIDDEN + NL)
+        tip = self.leak_commit('more.md', 'clean' + NL, message='more')
+        stdin = 'refs/heads/main %s refs/heads/main %s%s' % (tip, leak, NL)
+        result = self.pre_push(stdin, 'origin', self.remote)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('exclusion check: 0 findings', result.stdout)
 
 
 class ExclusionCheckTest(HookTestCase):
