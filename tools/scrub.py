@@ -56,11 +56,18 @@ _SIMPLE_PATTERNS = (
 )
 
 # A dot-atom local part (no leading, trailing or doubled dot) and a dotted
-# domain. Single-label domains are left out on purpose: `actions/checkout@v4`
-# and `pkg@latest` are common in skill docs and are not addresses. The last
-# label is alphabetic or a punycode IDN TLD (`xn--...`).
+# domain. The local part takes the RFC 5322 dot-atom characters except the
+# backtick, which delimits code spans. Its first character is a letter, digit
+# or one of _ % + -, so a leading quote or backtick is not taken into the
+# local part. A match starts only at the start of a run of local-part
+# characters (a single quote may open the run), so finditer never restarts
+# inside a run and the scan stays linear in the line length. Single-label
+# domains are left out on purpose:
+# `actions/checkout@v4` and `pkg@latest` are common in skill docs and are not
+# addresses. The last label is alphabetic or a punycode IDN TLD (`xn--...`).
 _EMAIL = re.compile(
-    r'(?<![A-Za-z0-9._%+-])([A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*)@'
+    r"(?<![A-Za-z0-9.!#$%&*+/=?^_{|}~-])(?<![A-Za-z0-9.!#$%&'*+/=?^_{|}~-]')"
+    r"([A-Za-z0-9_%+-][A-Za-z0-9!#$%&'*+/=?^_{|}~-]*(?:\.[A-Za-z0-9!#$%&'*+/=?^_{|}~-]+)*)@"
     r'((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
     r'(?:[A-Za-z]{2,}|[Xx][Nn]--[A-Za-z0-9-]*[A-Za-z0-9]))(?![A-Za-z0-9-])'
 )
