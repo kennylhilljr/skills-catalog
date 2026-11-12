@@ -332,6 +332,45 @@ class PrePushRefsTest(HookTestCase):
         self.assertIn(sha[:7] + ':(commit message):3: excluded skill name', out)
         self.assertNotIn('hidden', out.lower())
 
+    def test_annotated_tag_message_checked(self):
+        """A1: an excluded name in a pushed tag message blocks the push."""
+        self.write_exclude(HIDDEN + NL)
+        self.assertEqual(self.git('tag', '-a', 'v0', '-m', 'about ' + HIDDEN, 'HEAD').returncode, 0)
+        tag = self.git('rev-parse', 'refs/tags/v0').stdout.strip()
+        push = self.git('push', '-q', 'origin', 'refs/tags/v0')
+        out = push.stdout + push.stderr
+        self.assertNotEqual(push.returncode, 0)
+        self.assertIn(tag[:7] + ':(tag message):1: excluded skill name', out)
+        self.assertNotIn('hidden', out.lower())
+        self.assertFalse(self.remote_has('refs/tags/v0', tag))
+
+    def test_clean_annotated_tag_pushes(self):
+        """A2: an annotated tag with a clean message pushes."""
+        self.write_exclude(HIDDEN + NL)
+        self.assertEqual(self.git('tag', '-a', 'v1', '-m', 'release notes', 'HEAD').returncode, 0)
+        tag = self.git('rev-parse', 'refs/tags/v1').stdout.strip()
+        push = self.git('push', '-q', 'origin', 'refs/tags/v1')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertTrue(self.remote_has('refs/tags/v1', tag))
+
+    def test_nested_tag_inner_message_checked(self):
+        """A3: the message of a tag that a pushed tag points to is checked."""
+        self.write_exclude(HIDDEN + NL)
+        self.assertEqual(self.git('tag', '-a', 'inner', '-m', 'about ' + HIDDEN, 'HEAD').returncode, 0)
+        # A tag of a tag object; git may print a nested tag hint.
+        self.assertEqual(
+            self.git('tag', '-a', 'outer', '-m', 'clean outer', 'refs/tags/inner').returncode, 0
+        )
+        inner_id = self.git('rev-parse', 'refs/tags/inner').stdout.strip()
+        outer_id = self.git('rev-parse', 'refs/tags/outer').stdout.strip()
+        push = self.git('push', '-q', 'origin', 'refs/tags/outer')
+        out = push.stdout + push.stderr
+        self.assertNotEqual(push.returncode, 0)
+        self.assertIn(inner_id[:7] + ':(tag message):1: excluded skill name', out)
+        self.assertNotIn(outer_id[:7] + ':(tag message)', out)
+        self.assertNotIn('hidden', out.lower())
+        self.assertFalse(self.remote_has('refs/tags/outer', outer_id))
+
     def test_deleting_a_ref_checks_nothing(self):
         sha = self.leak_commit('e.md', GH_TOKEN + NL)
         self.assertEqual(
