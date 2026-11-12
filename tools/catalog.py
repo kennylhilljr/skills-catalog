@@ -43,6 +43,10 @@ def _hash_files(folder):
     """Map each regular file under folder (relative, '/'-separated) to its sha256."""
     found = {}
     for dirpath, dirnames, filenames in os.walk(folder, onerror=_raise, followlinks=False):
+        # os.walk decides "symlink or not" for subfolders with calls that hide
+        # OSErrors; lstat each one so such an error makes build() raise.
+        for name in dirnames:
+            os.lstat(os.path.join(dirpath, name))
         for name in filenames:
             if name == '.DS_Store':
                 continue
@@ -77,9 +81,15 @@ def _entry(root, section, name):
 
 
 def _has_skill_md(folder):
-    """True if folder/SKILL.md is a file. Only "does not exist" counts as no."""
+    """True if folder is a real directory holding a regular SKILL.md.
+
+    Uses lstat so a symlinked skill folder or SKILL.md is skipped, never
+    followed. Only "does not exist" counts as no; other OSErrors propagate.
+    """
     try:
-        mode = os.stat(os.path.join(folder, 'SKILL.md')).st_mode
+        if not stat.S_ISDIR(os.lstat(folder).st_mode):
+            return False
+        mode = os.lstat(os.path.join(folder, 'SKILL.md')).st_mode
     except (FileNotFoundError, NotADirectoryError):
         return False
     return stat.S_ISREG(mode)

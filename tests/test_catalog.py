@@ -170,7 +170,7 @@ class TestCatalog(unittest.TestCase):
     def test_stat_error_propagates(self):
         """CAT-11: an OSError while checking a file or a SKILL.md makes build() raise."""
         _copy_repo(self.tmp)
-        real_lstat, real_stat = os.lstat, os.stat
+        real_lstat = os.lstat
         target = os.path.join('ears-notation', 'references', 'patterns.md')
 
         def fake_lstat(path, *args, **kwargs):
@@ -182,16 +182,35 @@ class TestCatalog(unittest.TestCase):
             with self.assertRaises(OSError):
                 _catalog.build(self.tmp)
 
-        skill_md = os.path.join('new-mcp', 'SKILL.md')
+        for blocked in (os.path.join('ears-notation', 'examples'),
+                        os.path.join('skills', 'new-mcp'),
+                        os.path.join('new-mcp', 'SKILL.md')):
+            def fake_lstat(path, *args, **kwargs):
+                if os.fspath(path).rstrip(os.sep).endswith(blocked):
+                    raise PermissionError(13, 'denied', os.fspath(path))
+                return real_lstat(path, *args, **kwargs)
 
-        def fake_stat(path, *args, **kwargs):
-            if os.fspath(path).endswith(skill_md):
-                raise PermissionError(13, 'denied', os.fspath(path))
-            return real_stat(path, *args, **kwargs)
+            with mock.patch('os.lstat', side_effect=fake_lstat):
+                with self.assertRaises(OSError, msg=blocked):
+                    _catalog.build(self.tmp)
 
-        with mock.patch('os.stat', side_effect=fake_stat):
-            with self.assertRaises(OSError):
-                _catalog.build(self.tmp)
+    @unittest.skipUnless(hasattr(os, 'symlink'), 'symlinks not supported')
+    def test_symlinked_skill_skipped(self):
+        """CAT-11: a symlinked skill folder or SKILL.md is not followed into the manifest."""
+        _copy_repo(self.tmp)
+        outside = os.path.join(self.tmp, 'outside')
+        shutil.copytree(os.path.join(_repo_root, 'skills', 'new-mcp'), outside)
+        try:
+            os.symlink(outside, os.path.join(self.tmp, 'skills', 'linked-skill'))
+            os.makedirs(os.path.join(self.tmp, 'skills', 'linked-md'))
+            os.symlink(os.path.join(outside, 'SKILL.md'),
+                       os.path.join(self.tmp, 'skills', 'linked-md', 'SKILL.md'))
+        except (OSError, NotImplementedError) as err:
+            self.skipTest('cannot create symlink: %s' % err)
+        names = [e['name'] for e in _catalog.build(self.tmp)['skills']]
+        self.assertNotIn('linked-skill', names)
+        self.assertNotIn('linked-md', names)
+        self.assertIn('new-mcp', names)
 
     @unittest.skipUnless(hasattr(os, 'symlink'), 'symlinks not supported')
     def test_symlink_skipped(self):
