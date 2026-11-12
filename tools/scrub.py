@@ -25,6 +25,7 @@ import argparse
 import math
 import os
 import re
+import string
 import subprocess
 import sys
 
@@ -65,6 +66,11 @@ _EMAIL = re.compile(
 )
 _EMAIL_EXEMPT_LOCAL = 'noreply'
 _EMAIL_EXEMPT_DOMAIN = 'users.noreply.github.com'
+# ASCII dot-atom characters (RFC 5322 atext plus the dot), minus the backtick
+# and single quote, which docs use as delimiters. `_EMAIL` stops at the
+# punctuation here, so a `noreply` match preceded by one of these is the tail
+# of a longer local part (`jane/noreply@...`) and is not exempt.
+_DOT_ATOM_CHARS = frozenset(string.ascii_letters + string.digits + "!#$%&*+-/=?^_{|}~.")
 
 # Four dotted numbers that are not part of a longer dotted sequence.
 _IPV4 = re.compile(
@@ -175,7 +181,10 @@ def _scan_line(line, kinds_out, check_entropy):
             kinds_out.add(kind)
     for m in _EMAIL.finditer(line):
         local, domain = m.group(1), m.group(2)
-        if local.lower() == _EMAIL_EXEMPT_LOCAL or domain.lower() == _EMAIL_EXEMPT_DOMAIN:
+        if domain.lower() == _EMAIL_EXEMPT_DOMAIN:
+            continue
+        if local.lower() == _EMAIL_EXEMPT_LOCAL and (
+                m.start() == 0 or line[m.start() - 1] not in _DOT_ATOM_CHARS):
             continue
         kinds_out.add('email')
         break
