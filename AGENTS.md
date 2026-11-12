@@ -31,10 +31,9 @@ python3 -c "import ast; ast.parse(open('tools/inventory.py').read())"
 python3 tools/inventory.py --help
 grep -rnE '/Users/[a-z]|/home/[a-z]|@gmail\.com|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9_]{20}|sk-ant-[a-z0-9-]{10}|sk-proj-[A-Za-z0-9]{10}|BEGIN [A-Z ]*PRIVATE KEY-----' --exclude-dir=.git . && echo "SCRUB FAILED" || echo "scrub clean"
 git diff --check
-f=~/.config/skills-catalog/exclude.txt; [ -f "$f" ] && sed 's/#.*//;s/[[:space:]]//g;/^$/d' "$f" | git grep -niF -f - | cut -d: -f1,2 | grep . && echo "EXCLUSION CHECK FAILED" || echo "exclusion check clean"
 ```
 
-The last check reads the local exclusion list and prints only file and line for a match, never the name.
+Also run `python3 tools/install-hooks` once per clone. It installs `pre-commit` and `pre-push` hooks that run `tools/local_checks.py` on git objects, never the working tree: pre-commit checks the staged index and pre-push checks every commit being pushed, including its message. the exclusion check reads the local exclusion list and prints only file and line for a match, never the name (CAT-19), and the scrub runs `tools/scrub.py` with the CI rules (CAT-10). To run the same checks by hand, use `python3 tools/local_checks.py`. A hook you wrote yourself is left alone; the installer names it and exits 1.
 
 ## Do not
 

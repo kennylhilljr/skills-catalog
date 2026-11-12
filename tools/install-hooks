@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Install the local pre-commit and pre-push hooks (CAT-10, CAT-19).
+
+    python3 tools/install-hooks [--repo DIR]
+
+Writes `pre-commit` and `pre-push` into the hooks folder of the repository
+at DIR (default `.`), found with `git rev-parse --git-path hooks`, and makes
+both executable. Each hook runs `python3 tools/local_checks.py` from the
+repository root and fails when it fails: pre-commit checks the staged index,
+and pre-push passes `--pre-push` with git's arguments and ref lines, so it
+checks the commits being pushed.
+
+A hook that carries the marker line below was written by this script, and a
+rerun updates it. A hook without the marker is left unchanged byte for byte;
+the script names it and exits 1. Exit status: 0 installed, 1 a foreign hook
+was left alone, 2 error. Python 3.9+, standard library only.
+"""
+
+import argparse
+import os
+import stat
+import subprocess
+import sys
+
+MARKER = '# installed by skills-catalog tools/install-hooks'
+HOOK_NAMES = ('pre-commit', 'pre-push')
+
+def hook_body(name):
+    """Text of one hook. pre-push passes its arguments and stdin through."""
+    command = 'exec python3 tools/local_checks.py'
+    if name == 'pre-push':
+        command += ' --pre-push "$@"'
+    return (
+        '#!/bin/sh\n'
+        + MARKER + '\n'
+        + '# Runs the exclusion check and the scrub. Reinstall with:\n'
+        + '#   python3 tools/install-hooks\n'
+        + 'root="$(git rev-parse --show-toplevel)" || exit 2\n'
+        + 'cd "$root" || exit 2\n'
+        + command + '\n'
+    )
+
+
+def hooks_dir(repo):
+    """Absolute hooks folder of the repository at repo."""
+    try:
+        probe = subprocess.run(
+            ['git', '-C', repo, 'rev-parse', '--git-path', 'hooks'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        raise SystemExit('install-hooks: error: git is not installed')
+    if probe.returncode != 0:
+        raise SystemExit('install-hooks: error: not a git repository: ' + repo)
+    path = os.fsdecode(probe.stdout.rstrip(b'\n'))
+    # A relative result is relative to the directory git ran in.
+    if not os.path.isabs(path):
+        path = os.path.join(os.path.abspath(repo), path)
+    return os.path.normpath(path)
+
+
+def is_ours(path):
+    try:
+        with open(path, 'rb') as handle:
+            data = handle.read()
+    except OSError:
+        return False
+    return MARKER.encode('utf-8') in data.splitlines()
+
+
+def install(directory, name):
+    """Write one hook. Returns False when a foreign hook was left alone."""
+    path = os.path.join(directory, name)
+    if os.path.lexists(path) and not is_ours(path):
+        return False
+    tmp = path + '.install-hooks.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='\n') as handle:
+        handle.write(hook_body(name))
+    mode = os.stat(tmp).st_mode
+    os.chmod(tmp, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    os.replace(tmp, path)
+    return True
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Install the pre-commit and pre-push hooks that run the '
+        'exclusion check and the scrub (CAT-10, CAT-19).'
+    )
+    parser.add_argument('--repo', default='.', help='repository to install into (default: .)')
+    args = parser.parse_args(argv)
+
+    if not os.path.isdir(args.repo):
+        print('install-hooks: error: not a directory: ' + args.repo, file=sys.stderr)
+        return 2
+    try:
+        directory = hooks_dir(args.repo)
+    except SystemExit as err:
+        print(str(err), file=sys.stderr)
+        return 2
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError:
+        print('install-hooks: error: cannot create ' + directory, file=sys.stderr)
+        return 2
+
+    left_alone = []
+    for name in HOOK_NAMES:
+        try:
+            if install(directory, name):
+                print('install-hooks: installed ' + name)
+            else:
+                left_alone.append(name)
+                print(
+                    'install-hooks: left ' + name + ' alone: it was not installed by '
+                    'this script. Merge it by hand or move it away and rerun.',
+                    file=sys.stderr,
+                )
+        except OSError:
+            print('install-hooks: error: cannot write ' + name, file=sys.stderr)
+            return 2
+    return 1 if left_alone else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
