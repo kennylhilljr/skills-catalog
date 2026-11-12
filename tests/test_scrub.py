@@ -174,6 +174,33 @@ class Exemptions(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(scrub.scan_text(text, 'docs/x.md'), [])
 
+    def test_noreply_exemption_requires_boundary(self):
+        # A noreply match that is the tail of a longer local part is reported.
+        for c in '/{!=|#$&*?^}~':
+            for word in ['noreply', 'NoReply', 'NOREPLY']:
+                text = 'mail jane' + c + word + AT + 'example.com'
+                with self.subTest(text=text):
+                    self.assertEqual(scrub.scan_text(text, 'docs/x.md'), [(1, 'email')])
+        # Plain noreply stays exempt at line start, after whitespace and
+        # inside backtick or quote delimiters.
+        address = 'noreply' + AT + 'example.com'
+        clean = [
+            address,
+            'NoReply' + AT + 'example.com',
+            'mail ' + address,
+            'mail\t' + address,
+            'mail ' + chr(96) + address + chr(96),
+            'mail "' + address + '"',
+            "mail '" + address + "'",
+            'mail <' + address + '>',
+            'mail (' + address + ')',
+            'mail jane/x' + AT + 'users.noreply.github.com',
+            'mail jane' + AT + 'Users.NoReply.GitHub.com',
+        ]
+        for text in clean:
+            with self.subTest(text=text):
+                self.assertEqual(scrub.scan_text(text, 'docs/x.md'), [])
+
     def test_example_fence_skips_only_entropy(self):
         inside = FENCE + 'example' + NL + ENTROPY + NL + FENCE + NL
         self.assertEqual(scrub.scan_text(inside, 'docs/x.md'), [])
