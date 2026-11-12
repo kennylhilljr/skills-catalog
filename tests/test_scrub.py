@@ -106,6 +106,10 @@ class DetectionKinds(unittest.TestCase):
         self.assertNotIn('anthropic-key', kinds('sk-' + 'ant-' + 'a' * 19))
         self.assertNotIn('openai-key', kinds('sk-' + 'a' * 19))
         self.assertNotIn('aws-key', kinds('AK' + 'IA' + 'Q' * 15))
+        # An AWS key id is exactly 16 characters after the prefix.
+        self.assertIn('aws-key', kinds('id ' + 'AS' + 'IA' + 'Q2W3E4R5T6Y7U8I9' + '.'))
+        self.assertNotIn('aws-key', kinds('AK' + 'IA' + 'Q' * 17))
+        self.assertNotIn('aws-key', kinds('AK' + 'IA' + 'Q' * 16 + 'z'))
         self.assertNotIn('slack-token', kinds('xo' + 'xb-' + '1' * 9))
         # An Anthropic key is not also an OpenAI key.
         self.assertNotIn('openai-key', kinds('sk-' + 'ant-' + 'api03-' + 'Zx9Yw8Vu7' * 3))
@@ -126,6 +130,12 @@ class DetectionKinds(unittest.TestCase):
         self.assertEqual(kinds('x ' + 'QwErTyUiOpAsDfGhJkLzXcVbNmQwErTyUiOp'), [])
         self.assertEqual(kinds('x ' + '1234567890' * 4), [])
         self.assertEqual(kinds('x ' + 'a1' * 20), [])
+        # Email local parts are dot-atoms; domains need a dot.
+        self.assertIn('email', kinds('mail first.last' + AT + 'example.com'))
+        for text in ['first.' + AT + 'example.com', 'a..b' + AT + 'example.com',
+                     'uses actions/checkout' + AT + 'v4', 'npm i pkg' + AT + 'latest']:
+            with self.subTest(text=text):
+                self.assertNotIn('email', kinds(text))
         # A slash breaks a run, so long repo-relative paths are fine.
         self.assertEqual(kinds('docs/' + ENTROPY[:20] + '/' + ENTROPY[20:]), [])
 
@@ -222,6 +232,18 @@ class Exemptions(unittest.TestCase):
         for rel in ['.held/a/references/note.md', '.held/a/README.md']:
             with self.subTest(rel=rel):
                 self.assertEqual(kinds(owner, rel, names), ['private-repo'])
+        # Only the value is exempt, not an inline comment or a second name.
+        other_name = 'yy-' + 'other-repo'
+        both = [PRIVATE, other_name]
+        for value in [chr(34) + PRIVATE + chr(34), chr(39) + PRIVATE + chr(39), PRIVATE]:
+            with self.subTest(value=value):
+                line = '  catalog-owner: ' + value
+                self.assertEqual(kinds(line, '.held/a/SKILL.md', both), [])
+                self.assertEqual(kinds(line + '  # ' + other_name, '.held/a/SKILL.md', both), ['private-repo'])
+                self.assertEqual(kinds(line + ' # ' + PRIVATE, '.held/a/SKILL.md', both), ['private-repo'])
+        # Text after a closed quoted value is not part of the value.
+        trailing = owner + ' ' + other_name
+        self.assertEqual(kinds(trailing, '.held/a/SKILL.md', both), ['private-repo'])
         # Only the exact two-space key is exempt.
         other = '    catalog-owner: ' + PRIVATE
         self.assertEqual(kinds(other, '.held/a/SKILL.md', names), ['private-repo'])
@@ -242,6 +264,23 @@ class ScanTree(unittest.TestCase):
             # A tracked file deleted from the work tree is skipped.
             os.remove(os.path.join(root, 'tracked.md'))
             self.assertEqual(scrub.scan_tree(root, []), [])
+
+    def test_git_subdirectory_root_keeps_repo_relative_classification(self):
+        with tempfile.TemporaryDirectory() as root:
+            git(root, 'init', '-q')
+            write(root, 'skills/a/SKILL.md', 'uses ' + PRIVATE + NL)
+            write(root, '.held/b/SKILL.md', 'uses ' + PRIVATE + NL)
+            write(root, 'docs/x.md', 'uses ' + PRIVATE + NL)
+            git(root, 'add', '-A')
+            sub = os.path.join(root, 'skills')
+            self.assertEqual(
+                scrub.scan_tree(sub, [PRIVATE]), [(os.path.join('a', 'SKILL.md'), 1, 'private-repo')]
+            )
+            self.assertEqual(
+                scrub.scan_tree(os.path.join(root, '.held'), [PRIVATE]),
+                [(os.path.join('b', 'SKILL.md'), 1, 'private-repo')],
+            )
+            self.assertEqual(scrub.scan_tree(os.path.join(root, 'docs'), [PRIVATE]), [])
 
     def test_plain_tree_walks_all_files_but_git_dir_and_skips_non_utf8(self):
         with tempfile.TemporaryDirectory() as root:
