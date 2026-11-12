@@ -341,6 +341,19 @@ class ExclusionCheckTest(HookTestCase):
         self.assertIn('1 staged path(s) contain an excluded skill name', result.stdout)
         self.assertNotIn('hidden', (result.stdout + result.stderr).lower())
 
+    def test_name_in_path_and_content_redacted(self):
+        self.write_exclude(HIDDEN + NL)
+        rel = os.path.join('skills', HIDDEN.upper(), 'SKILL.md')
+        self.write(rel, 'name: ' + HIDDEN + NL)
+        self.write(os.path.join('skills', HIDDEN, 'leak.md'), GH_TOKEN + NL)
+        self.git('add', '-A')
+        result = self.checks()
+        out = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('skills/[excluded]/SKILL.md:1: excluded skill name', out)
+        self.assertIn('skills/[excluded]/leak.md:1: github-token', out)
+        self.assertNotIn('hidden', out.lower())
+
     def test_unreadable_list_is_an_error_without_contents(self):
         with open(self.exclude, 'wb') as handle:
             handle.write(b'\xff\xfe' + HIDDEN.encode('ascii'))

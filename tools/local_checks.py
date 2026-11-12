@@ -11,6 +11,8 @@ Run from anywhere inside the repository. Two checks run, and both always run:
   comment; a missing file skips the check. Each name is matched as a fixed
   string, in any letter case, against the content staged in the index. A
   finding prints `path:line: excluded skill name`, never the name or the line.
+  A listed name inside a printed path, from either check, shows as
+  `[excluded]`. Staged paths that contain a listed name are counted.
 - Scrub (CAT-10). Runs tools/scrub.py's scan_tree on the repository with the
   same rules as CI, including the private repo list default, and prints
   `path:line: kind`.
@@ -21,6 +23,7 @@ list. Python 3.9+, standard library only.
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 
@@ -82,6 +85,19 @@ def read_names(path):
     except (OSError, UnicodeDecodeError):
         raise CheckError('cannot read the exclusion list')
     return names
+
+
+REDACTED = '[excluded]'
+
+
+def redact(path, names):
+    """path with every listed name, in any letter case, replaced by [excluded]."""
+    if not names:
+        return path
+    # Longest first, so a name that contains another is replaced whole.
+    ordered = sorted(names, key=len, reverse=True)
+    pattern = re.compile('|'.join(re.escape(name) for name in ordered), re.IGNORECASE)
+    return pattern.sub(REDACTED, path)
 
 
 def _parse_grep_z(output):
@@ -195,6 +211,7 @@ def main(argv=None):
 
     failed = False
     errored = False
+    names = None
 
     try:
         names = read_names(exclude_path())
@@ -203,7 +220,7 @@ def main(argv=None):
         else:
             hits = exclusion_findings(root, names)
             for path, line in hits:
-                print('%s:%d: excluded skill name' % (path, line))
+                print('%s:%d: excluded skill name' % (redact(path, names), line))
             paths = excluded_path_count(root, names)
             if paths:
                 print('exclusion check: %d staged path(s) contain an excluded skill name' % paths)
@@ -216,7 +233,7 @@ def main(argv=None):
     try:
         findings = scrub_findings(root)
         for path, line, kind in findings:
-            print('%s:%d: %s' % (path, line, kind))
+            print('%s:%d: %s' % (redact(path, names), line, kind))
         print('scrub: %d findings' % len(findings))
         failed = failed or bool(findings)
     except CheckError as err:
