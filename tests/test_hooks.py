@@ -242,10 +242,102 @@ class PrePushTest(HookTestCase):
         )
         self.assertNotEqual(listed.returncode, 0, 'the blocked push reached the remote')
 
+        # Every pushed commit is checked, so the leak must leave the history.
+        self.assertEqual(self.git('reset', '-q', '--hard', 'HEAD~1').returncode, 0)
         self.write('notes.md', 'clean again' + NL)
         result, out = self.commit('fix')
         self.assertEqual(result.returncode, 0, out)
         push = self.git('push', '-q', remote, 'HEAD:refs/heads/main')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+
+
+class PrePushRefsTest(HookTestCase):
+    """pre-push checks the commits being pushed, not the index (CAT-10, CAT-19)."""
+
+    def setUp(self):
+        super().setUp()
+        self.remote = os.path.join(self.tmp, 'remote.git')
+        subprocess.run(['git', 'init', '-q', '--bare', self.remote], env=self.env, check=True)
+        self.write('notes.md', 'clean' + NL)
+        result, out = self.commit('base')
+        self.assertEqual(result.returncode, 0, out)
+        self.assertEqual(self.install().returncode, 0)
+        self.git('remote', 'add', 'origin', self.remote)
+        push = self.git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.git('fetch', '-q', 'origin')
+
+    def leak_commit(self, rel, content, message='leak'):
+        self.write(rel, content)
+        self.git('add', '-A')
+        self.assertEqual(self.git('commit', '-q', '--no-verify', '-m', message).returncode, 0)
+        return self.git('rev-parse', 'HEAD').stdout.strip()
+
+    def remote_has(self, ref, sha):
+        got = subprocess.run(
+            ['git', '--git-dir', self.remote, 'rev-parse', '--verify', '-q', ref],
+            capture_output=True, text=True, env=self.env,
+        )
+        return got.stdout.strip() == sha
+
+    def test_pushed_commit_checked_even_when_index_is_clean(self):
+        self.write_exclude(HIDDEN + NL)
+        sha = self.leak_commit('notes.md', 'x' + NL + HIDDEN + NL)
+        # The index and working tree no longer hold the name; the commit does.
+        self.write('notes.md', 'clean' + NL)
+        self.git('add', '-A')
+        push = self.git('push', '-q', 'origin', sha + ':refs/heads/main')
+        out = push.stdout + push.stderr
+        self.assertNotEqual(push.returncode, 0)
+        self.assertIn(sha[:7] + ':notes.md:2: excluded skill name', out)
+        self.assertNotIn('hidden', out.lower())
+        self.assertFalse(self.remote_has('refs/heads/main', sha))
+
+    def test_intermediate_commit_checked(self):
+        first = self.leak_commit('b.md', 'token ' + GH_TOKEN + NL)
+        tip = self.leak_commit('b.md', 'removed again' + NL, message='undo')
+        push = self.git('push', '-q', 'origin', tip + ':refs/heads/main')
+        out = push.stdout + push.stderr
+        self.assertNotEqual(push.returncode, 0)
+        self.assertIn(first[:7] + ':b.md:1: github-token', out)
+        self.assertNotIn(GH_TOKEN, out)
+
+    def test_staged_leak_does_not_block_a_clean_push(self):
+        self.write_exclude(HIDDEN + NL)
+        sha = self.leak_commit('notes.md', 'clean and new' + NL, message='fine')
+        self.write('scratch.md', HIDDEN + NL + GH_TOKEN + NL)
+        self.git('add', '-A')
+        push = self.git('push', '-q', 'origin', sha + ':refs/heads/main')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertTrue(self.remote_has('refs/heads/main', sha))
+
+    def test_new_branch_skips_commits_the_remote_has(self):
+        # main on the remote is clean; a new branch adds one clean commit.
+        sha = self.leak_commit('more.md', 'clean too' + NL, message='more')
+        push = self.git('push', '-q', 'origin', sha + ':refs/heads/topic')
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+
+    def test_new_branch_with_leak_blocked(self):
+        sha = self.leak_commit('c.md', GH_TOKEN + NL)
+        push = self.git('push', '-q', 'origin', sha + ':refs/heads/topic')
+        self.assertNotEqual(push.returncode, 0)
+        self.assertIn(sha[:7] + ':c.md:1: github-token', push.stdout + push.stderr)
+
+    def test_commit_message_checked_for_excluded_names(self):
+        self.write_exclude(HIDDEN + NL)
+        sha = self.leak_commit('d.md', 'clean' + NL, message='subject' + NL + NL + 'about ' + HIDDEN)
+        push = self.git('push', '-q', 'origin', sha + ':refs/heads/main')
+        out = push.stdout + push.stderr
+        self.assertNotEqual(push.returncode, 0)
+        self.assertIn(sha[:7] + ':(commit message):3: excluded skill name', out)
+        self.assertNotIn('hidden', out.lower())
+
+    def test_deleting_a_ref_checks_nothing(self):
+        sha = self.leak_commit('e.md', GH_TOKEN + NL)
+        self.assertEqual(
+            self.git('push', '-q', '--no-verify', 'origin', sha + ':refs/heads/old').returncode, 0
+        )
+        push = self.git('push', '-q', 'origin', ':refs/heads/old')
         self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
 
 
@@ -354,19 +446,18 @@ class ExclusionCheckTest(HookTestCase):
         self.assertIn('skills/[excluded]/leak.md:1: github-token', out)
         self.assertNotIn('hidden', out.lower())
 
-    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root reads any file')
-    def test_scrub_error_path_redacted(self):
+    def test_read_error_path_redacted(self):
         self.write_exclude(HIDDEN + NL)
         rel = os.path.join('docs', HIDDEN + '.md')
         self.write(rel, 'clean' + NL)
         self.git('add', '-A')
-        full = os.path.join(self.repo, rel)
-        os.chmod(full, 0)
-        self.addCleanup(os.chmod, full, 0o644)
+        # Remove the staged blob's loose object, so reading it fails.
+        oid = self.git('rev-parse', ':docs/' + HIDDEN + '.md').stdout.strip()
+        os.remove(os.path.join(self.repo, '.git', 'objects', oid[:2], oid[2:]))
         result = self.checks()
         out = result.stdout + result.stderr
         self.assertEqual(result.returncode, 2)
-        self.assertIn('scrub: error: cannot read docs/[excluded].md', out)
+        self.assertIn('local checks: error: cannot read docs/[excluded].md', out)
         self.assertNotIn('hidden', out.lower())
 
     def test_unreadable_list_is_an_error_without_contents(self):
@@ -380,6 +471,19 @@ class ExclusionCheckTest(HookTestCase):
 
 
 class ScrubCheckTest(HookTestCase):
+    def test_scrub_reads_index_not_working_tree(self):
+        self.write('notes.md', 'token ' + GH_TOKEN + NL)
+        self.git('add', '-A')
+        self.write('notes.md', 'clean in the working tree' + NL)
+        result = self.checks()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('notes.md:1: github-token', result.stdout)
+
+        self.git('add', '-A')
+        self.write('notes.md', 'token ' + GH_TOKEN + NL)
+        result = self.checks()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_default_private_repo_list_is_loaded(self):
         listed = os.path.join(self.home, '.config', 'skills-catalog', 'private-repos.txt')
         os.makedirs(os.path.dirname(listed))

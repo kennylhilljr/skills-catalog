@@ -6,7 +6,9 @@
 Writes `pre-commit` and `pre-push` into the hooks folder of the repository
 at DIR (default `.`), found with `git rev-parse --git-path hooks`, and makes
 both executable. Each hook runs `python3 tools/local_checks.py` from the
-repository root and fails when it fails.
+repository root and fails when it fails: pre-commit checks the staged index,
+and pre-push passes `--pre-push` with git's arguments and ref lines, so it
+checks the commits being pushed.
 
 A hook that carries the marker line below was written by this script, and a
 rerun updates it. A hook without the marker is left unchanged byte for byte;
@@ -23,15 +25,20 @@ import sys
 MARKER = '# installed by skills-catalog tools/install-hooks'
 HOOK_NAMES = ('pre-commit', 'pre-push')
 
-HOOK_BODY = (
-    '#!/bin/sh\n'
-    + MARKER + '\n'
-    + '# Runs the exclusion check and the scrub. Reinstall with:\n'
-    + '#   python3 tools/install-hooks\n'
-    + 'root="$(git rev-parse --show-toplevel)" || exit 2\n'
-    + 'cd "$root" || exit 2\n'
-    + 'exec python3 tools/local_checks.py\n'
-)
+def hook_body(name):
+    """Text of one hook. pre-push passes its arguments and stdin through."""
+    command = 'exec python3 tools/local_checks.py'
+    if name == 'pre-push':
+        command += ' --pre-push "$@"'
+    return (
+        '#!/bin/sh\n'
+        + MARKER + '\n'
+        + '# Runs the exclusion check and the scrub. Reinstall with:\n'
+        + '#   python3 tools/install-hooks\n'
+        + 'root="$(git rev-parse --show-toplevel)" || exit 2\n'
+        + 'cd "$root" || exit 2\n'
+        + command + '\n'
+    )
 
 
 def hooks_dir(repo):
@@ -69,7 +76,7 @@ def install(directory, name):
         return False
     tmp = path + '.install-hooks.tmp'
     with open(tmp, 'w', encoding='utf-8', newline='\n') as handle:
-        handle.write(HOOK_BODY)
+        handle.write(hook_body(name))
     mode = os.stat(tmp).st_mode
     os.chmod(tmp, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     os.replace(tmp, path)

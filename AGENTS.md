@@ -33,7 +33,7 @@ grep -rnE '/Users/[a-z]|/home/[a-z]|@gmail\.com|ghp_[A-Za-z0-9]{20}|github_pat_[
 git diff --check
 ```
 
-Also run `python3 tools/install-hooks` once per clone. It installs `pre-commit` and `pre-push` hooks that run `tools/local_checks.py`: the exclusion check reads the local exclusion list and prints only file and line for a match, never the name (CAT-19), and the scrub runs `tools/scrub.py` with the CI rules (CAT-10). To run the same checks by hand, use `python3 tools/local_checks.py`. A hook you wrote yourself is left alone; the installer names it and exits 1.
+Also run `python3 tools/install-hooks` once per clone. It installs `pre-commit` and `pre-push` hooks that run `tools/local_checks.py` on git objects, never the working tree: pre-commit checks the staged index and pre-push checks every commit being pushed, including its message. the exclusion check reads the local exclusion list and prints only file and line for a match, never the name (CAT-19), and the scrub runs `tools/scrub.py` with the CI rules (CAT-10). To run the same checks by hand, use `python3 tools/local_checks.py`. A hook you wrote yourself is left alone; the installer names it and exits 1.
 
 ## Do not
 
