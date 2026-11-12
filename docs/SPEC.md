@@ -240,4 +240,4 @@ Test levels: `unit` (pure function), `integration` (real git, temp folders and f
 | M7 | M4 | none |
 | SDD switch | M5, M6 | SDD-2 to SDD-5 pass |
 
-MCP-9 (`tools/install-local`) waits for the open question in DESIGN 0.
+MCP-9 (`tools/install-local`) is decided (DESIGN 0) and builds in M4.
