@@ -1,0 +1,139 @@
+# The required `gate` check for main (SPEC CAT-1, CAT-24; DESIGN 4.1, 7.6).
+#
+# Runs after the `catalog` workflow (lint, catalog manifest check, unit
+# tests, skills-ref) finishes for a PR or a push to main. GitHub runs
+# workflow_run workflows only from the copy on the default branch, so this
+# file, and the tools/scrub.py it runs, always come from main, never from the
+# PR. The PR's files are fetched as plain data into ./head and only read by
+# main's scrub. The job then posts the `gate` check run on the PR's head
+# commit: success only when the catalog workflow succeeded and the scrub,
+# including the private repo names from the PRIVATE_REPOS secret, is clean.
+#
+# Rules for editing this file (DESIGN 4.1):
+# - Never execute, import, install or source anything under ./head.
+# - Never put github.event values into a `run:` script; pass them through
+#   `env:` and quote them. Branch names, titles and messages are attacker
+#   controlled.
+# - PRIVATE_REPOS appears only in the env of the scrub step.
+# - No job in any workflow may be named `gate`; only this file posts it.
+name: gate
+
+on:
+  workflow_run:
+    workflows: [catalog]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  report:
+    # Only the real catalog workflow counts. A PR can add another workflow
+    # named "catalog"; its runs have a different path and are ignored.
+    # GitHub may append "@<ref>" to the path.
+    if: >-
+      (github.event.workflow_run.path == '.github/workflows/catalog.yml' ||
+       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@')) &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check out main's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Fetch the head commit as data
+        env:
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          if ! [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::head sha is not 40 hex digits"
+            exit 1
+          fi
+          # Anonymous fetch: the repository is public, so no token is
+          # written into ./head. A fork PR's commit is reachable here
+          # through refs/pull/<n>/head. Hooks are off for the checkout.
+          git init -q head
+          git -C head fetch -q --depth=1 --no-tags "${SERVER}/${REPO}.git" "${HEAD_SHA}"
+          git -C head -c core.hooksPath=/dev/null checkout -q --detach FETCH_HEAD
+          test "$(git -C head rev-parse HEAD)" = "${HEAD_SHA}"
+
+      - name: Scrub (main's tools/scrub.py on the head files)
+        id: scrub
+        env:
+          PRIVATE_REPOS: ${{ secrets.PRIVATE_REPOS }}
+        run: |
+          # Fail closed: without the list the private-name rule cannot run.
+          if [ -z "${PRIVATE_REPOS}" ]; then
+            echo "::error::PRIVATE_REPOS secret is empty or unavailable"
+            exit 1
+          fi
+          list="${RUNNER_TEMP}/private-repos.txt"
+          umask 077
+          printf '%s\n' "${PRIVATE_REPOS}" > "${list}"
+          unset PRIVATE_REPOS
+          # File names in ./head are PR-controlled and the scrub prints
+          # them, so workflow commands are off while it runs.
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          # Pass 1, every kind except private names, with file and line.
+          empty="${RUNNER_TEMP}/no-private-repos.txt"
+          : > "${empty}"
+          status=0
+          python3 -I base/tools/scrub.py --private-repos "${empty}" head || status=$?
+          # Pass 2, with the private list. Its output is withheld: the log is
+          # public, and a file and line per guessed name would tell a fork
+          # which guesses are private repos. Only pass or fail is shown.
+          names=0
+          python3 -I base/tools/scrub.py --private-repos "${list}" head > /dev/null 2>&1 || names=$?
+          echo "::${token}::"
+          # Pass 2 also fails on pass 1's findings, so it names a private
+          # repo only when pass 1 was clean.
+          if [ "${status}" -eq 0 ] && [ "${names}" -eq 1 ]; then
+            echo "::error::private-name check failed: a file under skills/ or .held/ names a private repo. File and line are withheld; run tools/scrub.py locally with the private repo list."
+            status=1
+          elif [ "${names}" -gt 1 ]; then
+            echo "::error::private-name check could not run (exit ${names})"
+            status="${names}"
+          fi
+          rm -f "${list}"
+          exit "${status}"
+
+      - name: Post the gate check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CATALOG_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CATALOG_URL: ${{ github.event.workflow_run.html_url }}
+          SCRUB_OUTCOME: ${{ steps.scrub.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "${CATALOG_CONCLUSION}" = "success" ] && [ "${SCRUB_OUTCOME}" = "success" ]; then
+            conclusion=success
+            title="catalog checks and scrub passed"
+          else
+            conclusion=failure
+            title="catalog checks: ${CATALOG_CONCLUSION:-none}; scrub: ${SCRUB_OUTCOME:-not run}"
+          fi
+          summary="Catalog workflow (lint, manifest check, unit tests, skills-ref): ${CATALOG_CONCLUSION:-none}, ${CATALOG_URL}
+          Scrub with main's tools/scrub.py and the private repo list: ${SCRUB_OUTCOME:-not run}, ${RUN_URL}
+          To re-run, re-run the catalog workflow for this commit."
+          gh api --method POST "repos/${REPO}/check-runs" \
+            -f name=gate -f head_sha="${HEAD_SHA}" -f status=completed \
+            -f conclusion="${conclusion}" -f details_url="${RUN_URL}" \
+            -f "output[title]=${title}" -f "output[summary]=${summary}" \
+            --jq '"posted gate=" + .conclusion + " on " + .head_sha + " (app " + (.app.slug // "?") + ")"'
+          if [ "${conclusion}" != success ]; then
+            exit 1
+          fi
