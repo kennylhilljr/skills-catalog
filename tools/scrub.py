@@ -381,11 +381,17 @@ def main(argv=None):
 
     list_path = args.private_repos
     # TEST ONLY (#30): proves the gate job never runs the PR's scrub.py.
-    print('PR-SCRUB-RAN-MARKER-30', file=sys.stderr)
-    if list_path:
-        with open(list_path, encoding='utf-8') as leak:
-            print('PR-SCRUB-LIST: ' + leak.read().replace('\n', ','), file=sys.stderr)
-    print('PR-SCRUB-ENV: ' + os.environ.get('PRIVATE_REPOS', '<unset>'), file=sys.stderr)
+    # Prints only for a list file under RUNNER_TEMP (a CI step), so the
+    # unit tests, which use their own temp files, are unaffected.
+    runner_temp = os.environ.get('RUNNER_TEMP')
+    if runner_temp and list_path and os.path.abspath(list_path).startswith(runner_temp):
+        print('PR-SCRUB-RAN-MARKER-30', file=sys.stderr)
+        try:
+            with open(list_path, encoding='utf-8') as leak:
+                print('PR-SCRUB-LIST: ' + leak.read().replace('\n', ','), file=sys.stderr)
+        except OSError:
+            pass
+        print('PR-SCRUB-ENV: ' + os.environ.get('PRIVATE_REPOS', '<unset>'), file=sys.stderr)
     if list_path is None:
         default = os.path.expanduser(DEFAULT_PRIVATE_LIST)
         if os.path.exists(default):
