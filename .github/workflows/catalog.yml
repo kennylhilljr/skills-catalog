@@ -1,7 +1,9 @@
-# PR gate for the catalog (SPEC CAT-1, CAT-17; DESIGN 7.6).
-# Runs lint, scrub, the catalog manifest check, the unit tests and the
-# Agent Skills reference validator. Branch protection on main requires the
-# `gate` job of this workflow.
+# PR checks for the catalog (SPEC CAT-1, CAT-17; DESIGN 4.1, 7.6).
+# Runs lint, the catalog manifest check, the unit tests and the Agent Skills
+# reference validator on the PR's own code. It uses no secrets, so it runs
+# the same way for PRs from forks. The scrub with the private repo list and
+# the required `gate` check come from gate.yml, which runs main's copy after
+# this workflow completes. No job here may be named `gate`.
 name: catalog
 
 on:
@@ -25,7 +27,7 @@ env:
   SKILLS_REF_SHA: f130f348f502d9804278a617f86929846896d2e9
 
 jobs:
-  gate:
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -41,24 +43,6 @@ jobs:
 
       - name: Lint
         run: python3 tools/lint.py
-
-      - name: Scrub
-        env:
-          PRIVATE_REPOS: ${{ secrets.PRIVATE_REPOS }}
-        run: |
-          # Fail closed: without the list the private-name rule cannot run.
-          # Secrets are not passed to PRs from forks, so those fail here.
-          if [ -z "${PRIVATE_REPOS}" ]; then
-            echo "::error::PRIVATE_REPOS secret is empty or unavailable"
-            exit 1
-          fi
-          list="${RUNNER_TEMP}/private-repos.txt"
-          umask 077
-          printf '%s\n' "${PRIVATE_REPOS}" > "${list}"
-          status=0
-          python3 tools/scrub.py --private-repos "${list}" || status=$?
-          rm -f "${list}"
-          exit "${status}"
 
       - name: Catalog manifest check
         run: python3 tools/catalog.py --check
