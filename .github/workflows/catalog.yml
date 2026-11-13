@@ -19,7 +19,9 @@ concurrency:
 env:
   # skills-ref (agentskills/agentskills, folder skills-ref) is unreleased and
   # not on PyPI, so it is pinned to a commit. Its dependencies are pinned to
-  # the versions in that commit's uv.lock.
+  # the versions in that commit's uv.lock, and its build backend (hatchling)
+  # and that backend's dependencies are pinned too, so nothing resolves
+  # unpinned from PyPI.
   SKILLS_REF_SHA: f130f348f502d9804278a617f86929846896d2e9
 
 jobs:
@@ -67,9 +69,14 @@ jobs:
       - name: Install skills-ref
         run: |
           python3 -m venv "${RUNNER_TEMP}/skills-ref"
-          "${RUNNER_TEMP}/skills-ref/bin/pip" install --quiet --disable-pip-version-check \
-            "click==8.3.1" "strictyaml==1.7.3" "python-dateutil==2.9.0.post0" "six==1.17.0" \
+          pip="${RUNNER_TEMP}/skills-ref/bin/pip"
+          "${pip}" install --quiet --disable-pip-version-check --no-deps \
+            "hatchling==1.33.0" "packaging==26.3" "pathspec==1.1.1" "pluggy==1.7.0" \
+            "tomlkit==0.15.2" "trove-classifiers==2026.9.21.13" \
+            "click==8.3.1" "strictyaml==1.7.3" "python-dateutil==2.9.0.post0" "six==1.17.0"
+          "${pip}" install --quiet --disable-pip-version-check --no-deps --no-build-isolation \
             "skills-ref @ git+https://github.com/agentskills/agentskills@${SKILLS_REF_SHA}#subdirectory=skills-ref"
+          "${pip}" check
 
       - name: skills-ref validate
         # Exception (DESIGN 4.1): skills-ref accepts only the six Agent Skills
@@ -81,16 +88,16 @@ jobs:
         # fails the job.
         run: |
           "${RUNNER_TEMP}/skills-ref/bin/python" -I - <<'EOF'
-          import pathlib, subprocess, sys
+          import json, pathlib, subprocess, sys
           from skills_ref.parser import find_skill_md, parse_frontmatter
           from skills_ref.validator import validate_metadata
 
           cli = pathlib.Path(sys.executable).parent / "skills-ref"
-          claude_only = {
-              "argument-hint", "arguments", "disable-model-invocation",
-              "user-invocable", "model", "effort", "context", "agent",
-              "paths", "hooks", "shell", "disallowed-tools",
-          }
+          # Same list the linter uses (schema/frontmatter.schema.json).
+          schema = json.loads(pathlib.Path("schema/frontmatter.schema.json").read_text())
+          claude_only = set(schema["x-claude-only"])
+          if not claude_only:
+              sys.exit("x-claude-only is missing from the schema")
           dirs = sorted(p for root in ("skills", ".held")
                         for p in pathlib.Path(root).glob("*") if p.is_dir())
           if not dirs:
