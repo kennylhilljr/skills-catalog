@@ -58,3 +58,5 @@ After running through the checklist, report:
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0.0 | 2026-11-11 | Imported from `~/.claude/skills/agent-debug` (local only, no repository; sha256 `f7e6a63b4540`); description given a use clause, dashes replaced |
+
+Test only: see the sdd_framework repo.
