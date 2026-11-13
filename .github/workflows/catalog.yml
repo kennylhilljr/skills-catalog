@@ -96,8 +96,10 @@ jobs:
           # Same list the linter uses (schema/frontmatter.schema.json).
           schema = json.loads(pathlib.Path("schema/frontmatter.schema.json").read_text())
           claude_only = set(schema["x-claude-only"])
-          if not claude_only:
-              sys.exit("x-claude-only is missing from the schema")
+          spec_keys = {"name", "description", "license", "compatibility",
+                       "metadata", "allowed-tools"}
+          if not claude_only or claude_only & spec_keys:
+              sys.exit("x-claude-only in the schema is empty or holds spec keys")
           dirs = sorted(p for root in ("skills", ".held")
                         for p in pathlib.Path(root).glob("*") if p.is_dir())
           if not dirs:
@@ -116,7 +118,8 @@ jobs:
                   failed += 1
                   continue
               extra = sorted(claude_only & set(meta))
-              targets = (meta.get("metadata") or {}).get("catalog-targets")
+              md = meta.get("metadata")
+              targets = md.get("catalog-targets") if isinstance(md, dict) else None
               if targets == "claude" and extra:
                   errors = validate_metadata(
                       {k: v for k, v in meta.items() if k not in claude_only}, d)
