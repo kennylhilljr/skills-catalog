@@ -168,6 +168,14 @@ Rules the linter enforces (SPEC M1):
 - `description` is 1 to 1,024 characters (the spec limit), and front-loads the use case. Codex shortens descriptions when the skill list exceeds 2% of context, and Claude Code truncates `description` plus `when_to_use` at 1,536 characters. It must contain a "Use when", "Use after", "Use before" or "Use for" clause. `when_to_use` is not used, because it is a Claude Code-only field.
 - Claude Code-only fields (`argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `paths`, `hooks`, `shell`, `disallowed-tools`) are allowed only when `catalog-targets` is `claude`. Otherwise they belong in an overlay (4.3). The Agent Skills reference validator (`skills-ref validate`, SPEC CAT-17) rejects these fields, so CI records an exception in `.github/workflows/catalog.yml`: when it rejects a skill whose `catalog-targets` is exactly `claude`, the skill is validated again with those fields removed, and any other error still fails. The `sdd-*` skills under `.held/` use this exception for `argument-hint`.
 - `catalog-consumers` is optional. When present it is `all` or `none`; `none` is required under `.held/` and refused under `skills/`.
+
+How CI enforces these rules and the scrub on every PR (SPEC CAT-1, CAT-24). Branch protection on `main` requires one check, `gate`, from the GitHub Actions app.
+
+- `.github/workflows/catalog.yml` runs on `pull_request` and on pushes to `main`. Its job `checks` runs lint, the catalog manifest check, the unit tests and `skills-ref validate`. It uses no secrets, so it runs the same way for a PR from a fork.
+- `.github/workflows/gate.yml` runs on `workflow_run` when `catalog` completes. GitHub takes a `workflow_run` workflow only from the default branch, so this file and the `tools/scrub.py` it runs are always `main`'s copies. It fetches the PR's head commit anonymously into a separate folder as data, runs `main`'s scrub on it with the `PRIVATE_REPOS` secret, and posts the `gate` check run on that head commit. `gate` passes only when the `catalog` run succeeded and the scrub is clean. The secret is set only in the scrub step's environment, written to a mode-600 file for the scrub and deleted after.
+- Why `workflow_run`: the PR's own copy of a `pull_request` workflow decides what runs, so the secret can never be given to a `pull_request` job without giving it to PR code. `pull_request_target` also runs from `main` with secrets, but GitHub blocks it by default in public repositories from 2026-12-02, its runs need `main`'s gate to poll for the test results, and GitHub's guidance is to avoid it. `workflow_run` starts after the tests finish, so it has their result without polling, and needs no PR content beyond the files it reads.
+- What a PR cannot do: change the scrub, the private-name list or `gate.yml` for its own check, or make `gate` pass without the scrub running on its exact head commit. A fork PR now passes `gate` when it is clean, since the secret comes from `main`'s workflow. What a PR can still do, as before: edit `catalog.yml` to weaken lint or tests for its own run, or add a workflow whose job is named `gate`. Review of `.github/` changes covers both. Requiring approval for all outside contributors' workflow runs (repository Actions settings) keeps a fork's workflow from running before that review.
+- To re-run `gate`, re-run the `catalog` workflow for the commit. No other job in any workflow may be named `gate`.
 - `SKILL.md` stays under 500 lines, and file references are relative and one level deep (spec guidance).
 - No placeholders such as `{{...}}`, no absolute paths, no home paths, and no secrets (M1 scrub).
 
@@ -352,7 +360,7 @@ iwb's analyze, plan, cross-review, code and auto-merge pipeline picks up the iss
 
 | Part | Runs on | Why |
 | --- | --- | --- |
-| PR checks (lint, scrub, schema, paths, links, description quality) | GitHub Actions on every PR | deterministic, no credentials, must gate merges |
+| PR checks (lint, scrub, schema, paths, links, description quality) | GitHub Actions on every PR | deterministic, must gate merges; the only secret is the private repo list, read by `main`'s scrub (4.1) |
 | Nightly static checks and upstream watch | GitHub Actions, scheduled daily at 06:00 ET | network fetches and diffs need no local CLIs |
 | CLI-dependent checks (commands exist, `--help` flags, host CLI lag) and behavioral evals | launchd on the Mac (`com.kennylhilljr.skills-freshness`), like iwb | needs the installed `claude` and `codex` CLIs and their logged-in credentials, which must not be copied into Actions |
 
