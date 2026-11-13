@@ -1,0 +1,127 @@
+# PR gate for the catalog (SPEC CAT-1, CAT-17; DESIGN 7.6).
+# Runs lint, scrub, the catalog manifest check, the unit tests and the
+# Agent Skills reference validator. Branch protection on main requires the
+# `gate` job of this workflow.
+name: catalog
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # skills-ref (agentskills/agentskills, folder skills-ref) is unreleased and
+  # not on PyPI, so it is pinned to a commit. Its dependencies are pinned to
+  # the versions in that commit's uv.lock.
+  SKILLS_REF_SHA: f130f348f502d9804278a617f86929846896d2e9
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Lint
+        run: python3 tools/lint.py
+
+      - name: Scrub
+        env:
+          PRIVATE_REPOS: ${{ secrets.PRIVATE_REPOS }}
+        run: |
+          # Fail closed: without the list the private-name rule cannot run.
+          # Secrets are not passed to PRs from forks, so those fail here.
+          if [ -z "${PRIVATE_REPOS}" ]; then
+            echo "::error::PRIVATE_REPOS secret is empty or unavailable"
+            exit 1
+          fi
+          list="${RUNNER_TEMP}/private-repos.txt"
+          umask 077
+          printf '%s\n' "${PRIVATE_REPOS}" > "${list}"
+          status=0
+          python3 tools/scrub.py --private-repos "${list}" || status=$?
+          rm -f "${list}"
+          exit "${status}"
+
+      - name: Catalog manifest check
+        run: python3 tools/catalog.py --check
+
+      - name: Unit tests
+        run: python3 -B -m unittest discover -s tests -t .
+
+      - name: Install skills-ref
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/skills-ref"
+          "${RUNNER_TEMP}/skills-ref/bin/pip" install --quiet --disable-pip-version-check \
+            "click==8.3.1" "strictyaml==1.7.3" "python-dateutil==2.9.0.post0" "six==1.17.0" \
+            "skills-ref @ git+https://github.com/agentskills/agentskills@${SKILLS_REF_SHA}#subdirectory=skills-ref"
+
+      - name: skills-ref validate
+        # Exception (DESIGN 4.1): skills-ref accepts only the six Agent Skills
+        # top-level keys, so it rejects Claude Code-only fields such as
+        # `argument-hint` on the `sdd-*` skills. When `skills-ref validate`
+        # fails on a skill whose catalog-targets is exactly "claude", the
+        # skill is validated again with skills-ref's own validate_metadata
+        # after removing only those Claude Code-only keys. Any other error
+        # fails the job.
+        run: |
+          "${RUNNER_TEMP}/skills-ref/bin/python" -I - <<'EOF'
+          import pathlib, subprocess, sys
+          from skills_ref.parser import find_skill_md, parse_frontmatter
+          from skills_ref.validator import validate_metadata
+
+          cli = pathlib.Path(sys.executable).parent / "skills-ref"
+          claude_only = {
+              "argument-hint", "arguments", "disable-model-invocation",
+              "user-invocable", "model", "effort", "context", "agent",
+              "paths", "hooks", "shell", "disallowed-tools",
+          }
+          dirs = sorted(p for root in ("skills", ".held")
+                        for p in pathlib.Path(root).glob("*") if p.is_dir())
+          if not dirs:
+              sys.exit("no skill folders found under skills/ or .held/")
+          failed = 0
+          for d in dirs:
+              r = subprocess.run([str(cli), "validate", str(d)],
+                                 capture_output=True, text=True)
+              if r.returncode == 0:
+                  print(r.stdout, end="")
+                  continue
+              try:
+                  meta, _ = parse_frontmatter(find_skill_md(d).read_text())
+              except Exception as e:
+                  print(f"FAIL {d}: {e}")
+                  failed += 1
+                  continue
+              extra = sorted(claude_only & set(meta))
+              targets = (meta.get("metadata") or {}).get("catalog-targets")
+              if targets == "claude" and extra:
+                  errors = validate_metadata(
+                      {k: v for k, v in meta.items() if k not in claude_only}, d)
+                  if not errors:
+                      print(f"Valid skill (DESIGN 4.1 exception for {', '.join(extra)}): {d}")
+                      continue
+                  for e in errors:
+                      print(f"FAIL {d}: {e}")
+              else:
+                  print(f"FAIL {d}:")
+                  print(r.stdout + r.stderr, end="")
+              failed += 1
+          print(f"skills-ref: {len(dirs)} folders, {failed} failed")
+          sys.exit(1 if failed else 0)
+          EOF
