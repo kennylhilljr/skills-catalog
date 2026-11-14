@@ -5,7 +5,7 @@
 # from gate.yml, which runs main's copy over the PR's files after this
 # workflow completes, so a PR that edits this file cannot weaken them. No job
 # here may be named `gate`.
-name: catalog
+name: catalog-renamed
 
 on:
   pull_request:
