@@ -55,6 +55,8 @@ After running through the checklist, report:
 
 ## Changelog
 
+Test only (#35): this line names sdd_framework and must fail gate.
+
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0.0 | 2026-11-11 | Imported from `~/.claude/skills/agent-debug` (local only, no repository; sha256 `f7e6a63b4540`); description given a use clause, dashes replaced |
