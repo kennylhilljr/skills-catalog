@@ -1,9 +1,10 @@
-# PR checks for the catalog (SPEC CAT-1, CAT-17; DESIGN 4.1, 7.6).
-# Runs lint, the catalog manifest check, the unit tests and the Agent Skills
-# reference validator on the PR's own code. It uses no secrets, so it runs
-# the same way for PRs from forks. The scrub with the private repo list and
-# the required `gate` check come from gate.yml, which runs main's copy after
-# this workflow completes. No job here may be named `gate`.
+# Unit tests for the catalog (SPEC CAT-1; DESIGN 4.1, 7.6).
+# Runs the PR's own unit tests, which can only run as PR code. It uses no
+# secrets, so it runs the same way for PRs from forks. Lint, the catalog
+# manifest check, skills-ref, the scrub and the required `gate` check come
+# from gate.yml, which runs main's copy over the PR's files after this
+# workflow completes, so a PR that edits this file cannot weaken them. No job
+# here may be named `gate`.
 name: catalog
 
 on:
@@ -18,16 +19,8 @@ concurrency:
   group: catalog-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # skills-ref (agentskills/agentskills, folder skills-ref) is unreleased and
-  # not on PyPI, so it is pinned to a commit. Its dependencies are pinned to
-  # the versions in that commit's uv.lock, and its build backend (hatchling)
-  # and that backend's dependencies are pinned too, so nothing resolves
-  # unpinned from PyPI.
-  SKILLS_REF_SHA: f130f348f502d9804278a617f86929846896d2e9
-
 jobs:
-  checks:
+  tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -41,81 +34,5 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Lint
-        run: python3 tools/lint.py
-
-      - name: Catalog manifest check
-        run: python3 tools/catalog.py --check
-
       - name: Unit tests
         run: python3 -B -m unittest discover -s tests -t .
-
-      - name: Install skills-ref
-        run: |
-          python3 -m venv "${RUNNER_TEMP}/skills-ref"
-          pip="${RUNNER_TEMP}/skills-ref/bin/pip"
-          "${pip}" install --quiet --disable-pip-version-check --no-deps \
-            "hatchling==1.33.0" "packaging==26.3" "pathspec==1.1.1" "pluggy==1.7.0" \
-            "tomlkit==0.15.2" "trove-classifiers==2026.9.21.13" \
-            "click==8.3.1" "strictyaml==1.7.3" "python-dateutil==2.9.0.post0" "six==1.17.0"
-          "${pip}" install --quiet --disable-pip-version-check --no-deps --no-build-isolation \
-            "skills-ref @ git+https://github.com/agentskills/agentskills@${SKILLS_REF_SHA}#subdirectory=skills-ref"
-          "${pip}" check
-
-      - name: skills-ref validate
-        # Exception (DESIGN 4.1): skills-ref accepts only the six Agent Skills
-        # top-level keys, so it rejects Claude Code-only fields such as
-        # `argument-hint` on the `sdd-*` skills. When `skills-ref validate`
-        # fails on a skill whose catalog-targets is exactly "claude", the
-        # skill is validated again with skills-ref's own validate_metadata
-        # after removing only those Claude Code-only keys. Any other error
-        # fails the job.
-        run: |
-          "${RUNNER_TEMP}/skills-ref/bin/python" -I - <<'EOF'
-          import json, pathlib, subprocess, sys
-          from skills_ref.parser import find_skill_md, parse_frontmatter
-          from skills_ref.validator import validate_metadata
-
-          cli = pathlib.Path(sys.executable).parent / "skills-ref"
-          # Same list the linter uses (schema/frontmatter.schema.json).
-          schema = json.loads(pathlib.Path("schema/frontmatter.schema.json").read_text())
-          claude_only = set(schema["x-claude-only"])
-          spec_keys = {"name", "description", "license", "compatibility",
-                       "metadata", "allowed-tools"}
-          if not claude_only or claude_only & spec_keys:
-              sys.exit("x-claude-only in the schema is empty or holds spec keys")
-          dirs = sorted(p for root in ("skills", ".held")
-                        for p in pathlib.Path(root).glob("*") if p.is_dir())
-          if not dirs:
-              sys.exit("no skill folders found under skills/ or .held/")
-          failed = 0
-          for d in dirs:
-              r = subprocess.run([str(cli), "validate", str(d)],
-                                 capture_output=True, text=True)
-              if r.returncode == 0:
-                  print(r.stdout, end="")
-                  continue
-              try:
-                  meta, _ = parse_frontmatter(find_skill_md(d).read_text())
-              except Exception as e:
-                  print(f"FAIL {d}: {e}")
-                  failed += 1
-                  continue
-              extra = sorted(claude_only & set(meta))
-              md = meta.get("metadata")
-              targets = md.get("catalog-targets") if isinstance(md, dict) else None
-              if targets == "claude" and extra:
-                  errors = validate_metadata(
-                      {k: v for k, v in meta.items() if k not in claude_only}, d)
-                  if not errors:
-                      print(f"Valid skill (DESIGN 4.1 exception for {', '.join(extra)}): {d}")
-                      continue
-                  for e in errors:
-                      print(f"FAIL {d}: {e}")
-              else:
-                  print(f"FAIL {d}:")
-                  print(r.stdout + r.stderr, end="")
-              failed += 1
-          print(f"skills-ref: {len(dirs)} folders, {failed} failed")
-          sys.exit(1 if failed else 0)
-          EOF
