@@ -126,7 +126,13 @@ class WorkflowTests(unittest.TestCase):
     def test_gate_listens_to_catalog_yml(self):
         self.assertIn('name: catalog\n', CATALOG.read_text())
         self.assertIn("'.github/workflows/catalog.yml'", GATE.read_text())
-        self.assertIn("'.github/workflows/catalog.yml@'", GATE.read_text())
+        text = GATE.read_text()
+        # A prefix without "/" would also match a sibling workflow file a PR
+        # can add, named catalog.yml plus "@" and more characters.
+        self.assertNotIn("'.github/workflows/catalog.yml@'", text)
+        for job in _job_texts(text).values():
+            self.assertIn("github.event.workflow_run.path == '.github/workflows/catalog.yml'", job)
+            self.assertIn("startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@refs/')", job)
 
     def test_private_name_pass_output_is_withheld(self):
         scrub = [s for s in _steps(GATE.read_text()).values() if '${{ secrets.PRIVATE_REPOS' in s][0]

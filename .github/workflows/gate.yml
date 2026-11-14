@@ -53,10 +53,12 @@ jobs:
   checks:
     # Only the real catalog workflow counts. A PR can add another workflow
     # named "catalog"; its runs have a different path and are ignored.
-    # GitHub may append "@<ref>" to the path.
+    # GitHub may append "@<ref>" to the path. Only "@refs/" is accepted: a
+    # file name cannot hold "/", so a sibling workflow file whose name is
+    # catalog.yml plus "@" and more characters cannot match.
     if: >-
       (github.event.workflow_run.path == '.github/workflows/catalog.yml' ||
-       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@')) &&
+       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@refs/')) &&
       (github.event.workflow_run.event == 'pull_request' ||
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
@@ -203,10 +205,12 @@ jobs:
   scrub:
     # Only the real catalog workflow counts. A PR can add another workflow
     # named "catalog"; its runs have a different path and are ignored.
-    # GitHub may append "@<ref>" to the path.
+    # GitHub may append "@<ref>" to the path. Only "@refs/" is accepted: a
+    # file name cannot hold "/", so a sibling workflow file whose name is
+    # catalog.yml plus "@" and more characters cannot match.
     if: >-
       (github.event.workflow_run.path == '.github/workflows/catalog.yml' ||
-       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@')) &&
+       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@refs/')) &&
       (github.event.workflow_run.event == 'pull_request' ||
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
@@ -286,11 +290,13 @@ jobs:
     needs: [checks, scrub]
     # Only the real catalog workflow counts. A PR can add another workflow
     # named "catalog"; its runs have a different path and are ignored.
-    # GitHub may append "@<ref>" to the path.
+    # GitHub may append "@<ref>" to the path. Only "@refs/" is accepted: a
+    # file name cannot hold "/", so a sibling workflow file whose name is
+    # catalog.yml plus "@" and more characters cannot match.
     if: >-
       always() &&
       (github.event.workflow_run.path == '.github/workflows/catalog.yml' ||
-       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@')) &&
+       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@refs/')) &&
       (github.event.workflow_run.event == 'pull_request' ||
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
