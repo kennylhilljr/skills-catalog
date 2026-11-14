@@ -13,7 +13,9 @@
 # Jobs:
 # - checks: main's lint, catalog manifest check and skills-ref on ./head. No
 #   secrets.
-# - scrub: main's scrub on ./head, with the PRIVATE_REPOS secret.
+# - scrub: main's scrub on ./head, with the PRIVATE_REPOS secret. It runs in
+#   the `gate` environment, which only main may deploy to, and the secret is
+#   an environment secret there, so no job a PR adds or edits can read it.
 # - report: posts the `gate` check run on the PR's head commit: success only
 #   when the catalog workflow, checks and scrub all succeeded. It runs in the
 #   `gate` environment, which only main may deploy to. When the environment
@@ -29,7 +31,9 @@
 #   `env:` and quote them. Branch names, titles and messages are attacker
 #   controlled.
 # - PRIVATE_REPOS appears only in the env of the scrub step, and
-#   GATE_APP_PRIVATE_KEY only in the App token step of the report job.
+#   GATE_APP_PRIVATE_KEY only in the App token step of the report job. Both
+#   are secrets of the `gate` environment, not repository secrets, and only
+#   the scrub and report jobs run in that environment.
 # - Output that names PR-controlled files runs with workflow commands off.
 # - No job in any workflow may be named `gate`; only this file posts it.
 name: gate
@@ -215,6 +219,10 @@ jobs:
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # PRIVATE_REPOS is a secret of the `gate` environment. Only main may
+    # deploy to `gate` (deployment branch policy), so a job a PR adds or
+    # edits cannot read it. This run is on main (workflow_run).
+    environment: gate
     permissions:
       contents: read
     env:
