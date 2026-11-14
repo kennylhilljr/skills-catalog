@@ -80,15 +80,25 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('permission-checks: write', mint[0])
         self.assertNotIn('head/tools', text)
 
-    def test_app_key_only_in_the_gate_environment_job(self):
+    def test_secrets_only_in_gate_environment_jobs(self):
         jobs = _job_texts(GATE.read_text())
         self.assertEqual(sorted(jobs), ['checks', 'report', 'scrub'])
         for name, job in jobs.items():
             has_key = 'GATE_APP_PRIVATE_KEY }}' in job
             self.assertEqual(has_key, name == 'report', name)
+            has_list = 'PRIVATE_REPOS }}' in job
+            self.assertEqual(has_list, name == 'scrub', name)
+        # Both secrets are `gate` environment secrets; only main may deploy
+        # to `gate`, so the jobs that read them must run in it.
         self.assertIn('\n    environment: gate\n', jobs['report'])
-        self.assertNotIn('environment:', jobs['checks'] + jobs['scrub'])
+        self.assertIn('\n    environment: gate\n', jobs['scrub'])
+        self.assertNotIn('environment:', jobs['checks'])
         self.assertIn('needs: [checks, scrub]', jobs['report'])
+
+    def test_scrub_job_has_minimal_permissions(self):
+        scrub = _job_texts(GATE.read_text())['scrub']
+        perms = scrub.split('\n    permissions:\n', 1)[1].split('\n    env:\n', 1)[0]
+        self.assertEqual(perms.strip(), 'contents: read')
 
     def test_mains_tools_check_the_head_files(self):
         checks = _job_texts(GATE.read_text())['checks']
