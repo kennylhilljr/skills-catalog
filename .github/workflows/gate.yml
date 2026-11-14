@@ -1,20 +1,36 @@
-# The required `gate` check for main (SPEC CAT-1, CAT-24; DESIGN 4.1, 7.6).
+# The required `gate` check for main (SPEC CAT-1, CAT-17, CAT-24; DESIGN 4.1,
+# 7.6).
 #
-# Runs after the `catalog` workflow (lint, catalog manifest check, unit
-# tests, skills-ref) finishes for a PR or a push to main. GitHub runs
-# workflow_run workflows only from the copy on the default branch, so this
-# file, and the tools/scrub.py it runs, always come from main, never from the
-# PR. The PR's files are fetched as plain data into ./head and only read by
-# main's scrub. The job then posts the `gate` check run on the PR's head
-# commit: success only when the catalog workflow succeeded and the scrub,
-# including the private repo names from the PRIVATE_REPOS secret, is clean.
+# Runs after the `catalog` workflow (the unit tests) finishes for a PR or a
+# push to main. GitHub runs workflow_run workflows only from the copy on the
+# default branch, so this file and every tool it runs (tools/lint.py,
+# tools/catalog.py, tools/scrub.py, the schema and the skills-ref pin) always
+# come from main, never from the PR. The PR's files are fetched as plain data
+# into ./head and only read by main's tools. A PR that edits catalog.yml can
+# weaken its own unit tests, but not lint, the manifest check, skills-ref or
+# the scrub, which run here.
+#
+# Jobs:
+# - checks: main's lint, catalog manifest check and skills-ref on ./head. No
+#   secrets.
+# - scrub: main's scrub on ./head, with the PRIVATE_REPOS secret.
+# - report: posts the `gate` check run on the PR's head commit: success only
+#   when the catalog workflow, checks and scrub all succeeded. It runs in the
+#   `gate` environment, which only main may deploy to. When the environment
+#   sets the GATE_APP_CLIENT_ID variable, the check is posted with a token of
+#   that dedicated GitHub App (key: the environment secret
+#   GATE_APP_PRIVATE_KEY), and the ruleset on main requires `gate` from that
+#   App, so a PR's own workflow, which posts as the GitHub Actions app, cannot
+#   stand in for it.
 #
 # Rules for editing this file (DESIGN 4.1):
 # - Never execute, import, install or source anything under ./head.
 # - Never put github.event values into a `run:` script; pass them through
 #   `env:` and quote them. Branch names, titles and messages are attacker
 #   controlled.
-# - PRIVATE_REPOS appears only in the env of the scrub step.
+# - PRIVATE_REPOS appears only in the env of the scrub step, and
+#   GATE_APP_PRIVATE_KEY only in the App token step of the report job.
+# - Output that names PR-controlled files runs with workflow commands off.
 # - No job in any workflow may be named `gate`; only this file posts it.
 name: gate
 
@@ -25,8 +41,166 @@ on:
 
 permissions: {}
 
+env:
+  # skills-ref (agentskills/agentskills, folder skills-ref) is unreleased and
+  # not on PyPI, so it is pinned to a commit. Its dependencies are pinned to
+  # the versions in that commit's uv.lock, and its build backend (hatchling)
+  # and that backend's dependencies are pinned too, so nothing resolves
+  # unpinned from PyPI.
+  SKILLS_REF_SHA: f130f348f502d9804278a617f86929846896d2e9
+
 jobs:
-  report:
+  checks:
+    # Only the real catalog workflow counts. A PR can add another workflow
+    # named "catalog"; its runs have a different path and are ignored.
+    # GitHub may append "@<ref>" to the path.
+    if: >-
+      (github.event.workflow_run.path == '.github/workflows/catalog.yml' ||
+       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@')) &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check out main's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Fetch the head commit as data
+        id: fetch
+        env:
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          if ! [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::head sha is not 40 hex digits"
+            exit 1
+          fi
+          # Anonymous fetch: the repository is public, so no token is
+          # written into ./head. A fork PR's commit is reachable here
+          # through refs/pull/<n>/head. Hooks are off for the checkout.
+          git init -q head
+          git -C head fetch -q --depth=1 --no-tags "${SERVER}/${REPO}.git" "${HEAD_SHA}"
+          git -C head -c core.hooksPath=/dev/null checkout -q --detach FETCH_HEAD
+          test "$(git -C head rev-parse HEAD)" = "${HEAD_SHA}"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Lint (main's tools/lint.py on the head files)
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        run: |
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          status=0
+          python3 -I base/tools/lint.py head || status=$?
+          echo "::${token}::"
+          exit "${status}"
+
+      - name: Catalog manifest check (main's tools/catalog.py on the head files)
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        run: |
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          status=0
+          python3 -I base/tools/catalog.py --root head --check || status=$?
+          echo "::${token}::"
+          exit "${status}"
+
+      - name: Install skills-ref
+        id: skills_ref
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/skills-ref"
+          pip="${RUNNER_TEMP}/skills-ref/bin/pip"
+          "${pip}" install --quiet --disable-pip-version-check --no-deps \
+            "hatchling==1.33.0" "packaging==26.3" "pathspec==1.1.1" "pluggy==1.7.0" \
+            "tomlkit==0.15.2" "trove-classifiers==2026.9.21.13" \
+            "click==8.3.1" "strictyaml==1.7.3" "python-dateutil==2.9.0.post0" "six==1.17.0"
+          "${pip}" install --quiet --disable-pip-version-check --no-deps --no-build-isolation \
+            "skills-ref @ git+https://github.com/agentskills/agentskills@${SKILLS_REF_SHA}#subdirectory=skills-ref"
+          "${pip}" check
+
+      - name: skills-ref validate (main's pin and schema on the head files)
+        if: ${{ !cancelled() && steps.skills_ref.outcome == 'success' }}
+        working-directory: head
+        env:
+          SCHEMA: ${{ github.workspace }}/base/schema/frontmatter.schema.json
+        # Exception (DESIGN 4.1): skills-ref accepts only the six Agent Skills
+        # top-level keys, so it rejects Claude Code-only fields such as
+        # `argument-hint` on the `sdd-*` skills. When `skills-ref validate`
+        # fails on a skill whose catalog-targets is exactly "claude", the
+        # skill is validated again with skills-ref's own validate_metadata
+        # after removing only those Claude Code-only keys. Any other error
+        # fails the job.
+        # ./head is data: python -I keeps it off sys.path, and the schema
+        # comes from main.
+        run: |
+          token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${token}"
+          status=0
+          "${RUNNER_TEMP}/skills-ref/bin/python" -I - <<'EOF' || status=$?
+          import json, os, pathlib, subprocess, sys
+          from skills_ref.parser import find_skill_md, parse_frontmatter
+          from skills_ref.validator import validate_metadata
+
+          cli = pathlib.Path(sys.executable).parent / "skills-ref"
+          # Same list main's linter uses (main's schema/frontmatter.schema.json).
+          schema = json.loads(pathlib.Path(os.environ["SCHEMA"]).read_text())
+          claude_only = set(schema["x-claude-only"])
+          spec_keys = {"name", "description", "license", "compatibility",
+                       "metadata", "allowed-tools"}
+          if not claude_only or claude_only & spec_keys:
+              sys.exit("x-claude-only in the schema is empty or holds spec keys")
+          dirs = sorted(p for root in ("skills", ".held")
+                        for p in pathlib.Path(root).glob("*") if p.is_dir())
+          if not dirs:
+              sys.exit("no skill folders found under skills/ or .held/")
+          failed = 0
+          for d in dirs:
+              r = subprocess.run([str(cli), "validate", str(d)],
+                                 capture_output=True, text=True)
+              if r.returncode == 0:
+                  print(r.stdout, end="")
+                  continue
+              try:
+                  meta, _ = parse_frontmatter(find_skill_md(d).read_text())
+              except Exception as e:
+                  print(f"FAIL {d}: {e}")
+                  failed += 1
+                  continue
+              extra = sorted(claude_only & set(meta))
+              md = meta.get("metadata")
+              targets = md.get("catalog-targets") if isinstance(md, dict) else None
+              if targets == "claude" and extra:
+                  errors = validate_metadata(
+                      {k: v for k, v in meta.items() if k not in claude_only}, d)
+                  if not errors:
+                      print(f"Valid skill (DESIGN 4.1 exception for {', '.join(extra)}): {d}")
+                      continue
+                  for e in errors:
+                      print(f"FAIL {d}: {e}")
+              else:
+                  print(f"FAIL {d}:")
+                  print(r.stdout + r.stderr, end="")
+              failed += 1
+          print(f"skills-ref: {len(dirs)} folders, {failed} failed")
+          sys.exit(1 if failed else 0)
+          EOF
+          echo "::${token}::"
+          exit "${status}"
+
+  scrub:
     # Only the real catalog workflow counts. A PR can add another workflow
     # named "catalog"; its runs have a different path and are ignored.
     # GitHub may append "@<ref>" to the path.
@@ -39,7 +213,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      checks: write
     env:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
@@ -109,25 +282,62 @@ jobs:
           rm -f "${list}"
           exit "${status}"
 
+  report:
+    needs: [checks, scrub]
+    # Only the real catalog workflow counts. A PR can add another workflow
+    # named "catalog"; its runs have a different path and are ignored.
+    # GitHub may append "@<ref>" to the path.
+    if: >-
+      always() &&
+      (github.event.workflow_run.path == '.github/workflows/catalog.yml' ||
+       startsWith(github.event.workflow_run.path, '.github/workflows/catalog.yml@')) &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only main may deploy to `gate` (deployment branch policy), so its
+    # secret is out of reach of any job a PR adds or edits.
+    environment: gate
+    permissions:
+      checks: write
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Mint a token of the gate App
+        id: app
+        if: ${{ vars.GATE_APP_CLIENT_ID != '' }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-checks: write
+
       - name: Post the gate check
-        if: always()
         env:
-          GH_TOKEN: ${{ github.token }}
+          # The App's token when the App is set up, else the workflow token.
+          # A failed mint stops the job before this step, so `gate` is never
+          # posted under the wrong identity once the App is configured.
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           CATALOG_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           CATALOG_URL: ${{ github.event.workflow_run.html_url }}
-          SCRUB_OUTCOME: ${{ steps.scrub.outcome }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          SCRUB_RESULT: ${{ needs.scrub.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ "${CATALOG_CONCLUSION}" = "success" ] && [ "${SCRUB_OUTCOME}" = "success" ]; then
+          if [ "${CATALOG_CONCLUSION}" = "success" ] && [ "${CHECKS_RESULT}" = "success" ] &&
+             [ "${SCRUB_RESULT}" = "success" ]; then
             conclusion=success
-            title="catalog checks and scrub passed"
+            title="unit tests, checks and scrub passed"
           else
             conclusion=failure
-            title="catalog checks: ${CATALOG_CONCLUSION:-none}; scrub: ${SCRUB_OUTCOME:-not run}"
+            title="unit tests: ${CATALOG_CONCLUSION:-none}; checks: ${CHECKS_RESULT:-none}; scrub: ${SCRUB_RESULT:-none}"
           fi
-          summary="Catalog workflow (lint, manifest check, unit tests, skills-ref): ${CATALOG_CONCLUSION:-none}, ${CATALOG_URL}
-          Scrub with main's tools/scrub.py and the private repo list: ${SCRUB_OUTCOME:-not run}, ${RUN_URL}
+          summary="Catalog workflow (unit tests, the PR's own code): ${CATALOG_CONCLUSION:-none}, ${CATALOG_URL}
+          Lint, catalog manifest check and skills-ref with main's tools: ${CHECKS_RESULT:-none}, ${RUN_URL}
+          Scrub with main's tools/scrub.py and the private repo list: ${SCRUB_RESULT:-none}, ${RUN_URL}
           To re-run, re-run the catalog workflow for this commit."
           gh api --method POST "repos/${REPO}/check-runs" \
             -f name=gate -f head_sha="${HEAD_SHA}" -f status=completed \

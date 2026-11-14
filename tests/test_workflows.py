@@ -27,10 +27,24 @@ def _jobs(text):
     return _JOB.findall(body)
 
 
+def _job_texts(text):
+    """Map each job name to its text."""
+    body = text.split('\njobs:\n', 1)[1]
+    parts = re.split(r'^  ([A-Za-z0-9_-]+):\s*$', body, flags=re.MULTILINE)
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
 def _steps(text):
-    """Map each step name to its text, for steps that start with `- name:`."""
-    parts = re.split(r'^      - name: ', text, flags=re.MULTILINE)
-    return {p.split('\n', 1)[0].strip(): p for p in parts[1:]}
+    """Map 'job/step name' to the step's text, for steps that start with `- name:`.
+
+    A step ends at the next step or at the end of its job.
+    """
+    steps = {}
+    for job, body in _job_texts(text).items():
+        parts = re.split(r'^      - name: ', body, flags=re.MULTILINE)
+        for p in parts[1:]:
+            steps['%s/%s' % (job, p.split('\n', 1)[0].strip())] = p
+    return steps
 
 
 class WorkflowTests(unittest.TestCase):
@@ -51,14 +65,50 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('workflow_run:', on_block)
         self.assertIn('workflows: [catalog]', on_block)
 
-    def test_secret_only_in_the_scrub_step_which_runs_mains_scrub(self):
+    def test_secrets_only_where_they_are_needed(self):
         text = GATE.read_text()
-        self.assertEqual(text.count('${{ secrets.'), 1)
+        self.assertEqual(text.count('${{ secrets.'), 2)
+        self.assertEqual(text.count('${{ secrets.PRIVATE_REPOS }}'), 1)
+        self.assertEqual(text.count('${{ secrets.GATE_APP_PRIVATE_KEY }}'), 1)
         steps = _steps(text)
-        scrub = [s for name, s in steps.items() if '${{ secrets.' in s]
+        scrub = [s for s in steps.values() if '${{ secrets.PRIVATE_REPOS }}' in s]
         self.assertEqual(len(scrub), 1)
         self.assertIn('python3 -I base/tools/scrub.py --private-repos', scrub[0])
+        mint = [s for s in steps.values() if '${{ secrets.GATE_APP_PRIVATE_KEY }}' in s]
+        self.assertEqual(len(mint), 1)
+        self.assertIn('uses: actions/create-github-app-token@', mint[0])
+        self.assertIn('permission-checks: write', mint[0])
         self.assertNotIn('head/tools', text)
+
+    def test_app_key_only_in_the_gate_environment_job(self):
+        jobs = _job_texts(GATE.read_text())
+        self.assertEqual(sorted(jobs), ['checks', 'report', 'scrub'])
+        for name, job in jobs.items():
+            has_key = 'GATE_APP_PRIVATE_KEY }}' in job
+            self.assertEqual(has_key, name == 'report', name)
+        self.assertIn('\n    environment: gate\n', jobs['report'])
+        self.assertNotIn('environment:', jobs['checks'] + jobs['scrub'])
+        self.assertIn('needs: [checks, scrub]', jobs['report'])
+
+    def test_mains_tools_check_the_head_files(self):
+        checks = _job_texts(GATE.read_text())['checks']
+        self.assertIn('python3 -I base/tools/lint.py head', checks)
+        self.assertIn('python3 -I base/tools/catalog.py --root head --check', checks)
+        self.assertIn('skills-ref validate', checks)
+        self.assertIn('working-directory: head', checks)
+        self.assertIn('base/schema/frontmatter.schema.json', checks)
+        self.assertNotIn('${{ secrets.', checks)
+
+    def test_catalog_yml_runs_only_the_unit_tests(self):
+        text = CATALOG.read_text()
+        self.assertIn('python3 -B -m unittest discover -s tests -t .', text)
+        for tool in ('tools/lint.py', 'tools/catalog.py', 'skills-ref', 'scrub'):
+            self.assertNotIn(tool, text.split('\njobs:\n', 1)[1], tool)
+
+    def test_gate_needs_every_result(self):
+        report = _job_texts(GATE.read_text())['report']
+        for name in ('CATALOG_CONCLUSION', 'CHECKS_RESULT', 'SCRUB_RESULT'):
+            self.assertIn('[ "${%s}" = "success" ]' % name, report)
 
     def test_no_event_values_in_run_scripts(self):
         text = GATE.read_text()
@@ -79,7 +129,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("'.github/workflows/catalog.yml@'", GATE.read_text())
 
     def test_private_name_pass_output_is_withheld(self):
-        scrub = [s for s in _steps(GATE.read_text()).values() if '${{ secrets.' in s][0]
+        scrub = [s for s in _steps(GATE.read_text()).values() if '${{ secrets.PRIVATE_REPOS' in s][0]
         line = [l for l in scrub.splitlines() if '--private-repos "${list}"' in l]
         self.assertEqual(len(line), 1)
         self.assertIn('> /dev/null 2>&1', line[0])
