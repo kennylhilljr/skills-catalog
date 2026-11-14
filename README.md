@@ -115,3 +115,4 @@ This repository is public, so everything committed here is published. Read [AGEN
 ## License
 
 MIT for the catalog's own content, once a `LICENSE` is added in M1. Promoted third-party skills keep their own license beside them.
+
