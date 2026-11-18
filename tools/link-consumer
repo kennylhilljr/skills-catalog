@@ -29,7 +29,8 @@ exits 1 without writing anything.
 
 The tool never writes outside `<root>/.claude/skills`, never writes through
 a link, and never reads skill content. Exit status: 0 clean or written,
-1 findings (or a shadow in write mode), 2 error, including a missing
+1 findings (in write mode: a shadow, nothing written, or a link that
+still dangles after writing), 2 error, including a missing
 `catalog.json` (`link-consumer: shared skills missing`).
 Python 3.9+, standard library only.
 """
@@ -103,23 +104,28 @@ def links_dir(root):
     return current
 
 
-def points_into_shared(root, target):
-    """True when a link target in .claude/skills points into the submodule.
+def _under(path, base):
+    return path == base or path.startswith(base + os.sep)
 
-    A relative target is resolved lexically from `.claude/skills`. An
-    absolute target counts when it is under the shared folder, spelled from
-    the root as given or with its links resolved.
+
+def points_into_shared(root, path):
+    """True when the link at path points into the submodule.
+
+    It counts when the target, read lexically from `.claude/skills`, is under
+    the shared folder, or when the link resolves there through any alias or
+    intermediate link. Only link targets are read, never skill content.
     """
+    target = os.readlink(path)
     if not os.path.isabs(target):
-        resolved = os.path.normpath(os.path.join(LINKS, target))
-        return resolved == SHARED or resolved.startswith(SHARED + os.sep)
-    resolved = os.path.normpath(target)
-    for base in {os.path.join(root, SHARED),
-                 os.path.join(os.path.realpath(root), SHARED)}:
-        base = os.path.normpath(base)
-        if resolved == base or resolved.startswith(base + os.sep):
+        if _under(os.path.normpath(os.path.join(LINKS, target)), SHARED):
             return True
-    return False
+    else:
+        for base in (os.path.join(root, SHARED),
+                     os.path.join(os.path.realpath(root), SHARED)):
+            if _under(os.path.normpath(target), os.path.normpath(base)):
+                return True
+    shared = os.path.realpath(os.path.join(root, SHARED))
+    return _under(os.path.realpath(path), shared)
 
 
 def survey(root, names):
@@ -138,7 +144,7 @@ def survey(root, names):
             if target == expected_target(name):
                 if not os.path.isdir(path):
                     findings.append((name, 'dangling'))
-            elif points_into_shared(root, target):
+            elif points_into_shared(root, path):
                 findings.append((name, 'wrong-target'))
             else:
                 findings.append((name, 'shadow'))
@@ -147,8 +153,7 @@ def survey(root, names):
             if entry in delivered:
                 continue
             path = os.path.join(directory, entry)
-            if (os.path.islink(path)
-                    and points_into_shared(root, os.readlink(path))):
+            if os.path.islink(path) and points_into_shared(root, path):
                 findings.append((entry, 'extra'))
     findings.sort()
     return findings
@@ -186,14 +191,7 @@ def write(root):
             say('linked: .claude/skills/' + name)
             changes += 1
         elif kind == 'wrong-target':
-            temp = os.path.join(directory, '.' + name + '.link-consumer-tmp')
-            if os.path.lexists(temp):
-                if not os.path.islink(temp):
-                    raise LinkError('error: .claude/skills/'
-                                    + os.path.basename(temp)
-                                    + ' is in the way')
-                os.unlink(temp)
-            os.symlink(expected_target(name), temp)
+            temp = make_temp_link(directory, name)
             # rename replaces the link itself and never follows it.
             os.replace(temp, path)
             say('relinked: .claude/skills/' + name)
@@ -203,7 +201,25 @@ def write(root):
             say('removed: .claude/skills/' + name)
             changes += 1
     say('%d links, %d changes' % (len(names), changes))
-    return 0
+    # A link the tool wrote can still dangle when the submodule lacks the
+    # skill folder; report it so a bump never passes with a broken link.
+    dangling = [n for n, k in survey(root, names) if k == 'dangling']
+    for name in dangling:
+        say(finding_line(name, 'dangling'))
+    return 1 if dangling else 0
+
+
+def make_temp_link(directory, name):
+    """Create a correct link under a fresh name that no other entry uses."""
+    for _ in range(100):
+        temp = os.path.join(directory, '.%s.link-consumer-%s'
+                            % (name, os.urandom(4).hex()))
+        try:
+            os.symlink(expected_target(name), temp)
+        except FileExistsError:
+            continue
+        return temp
+    raise LinkError('error: cannot create a temporary link')
 
 
 def main(argv=None):

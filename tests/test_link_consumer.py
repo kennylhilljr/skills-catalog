@@ -181,6 +181,37 @@ class WriteModeTests(LinkConsumerTestCase):
         self.assertEqual(os.readlink(os.path.join(self.links, 'a')),
                          PREFIX + 'skills/a')
 
+    def test_link_through_alias_into_shared_counts(self):
+        os.symlink(SHARED, os.path.join(self.root, 'alias'))
+        os.makedirs(self.links)
+        os.symlink('../../alias/.held/sdd-x', os.path.join(self.links, 'sdd-x'))
+        os.symlink('../../alias/skills/a', os.path.join(self.links, 'a'))
+        check = self.run_tool('--check')
+        self.assertIn('link-consumer: extra: .claude/skills/sdd-x', self.lines(check))
+        self.assertIn('link-consumer: wrong-target: .claude/skills/a',
+                      self.lines(check))
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.link_names(), ['a', 'b'])
+        self.assertEqual(self.run_tool('--check').returncode, 0)
+
+    def test_dangling_after_write_exits_one(self):
+        shutil.rmtree(os.path.join(self.shared, 'skills', 'b'))
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('link-consumer: dangling: .claude/skills/b', self.lines(result))
+        self.assertEqual(self.link_names(), ['a', 'b'])
+
+    def test_relink_leaves_foreign_dot_entries_alone(self):
+        os.makedirs(self.links)
+        os.symlink(PREFIX + 'skills/b', os.path.join(self.links, 'a'))
+        foreign = os.path.join(self.links, '.a.link-consumer-tmp')
+        os.symlink('../../elsewhere/x', foreign)
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(os.readlink(foreign), '../../elsewhere/x')
+        self.assertEqual(self.link_names(), ['.a.link-consumer-tmp', 'a', 'b'])
+
     def test_real_folder_shadow_blocks_all_writes(self):
         os.makedirs(os.path.join(self.links, 'b'))
         with open(os.path.join(self.links, 'b', 'SKILL.md'), 'w') as handle:
