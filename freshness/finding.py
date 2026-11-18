@@ -36,6 +36,7 @@ import re
 FINDING_KINDS = (
     'deprecated-model',
     'dead-link',
+    'moved-link',
     'missing-path',
     'description',
     'frontmatter',
