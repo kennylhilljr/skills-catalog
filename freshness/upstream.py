@@ -476,9 +476,12 @@ def _pypi_version(text, params):
         out.append('latest: %s' % latest)
     for version in sorted(releases, key=_version_key, reverse=True):
         files = releases[version]
+        marks = []
+        if _is_pre_release(version):
+            marks.append('pre-release')
         if isinstance(files, list) and files and all(isinstance(f, dict) and f.get('yanked') for f in files):
-            continue
-        out.append(version + (' (pre-release)' if _is_pre_release(version) else ''))
+            marks.append('yanked')
+        out.append(version + (' (%s)' % ', '.join(marks) if marks else ''))
     return '\n'.join(out)
 
 
@@ -557,7 +560,7 @@ def scrub_lines(text):
     # A withheld line can still close a fence that opened an example block;
     # rescan once and drop anything left rather than publish it.
     if _scrub().scan_text(out):
-        return '[evidence withheld by scrub]'
+        return '[text withheld by scrub]'
     return out
 
 
@@ -595,6 +598,9 @@ def _upstream_finding(source_id, sha, evidence):
 
 def watch(sources, state_sources, fetch, now, run_id):
     """Fetch every source and compare it with its stored extract.
+
+    Extracts are scrubbed with `tools/scrub.scan_text` before they are hashed
+    and stored, since `state.sources` is published on `freshness-state`.
 
     `state_sources` maps a source id to
     `{"sha256", "extract", "fetched_at", "failures", "last_error", "errors"}`
@@ -646,7 +652,9 @@ def watch(sources, state_sources, fetch, now, run_id):
         extract = None
         if error is None:
             try:
-                extract = normalize(source, text)
+                # The extract is stored on the public freshness-state branch,
+                # so it is scrubbed before it is hashed or stored.
+                extract = scrub_lines(normalize(source, text))
             except ExtractError as exc:
                 error = _error_text(exc)
             except Exception as exc:  # a parser fault counts as a failure too

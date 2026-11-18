@@ -49,6 +49,12 @@
       "params": {"headings": ["# Build skills"]}
     },
     {
+      "id": "codex-skills-agents-md",
+      "url": "https://developers.openai.com/codex/guides/agents-md.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["# Custom instructions with AGENTS.md"]}
+    },
+    {
       "id": "codex-releases-github",
       "url": "https://api.github.com/repos/openai/codex/releases?per_page=40",
       "extract": "github-releases",
@@ -79,20 +85,32 @@
     {
       "id": "anthropic-models-overview",
       "url": "https://platform.claude.com/docs/en/about-claude/models/overview.md",
-      "extract": "table-column",
-      "params": {"heading": "All models", "column": "Model"}
+      "extract": "markdown-sections",
+      "params": {"headings": ["Latest models", "All models"]}
     },
     {
       "id": "anthropic-models-deprecations",
       "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
       "extract": "table-column",
-      "params": {"heading": "Model status", "column": ["API model name", "Current state"]}
+      "params": {"heading": "Model status", "column": ["API model name", "Current state", "Deprecated", "Tentative retirement date"]}
+    },
+    {
+      "id": "anthropic-models-replacements",
+      "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Deprecation history"]}
     },
     {
       "id": "openai-models",
       "url": "https://developers.openai.com/api/docs/models/all.md",
       "extract": "markdown-sections",
-      "params": {"headings": ["Flagship models", "Image", "Realtime & audio", "Open-weight models", "Embedding models", "More models", "ChatGPT models"]}
+      "params": {"headings": ["# All models"]}
+    },
+    {
+      "id": "openai-models-deprecations",
+      "url": "https://developers.openai.com/api/docs/deprecations.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Upcoming deprecations", "Past deprecations"]}
     }
   ]
 }

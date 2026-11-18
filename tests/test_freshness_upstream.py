@@ -181,6 +181,7 @@ class NormalizeTest(unittest.TestCase):
             '4.10.0b2 (pre-release)',
             '4.2.0rc1 (pre-release)',
             '4.1.2',
+            '4.1.1 (yanked)',
             '4.1.0',
             '3.9.0',
         ])
@@ -350,6 +351,9 @@ class WatchTest(unittest.TestCase):
         self.assertIn('[line withheld by scrub', evidence)
         for value in (ip, mail, home):
             self.assertNotIn(value, evidence)
+        # The stored extract is published on freshness-state, so it is scrubbed too.
+        self.assertEqual(scrub.scan_text(state['x-docs']['extract']), [])
+        self.assertIn('Done.', state['x-docs']['extract'])
 
         fetch.pages[src['url']] = OSError('cannot reach ' + ip + ' from ' + home)
         alerts = []
