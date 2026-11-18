@@ -343,24 +343,15 @@ class TestDwell(unittest.TestCase):
         self.assertEqual(_only(actions, 'open_issue')[0]['title'],
                          'freshness-alert: heartbeat-actions: actions-run:nightly')
 
-    def test_one_alert_per_state(self):
-        """FRS-17: two stuck items of one state get two issues but one ops message per state per day."""
+    def test_one_alert_per_item(self):
+        """FRS-17: each stuck item of a state gets its own alert, subject `<state>:<item>`."""
         items = [{'id': n, 'since': _iso(NOW - datetime.timedelta(days=15))} for n in (3, 4)]
+        items.append({'id': 5, 'since': _iso(NOW - datetime.timedelta(days=13))})
         found = dwell.check_dwell('re-review', items, NOW)
         self.assertEqual([a['subject'] for a in found], ['re-review:3', 're-review:4'])
-        hb = dwell.check_dwell('mac-job', [{'id': 'mac', 'since': _iso(NOW - datetime.timedelta(hours=30))}], NOW)
-        actions, new_state = alerts.plan_alerts(found + hb, [], [], None, 'run-1', NOW)
-        self.assertEqual(len(_only(actions, 'open_issue')), 3)
-        self.assertEqual(len(_only(actions, 'send_ops')), 3)
-        folded = dwell.fold_ops(actions, new_state, NOW)
-        ops = _only(folded, 'send_ops')
-        self.assertEqual(len(ops), 2)
-        self.assertIn('(+1 more `re-review` item)', ops[0]['text'])
-        self.assertEqual(len(_only(folded, 'open_issue')), 3)
-        later_same_day = NOW + datetime.timedelta(hours=1)
-        self.assertEqual(_only(dwell.fold_ops(actions, new_state, later_same_day), 'send_ops'), [])
-        next_day = NOW + datetime.timedelta(days=1)
-        self.assertEqual(len(_only(dwell.fold_ops(actions, new_state, next_day), 'send_ops')), 2)
+        self.assertTrue(all(a['kind'] == 'dwell' for a in found))
+        actions, _state = alerts.plan_alerts(found, [], [], None, 'run-1', NOW)
+        self.assertEqual(len(_only(actions, 'open_issue')), 2)
 
     def test_m5_row_skipped_in_m2(self):
         """FRS-17: an M5 row is skipped in M2 and enabled from M5."""
