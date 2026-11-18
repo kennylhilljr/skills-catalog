@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Render the launchd job of the freshness bot's Mac half (FRS-16, DESIGN 7.6).
+
+    python3 tools/install-freshness-agent [--write] [--root DIR] [--python PATH]
+
+Renders `freshness/launchd/com.kennylhilljr.skills-freshness.plist.in`: the
+job runs `python3 -B -m freshness.run --half mac` from the catalog checkout
+DIR (default: this repository) every day at 06:30 local time, with its
+output in `~/Library/Logs/skills-freshness/`.
+
+Without `--write` it prints the rendered plist, the path it belongs at and
+the `launchctl bootstrap gui/<uid> <plist>` command, and writes nothing.
+With `--write` it writes the plist to `~/Library/LaunchAgents/` and creates
+the log folder. It never runs `launchctl`: loading the job is the owner's
+step (see the M2 tracker). Exit status: 0 done, 2 error. Python 3.9+,
+standard library only.
+"""
+
+import argparse
+import os
+import sys
+from xml.sax.saxutils import escape
+
+LABEL = 'com.kennylhilljr.skills-freshness'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEMPLATE = os.path.join(ROOT, 'freshness', 'launchd', LABEL + '.plist.in')
+DEFAULT_PYTHON = '/usr/bin/python3'
+
+
+def paths(home):
+    return {
+        'plist': os.path.join(home, 'Library', 'LaunchAgents', LABEL + '.plist'),
+        'logs': os.path.join(home, 'Library', 'Logs', 'skills-freshness'),
+    }
+
+
+def render(template_text, root, python, logs):
+    for name, value in (('ROOT', root), ('PYTHON', python), ('LOGS', logs)):
+        if not os.path.isabs(value):
+            raise ValueError('%s must be an absolute path' % name.lower())
+    text = template_text
+    for name, value in (('@ROOT@', root), ('@PYTHON@', python), ('@LOGS@', logs)):
+        text = text.replace(name, escape(value))
+    if any(name in text for name in ('@ROOT@', '@PYTHON@', '@LOGS@')):
+        raise ValueError('template placeholder left unrendered')
+    return text
+
+
+def bootstrap_command(uid, plist):
+    return 'launchctl bootstrap gui/%d %s' % (uid, plist)
+
+
+def main(argv=None, home=None, uid=None, out=None):
+    out = out or sys.stdout
+    parser = argparse.ArgumentParser(prog='install-freshness-agent', description=__doc__.split('\n\n')[0])
+    parser.add_argument('--write', action='store_true', help='write the plist to ~/Library/LaunchAgents/')
+    parser.add_argument('--root', default=ROOT, help='catalog checkout the job runs from')
+    parser.add_argument('--python', default=DEFAULT_PYTHON, help='python3 the job runs (default: %(default)s)')
+    args = parser.parse_args(argv)
+    home = home or os.path.expanduser('~')
+    uid = os.getuid() if uid is None else uid
+    where = paths(home)
+    root = os.path.abspath(args.root)
+    if not os.path.isfile(os.path.join(root, 'freshness', 'run.py')):
+        sys.stderr.write('install-freshness-agent: --root is not a catalog checkout\n')
+        return 2
+    try:
+        with open(TEMPLATE, encoding='utf-8') as handle:
+            text = render(handle.read(), root, args.python, where['logs'])
+    except (OSError, ValueError) as err:
+        sys.stderr.write('install-freshness-agent: %s\n' % err)
+        return 2
+    if args.write:
+        os.makedirs(os.path.dirname(where['plist']), exist_ok=True)
+        os.makedirs(where['logs'], exist_ok=True)
+        with open(where['plist'], 'w', encoding='utf-8') as handle:
+            handle.write(text)
+        out.write('wrote %s\n' % where['plist'])
+    else:
+        out.write(text)
+        out.write('\nnot written (pass --write); the plist belongs at %s\n' % where['plist'])
+    out.write('load it with: %s\n' % bootstrap_command(uid, where['plist']))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

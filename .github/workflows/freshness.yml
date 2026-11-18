@@ -1,0 +1,104 @@
+# The nightly freshness run, Actions half (SPEC FRS-16, FRS-20, FRS-26;
+# DESIGN 4.1, 5, 7.6).
+#
+# Runs `python3 -B -m freshness.run --half actions` from main every day at
+# 11:00 UTC (06:00 EST, 07:00 EDT; the drift at DST changes is accepted).
+# The run does network-only work (static checks, links, upstream watch, age,
+# dwell, canary) and only opens issues and PRs through the freshness GitHub
+# App. Its state and heartbeat go to the PR-less `freshness-state` branch.
+#
+# Jobs:
+# - preflight: no secrets. Checks that the `freshness` environment exists,
+#   so until the App and the environment are set up (FRS-20, a manual step)
+#   the nightly job is skipped instead of failing, and no run creates the
+#   environment without its branch policy.
+# - nightly: runs in the `freshness` environment, which only main may deploy
+#   to. It holds the variable FRESHNESS_APP_CLIENT_ID and the secret
+#   FRESHNESS_APP_PRIVATE_KEY. The App token is minted for this repository
+#   only, with contents, issues and pull requests write.
+#
+# Rules for editing this file (DESIGN 4.1):
+# - No pull_request trigger: PR code never runs with the App key.
+# - FRESHNESS_APP_PRIVATE_KEY appears only in the token step.
+# - The checkout keeps no credentials, and no step pushes; every change goes
+#   through freshness/github.py, which refuses writes to main (INV-5).
+# - Never put github.event values into a `run:` script; pass them through
+#   `env:`.
+# - No job in any workflow may be named `gate`; only gate.yml posts it.
+name: freshness
+
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: freshness
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      ready: ${{ steps.env.outputs.ready }}
+    steps:
+      - name: Check that the freshness environment exists
+        id: env
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          err="${RUNNER_TEMP}/environment.err"
+          if gh api "repos/${REPO}/environments/freshness" --jq .name > /dev/null 2> "${err}"; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          elif grep -q 'HTTP 404' "${err}"; then
+            echo "::notice::The freshness environment does not exist yet (FRS-20); the nightly run is skipped."
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+          else
+            cat "${err}"
+            exit 1
+          fi
+
+  nightly:
+    needs: [preflight]
+    if: ${{ needs.preflight.outputs.ready == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only main may deploy to `freshness` (deployment branch policy), so a
+    # job on any other branch cannot read its secret.
+    environment: freshness
+    permissions:
+      contents: read
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Mint a token of the freshness App
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.FRESHNESS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FRESHNESS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: skills-catalog
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Run the Actions half
+        env:
+          FRESHNESS_TOKEN: ${{ steps.app.outputs.token }}
+          FRESHNESS_BOT_LOGIN: ${{ steps.app.outputs.app-slug }}[bot]
+        run: python3 -B -m freshness.run --half actions

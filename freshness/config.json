@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "milestone": "M2",
+  "advance_policy": "at-max-age",
+  "description_collision_threshold": 0.5,
+  "link_min_gap_hours": 20,
+  "issues_per_day": 5,
+  "ops_messages_per_day": 6,
+  "classifier_calls_per_day": 10,
+  "dwell_limits": {
+    "actions-run": {"max_hours": 26},
+    "mac-job": {"max_hours": 26},
+    "source-failing": {"max_runs": 3},
+    "freshness-pr-unreviewed": {"max_hours": 168},
+    "freshness-issue-unpicked": {"max_hours": 72},
+    "re-review": {"max_hours": 336},
+    "consumer-bump-pr": {"max_hours": 168}
+  }
+}
