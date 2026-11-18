@@ -11,7 +11,6 @@ Findings use the part 1 shape:
 
 import os
 import re
-import shlex
 import subprocess
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +33,8 @@ BUILTINS = frozenset((
     'unset', 'until', 'wait', 'while',
 ))
 
-# sudo options that take a separate argument (`sudo -u root git`).
+# sudo options that take an argument (`sudo -u root git`, `sudo -Eu root git`).
+_SUDO_ARG_SHORT = frozenset('ugCDhprtUTR')
 _SUDO_ARG_OPTIONS = frozenset((
     '-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T',
     '--user', '--group', '--close-from', '--chdir', '--host', '--prompt',
@@ -53,6 +53,10 @@ _ACRONYM = re.compile(r'^[A-Z]{2,}$')
 _FLAG = re.compile(r'^(--[A-Za-z0-9][A-Za-z0-9-]*|-[A-Za-z])(?:=.*)?$')
 _ALIASES = re.compile(r'\[aliases?:\s*([^\]]+)\]')
 _SUBCOMMAND = re.compile(r'^[a-z][a-z0-9-]*$')
+# A bare word in subcommand position: any case, underscores allowed, so
+# `codex Teleport` and `codex teleport_now` are checked, not skipped.
+_SUBCOMMAND_WORD = re.compile(r'^[A-Za-z][A-Za-z0-9_-]*$')
+_SHELL_OPERATORS = ('&&', '||', ';', '|', '&')
 _COMMANDS_HEADER = re.compile(r'^Commands:\s*$', re.MULTILINE)
 _TOOL_WORD = re.compile(r'\btools?\b', re.IGNORECASE)
 # CamelCase words with these endings are code names, not tools.
@@ -247,19 +251,87 @@ def _strip_wrappers(tokens):
         tokens.pop(0)
         while tokens and tokens[0].startswith('-'):
             opt = tokens.pop(0)
-            if opt in _SUDO_ARG_OPTIONS and tokens:
+            if opt == '--':
+                break
+            if _sudo_option_takes_next(opt) and tokens:
                 tokens.pop(0)
         while tokens and _ASSIGNMENT.match(tokens[0]):
             tokens.pop(0)
     return tokens
 
 
+def _sudo_option_takes_next(opt):
+    """True when sudo option `opt` takes the next word as its value.
+
+    `--user root` does; `--user=root` does not. In a short-option group
+    (`-Eu root`) the first letter that takes an argument uses the rest of
+    the group (`-uroot`) or, when it is the last letter, the next word.
+    """
+    if opt.startswith('--'):
+        return '=' not in opt and opt in _SUDO_ARG_OPTIONS
+    letters = opt[1:]
+    for i, ch in enumerate(letters):
+        if ch in _SUDO_ARG_SHORT:
+            return i == len(letters) - 1
+    return False
+
+
 def _tokens(text):
-    """Split a shell line, keeping quotes so a quoted word stays one token."""
-    try:
-        return shlex.split(text, posix=False)
-    except ValueError:
+    """Split a shell line into words and operator tokens.
+
+    Quotes are kept, so a quoted word (`"a b"`, `--prompt="Pass word: "`)
+    stays one token. Unquoted `;`, `|`, `||`, `&&` and a lone `&` become
+    their own tokens even when stuck to a word (`codex teleport;`); `&` in
+    a redirection (`2>&1`, `&>f`) stays part of the word. An unclosed
+    quote falls back to splitting on whitespace.
+    """
+    tokens = []
+    word = []
+    quote = None
+    i = 0
+    n = len(text)
+
+    def flush():
+        if word:
+            tokens.append(''.join(word))
+            del word[:]
+
+    while i < n:
+        ch = text[i]
+        if quote:
+            word.append(ch)
+            if ch == '\\' and quote == '"' and i + 1 < n:
+                word.append(text[i + 1])
+                i += 1
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in '"\'':
+            quote = ch
+            word.append(ch)
+        elif ch == '\\' and i + 1 < n:
+            word.append(ch)
+            word.append(text[i + 1])
+            i += 1
+        elif ch.isspace():
+            flush()
+        elif ch in ';|&':
+            if ch == '&' and ((word and word[-1] in '<>') or text[i + 1:i + 2] == '>'):
+                word.append(ch)
+            else:
+                op = text[i:i + 2] if text[i:i + 2] in ('&&', '||') else ch
+                flush()
+                tokens.append(op)
+                i += len(op)
+                continue
+        else:
+            word.append(ch)
+        i += 1
+    if quote:
         return text.split()
+    flush()
+    return tokens
 
 
 def _first_word(text):
@@ -454,11 +526,11 @@ def _cli_refs(text):
         if tok not in CLIS:
             continue
         if i > 0 and not re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', tokens[i - 1]) \
-                and tokens[i - 1] not in ('sudo', '$', '|', '&&', '||', ';', 'run', 'exec'):
+                and tokens[i - 1] not in _SHELL_OPERATORS + ('sudo', '$', 'run', 'exec'):
             continue
         rest = []
         for t in tokens[i + 1:]:
-            if t in ('|', '&&', '||', ';', '--') or t in CLIS:
+            if t in _SHELL_OPERATORS or t == '--' or t in CLIS:
                 break
             rest.append(t)
         yield tok, rest
@@ -494,7 +566,7 @@ def _split_ref(rest, top):
         if after_option:
             after_option = False
             continue
-        if _SUBCOMMAND.match(t):
+        if _SUBCOMMAND_WORD.match(t):
             sub_idx = idx
         break
     if sub_idx is None:

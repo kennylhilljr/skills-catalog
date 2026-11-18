@@ -299,6 +299,39 @@ class TestCliRefs(Base):
                          ['g1:claude --disallowedThing', 'g1:codex nested', 'g1:codex nowhere', 'g1:codex teleport'])
         self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['git', 'jq'])
 
+    CODEX_HELP = ('Usage: codex [OPTIONS] [PROMPT]\n\nCommands:\n'
+                  '  exec      Run Codex non-interactively\n'
+                  '  mcp       Manage MCP servers\n')
+
+    def codex_run(self):
+        responses = claude_helps()
+        responses[('codex', '--help')] = (0, self.CODEX_HELP)
+        return FakeRun(responses)
+
+    def test_sudo_inline_quoted_option_value(self):
+        folder = self.skill('s1', '```sh\nsudo --prompt="Pass word: " jq . f\n```\n')
+        self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['jq'])
+        findings = cli_checks.check_commands('s1', folder, FakeRun())
+        self.assertEqual([(f['kind'], f['subject']) for f in findings], [('missing-command', 's1:jq')])
+
+    def test_operator_stuck_to_word(self):
+        folder = self.skill('s2', '```sh\ncodex teleport; codex exec\n```\n\nAlso `codex teleport&& ls`.\n')
+        findings = cli_checks.check_cli_refs('s2', folder, self.TOOLS, self.codex_run())
+        self.assertEqual([(f['kind'], f['subject']) for f in findings], [('unknown-flag', 's2:codex teleport')])
+
+    def test_subcommand_in_odd_case_or_with_underscore(self):
+        folder = self.skill('s3', 'Run `codex Teleport` or `codex teleport_now`, then `codex exec`.\n')
+        findings = cli_checks.check_cli_refs('s3', folder, self.TOOLS, self.codex_run())
+        self.assertEqual(sorted((f['kind'], f['subject']) for f in findings),
+                         [('unknown-flag', 's3:codex Teleport'), ('unknown-flag', 's3:codex teleport_now')])
+
+    def test_sudo_grouped_flags_with_argument(self):
+        body = '```sh\nsudo -Eu root git status\nsudo -Euroot rg x\nsudo -E -- make\nls 2>&1 | tail\n```\n'
+        folder = self.skill('s4', body)
+        self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['git', 'rg', 'make', 'ls'])
+        findings = cli_checks.check_commands('s4', folder, FakeRun(ok_for('rg', 'make', 'ls')))
+        self.assertEqual([(f['kind'], f['subject']) for f in findings], [('missing-command', 's4:git')])
+
     def test_cli_without_help_is_skipped(self):
         folder = self.skill('f4', 'Run `codex exec --nope`.\n')
         self.assertEqual(cli_checks.check_cli_refs('f4', folder, self.TOOLS, FakeRun()), [])
