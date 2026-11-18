@@ -178,7 +178,7 @@ def _url(number):
 
 
 def _ops_text(prefix, entry):
-    return 'skills-catalog ' + prefix + ': ' + entry['kind'] + ' ' + entry['subject'] + ': ' + _url(entry['issue'])
+    return _ops_head(prefix, entry) + ': ' + _url(entry['issue'])
 
 
 def _latest_closed(closed_issues):
@@ -403,7 +403,7 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
 
         def reminded(entry=entry):
             entry['last_reminder_at'] = now_iso
-        candidates.append((fp, _ops_text('freshness-alert still open', entry), reminded))
+        candidates.append((fp, _ops_text(_REMINDER_PREFIX, entry), reminded))
 
     actions = []
     for fp, text, on_queued in candidates:
@@ -479,15 +479,40 @@ def plan_findings(findings, open_items, state, private_names=()):
     return _scrub_actions(actions)
 
 
-def record_send(state, text, ok):
+_ANNOUNCE_PREFIXES = ('freshness-alert', 'freshness-alert reopened')
+_REMINDER_PREFIX = 'freshness-alert still open'
+
+
+def _ops_head(prefix, entry):
+    return 'skills-catalog ' + prefix + ': ' + entry['kind'] + ' ' + entry['subject']
+
+
+def _reset_alert_message(state, text, fingerprint=None):
+    """Mark the alert behind a failed ops message as due again; False if none."""
+    table = state.get('alerts') or {}
+    head = text.rsplit(': ', 1)[0]
+    entries = [table[fingerprint]] if fingerprint in table else list(table.values())
+    for entry in entries:
+        if head == _ops_head(_REMINDER_PREFIX, entry):
+            entry['last_reminder_at'] = None
+            return True
+        if any(head == _ops_head(p, entry) for p in _ANNOUNCE_PREFIXES):
+            entry['announced'] = False
+            entry['last_reminder_at'] = None
+            return True
+    return False
+
+
+def record_send(state, text, ok, fingerprint=None):
     """Record one `openclaw message send` result (FRS-25); a failure is retried next run.
 
-    Called by part 7 right after each send of the same run. A failed message
-    gives its slot under the daily cap back and goes to `failed`, which the
-    next run sends first. A failed digest is not queued as one text: its
-    lines move from `pending` to `failed`, so they survive the day rollover,
-    and the next run sends them again (folded into a new digest when the
-    day's cap is reached).
+    Called by part 7 right after each send of the same run, with the
+    action's `fingerprint`. A failed message gives its slot under the daily
+    cap back. A failed alert announcement or reminder marks that alert as
+    due again, so the next run sends it with the current issue URL, and not
+    at all once the alert has closed (FRS-27). Any other failed text goes to
+    `failed`, which the next run sends first. A failed digest does the same
+    for each of its lines, so nothing in it is lost at the day rollover.
     """
     if ok:
         return state
@@ -496,11 +521,11 @@ def record_send(state, text, ok):
     if text.startswith(DIGEST_PREFIX):
         ops['digest_sent'] = False
         for line in ops.get('pending') or []:
-            if line not in failed:
+            if not _reset_alert_message(state, line) and line not in failed:
                 failed.append(line)
         ops['pending'] = []
         return state
-    if text not in failed:
-        failed.append(text)
     ops['sent'] = max(0, int(ops.get('sent') or 0) - 1)
+    if not _reset_alert_message(state, text, fingerprint) and text not in failed:
+        failed.append(text)
     return state

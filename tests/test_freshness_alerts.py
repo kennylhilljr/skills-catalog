@@ -233,37 +233,60 @@ class CapTests(unittest.TestCase):
     def test_failed_send_retried_next_run_and_counts(self):
         state = S.empty_state()
         actions, state = A.plan_alerts([alert('x')], [], [], state, 'r1', NOW)
-        text = ops(actions)[0]['text']
-        S_after = A.record_send(state, text, False)
-        self.assertEqual(S_after['ops']['failed'], [text])
+        send = ops(actions)[0]
+        # The executor filled in the URL of the issue it opened, then the send failed.
+        text = send['text'].replace(A.ISSUE_URL_PLACEHOLDER, A.ISSUE_URL_BASE + '7')
         A.record_send(state, 'ok text', True)
-        self.assertEqual(state['ops']['failed'], [text])
-        raised = [alert('y' + str(i)) for i in range(4)]
-        actions, state = A.plan_alerts(raised, [], [], state, 'r2', NOW + HOUR)
-        sent = ops(actions)
-        self.assertEqual(sent[0]['text'], text)
-        self.assertEqual(len(sent), 5)
-        self.assertEqual(state['ops']['sent'], 5)  # the failed send gave its slot back; the retry took one
+        A.record_send(state, text, False, fingerprint=send['fingerprint'])
+        self.assertEqual(state['ops']['sent'], 0)
+        self.assertFalse(state['alerts'][fp_of(alert('x'))]['announced'])
+        A.record_send(state, 'plain text', False)
+        self.assertEqual(state['ops']['failed'], ['plain text'])
+        raised = [alert('x')] + [alert('y' + str(i)) for i in range(4)]
+        actions, state = A.plan_alerts(raised, opened(state, alert('x'), 7), [], state, 'r2', NOW + HOUR)
+        sent = [a['text'] for a in ops(actions)]
+        self.assertEqual(sent[0], 'plain text')
+        self.assertIn(text, sent[1:])
+        self.assertEqual(len(sent), 6)
+        self.assertEqual(state['ops']['sent'], 6)
         self.assertEqual(state['ops']['failed'], [])
+
+    def test_failed_announcement_not_sent_after_close(self):
+        a = alert('z')
+        actions, state = A.plan_alerts([a], [], [], S.empty_state(), 'r1', NOW)
+        A.record_send(state, ops(actions)[0]['text'], False, fingerprint=fp_of(a))
+        open_now = opened(state, a, 5)
+        actions, state = A.plan_alerts([], open_now, [], state, 'r2', NOW + HOUR)
+        A.record_send(state, ops(actions)[0]['text'], False, fingerprint=fp_of(a))
+        actions, state = A.plan_alerts([], open_now, [], state, 'r3', NOW + 2 * HOUR)
+        self.assertEqual([x['op'] for x in actions], ['comment', 'close'])
 
     def test_failed_digest_is_sent_again_next_run(self):
         state = A.record_send(S.empty_state(), 'f1', False)
-        actions, state = A.plan_alerts([alert('g' + str(i)) for i in range(7)], [], [], state, 'r1', NOW)
+        raised = [alert('g' + str(i)) for i in range(7)]
+        actions, state = A.plan_alerts(raised, [], [], state, 'r1', NOW)
         digest = ops(actions)[-1]['text']
         self.assertTrue(digest.startswith(A.DIGEST_PREFIX))
-        lines = list(state['ops']['pending'])
         A.record_send(state, digest, False)
         self.assertFalse(state['ops']['digest_sent'])
-        self.assertEqual(state['ops']['failed'], lines)
-        snapshot = copy.deepcopy(state)
-        actions, state = A.plan_alerts([], [], [], state, 'r2', NOW + HOUR)
-        self.assertEqual([a['text'] for a in ops(actions)], [digest])
-        self.assertTrue(state['ops']['digest_sent'])
+        self.assertEqual(state['ops']['pending'], [])
         self.assertEqual(state['ops']['failed'], [])
-        # A retry on the next UTC day sends the lost lines directly.
+        unannounced = [fp for fp, e in state['alerts'].items() if not e['announced']]
+        self.assertEqual(len(unannounced), 1)
+        number = {fp: 50 + i for i, fp in enumerate(sorted(state['alerts']))}
+        open_now = [{'number': n, 'fingerprint': fp, 'closed_at': None} for fp, n in number.items()]
+        snapshot = copy.deepcopy(state)
+        url = A.ISSUE_URL_BASE + str(number[unannounced[0]])
+        actions, state = A.plan_alerts(raised[:5], open_now, [], state, 'r2', NOW + HOUR)
+        sent = ops(actions)
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0]['text'].startswith(A.DIGEST_PREFIX))
+        self.assertIn(url, sent[0]['text'])
+        # On the next UTC day the lost line is sent directly, with its URL.
         tomorrow = datetime.datetime(2026, 11, 19, 6, 0, tzinfo=UTC)
-        actions, _ = A.plan_alerts([], [], [], snapshot, 'r2', tomorrow)
-        self.assertEqual([a['text'] for a in ops(actions)], lines)
+        actions, _ = A.plan_alerts(raised[:5], open_now, [], snapshot, 'r2', tomorrow)
+        texts = [x['text'] for x in ops(actions)]
+        self.assertTrue(any(t.endswith(url) for t in texts), texts)
 
     def test_counters_reset_at_day_rollover_and_failed_kept(self):
         state = S.empty_state()
