@@ -575,27 +575,41 @@ class Run:
         actions cannot be undone by a merge, so two halves that overlap
         would both plan against the same counters. A live run therefore
         takes the lease with a compare-and-swap commit and releases it with
-        its heartbeat; a run that finds the other half's lease waits for it
-        (up to 20 minutes) and then fails without writing. A lease older
-        than its 40-minute expiry (a crashed run) is taken over.
+        its heartbeat; a run that finds another run's unexpired lease (either
+        half, a manual run included) waits for it (up to 20 minutes) and then
+        fails without writing. A lease past its 40-minute expiry (a crashed
+        run) is taken over, so a run whose own lease expired plans and
+        applies nothing (`lease_held`).
         """
-        other = OTHER[self.half]
         for attempt in range(LEASE_POLLS + 1):
             text, sha = self.gh.read_state()
             state = smod.load(text)
-            lease = state.get('lease') or {}
+            lease = state.get('lease')
+            lease = lease if isinstance(lease, dict) else {}
             now = smod.require_utc(self.deps.clock())
-            until = smod.parse_iso(lease.get('until')) if isinstance(lease, dict) else None
-            if lease.get('half') == other and until is not None and until > now:
+            until = smod.parse_iso(lease.get('until'))
+            if lease.get('run_id') not in (None, self.deps.run_id) and until is not None and until > now:
                 if attempt == LEASE_POLLS:
-                    raise RunError('the %s half still holds the state lease' % other)
+                    raise RunError('run %s of the %s half still holds the state lease'
+                                   % (lease.get('run_id'), lease.get('half')))
                 self.deps.sleep(LEASE_POLL_SECONDS)
                 continue
-            state['lease'] = {'half': self.half, 'run_id': self.deps.run_id, 'until': smod.iso(now + LEASE_TTL)}
+            self.lease_until = now + LEASE_TTL
+            state['lease'] = {'half': self.half, 'run_id': self.deps.run_id, 'until': smod.iso(self.lease_until)}
             if cas_write_state(self.gh, smod.dump(state), sha,
                                'freshness: %s lease, run %s (FRS-16)' % (self.half, self.deps.run_id)):
                 return
         raise RunError('the state lease could not be taken')
+
+    def lease_held(self):
+        """False once this run's lease expired: another run may hold it, so plan and apply nothing."""
+        if self.dry_run:
+            return True
+        if smod.require_utc(self.deps.clock()) < self.lease_until:
+            return True
+        self._fail('lease', 'the state lease expired before this run applied its actions')
+        self.skip_writes = True
+        return False
 
     def load_state(self):
         text, self.state_sha = self.gh.read_state()
@@ -796,7 +810,11 @@ class Run:
     def record_results(self):
         """Per-skill pass/fail of this half, for `age.advance_actions`."""
         if not self.checked_skills:
-            return  # the checks did not run: keep the last results
+            # The checks did not finish: no skill counts as passing for this half.
+            prefix = 'actions_' if self.half == 'actions' else 'mac_'
+            for entry in self.state['results'].values():
+                entry[prefix + 'ok'] = False
+            return
         failing = {f['skill'] for f in self.findings if f['kind'] != 'past-max-age'}
         results = self.state['results']
         names = set(self.checked_skills)
@@ -911,6 +929,7 @@ class Run:
         self.age_skills = []
         self.rereview = []
         self.skip_writes = False
+        self.lease_until = None
         if not self.dry_run:
             self.acquire_lease()
         self.load_state()
@@ -931,12 +950,14 @@ class Run:
             self._step('cli checks', self.mac_checks)
         self._step('heartbeat watch', self.watch_other_half)
         self.record_results()
-        if not self.skip_writes:
+        if not self.skip_writes and self.lease_held():
             self._step('route', self.route_findings)
-            if self.half == 'actions':
+            if self.half == 'actions' and not self.failed:
+                # FRS-9: a run that failed (a broken check, the canary) advances nothing.
                 self._step('age actions', self.age_actions)
             self._step('alerts', self.plan_alerts)
-            self._step('apply', self.apply)
+            if self.lease_held():
+                self._step('apply', self.apply)
             if self.half == 'mac':
                 self._step('announce', self.announce)
         beat = self.heartbeat(smod.require_utc(self.deps.clock()))

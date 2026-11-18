@@ -538,6 +538,35 @@ class RobustnessTests(unittest.TestCase):
         self.assertEqual(len(waits), runmod.LEASE_POLLS)
         self.assertEqual(fake.writes(), [])
 
+    def test_a_lease_of_another_run_of_the_same_half_blocks(self):
+        state = smod.empty_state()
+        state['lease'] = {'half': 'actions', 'run_id': 'actions-0',
+                          'until': smod.iso(NOW + datetime.timedelta(minutes=5))}
+        fake = FakeGitHub(state)
+        waits = []
+        code = runmod.main(['--half', 'actions'], deps=_deps(fake, 'actions', sleep=waits.append))
+        self.assertEqual(code, 1)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_run_whose_lease_expired_applies_nothing(self):
+        times = iter([NOW] * 2 + [NOW + runmod.LEASE_TTL] * 50)
+        fake = FakeGitHub(smod.empty_state())
+        ok, job, _ = _execute('actions', fake, clock=lambda: next(times))
+        self.assertFalse(ok)
+        self.assertEqual(_opened_titles(fake), [])
+        self.assertTrue(any(e.startswith('lease') for e in job.errors))
+
+    def test_a_failed_check_advances_nothing(self):
+        state = smod.empty_state()
+        state['results'] = {'zz-canary': {'actions_run': 'old', 'actions_ok': True}}
+        fake = FakeGitHub(state)
+        with mock.patch.object(checks, 'check_models', side_effect=RuntimeError('broken')), \
+                mock.patch.object(age, 'advance_actions', wraps=age.advance_actions) as advance:
+            ok, job, _ = _execute('actions', fake)
+        self.assertFalse(ok)
+        self.assertFalse(advance.called)
+        self.assertIs(fake.written_state()['results']['zz-canary']['actions_ok'], False)
+
     def test_an_expired_lease_is_taken_over(self):
         state = smod.empty_state()
         state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW - datetime.timedelta(minutes=1))}
