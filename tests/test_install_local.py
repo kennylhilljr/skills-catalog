@@ -6,7 +6,11 @@ real home folder is never touched. The excluded fixture name is built at
 runtime, so this file itself scans clean (the repository is public).
 """
 
+import contextlib
 import hashlib
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
 import shutil
@@ -139,6 +143,7 @@ class InstallLocalCase(unittest.TestCase):
         self.commit_tag('v1')
         run = self.run_tool()
         self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('installed v1', run.stdout)
         for dest in (self.claude, self.agents):
             self.assert_installed(dest, self.skills)
             self.assertNotIn('sdd-held', os.listdir(dest))
@@ -187,6 +192,7 @@ class InstallLocalCase(unittest.TestCase):
         self.commit_tag('v2')
         run = self.run_tool(ref='v2')
         self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('installed v2', run.stdout)
         for dest in (self.claude, self.agents):
             self.assert_installed(dest, self.skills)
         self.assertEqual([n for n in os.listdir(self.claude) if n.startswith('.')], [])
@@ -268,6 +274,55 @@ class InstallLocalCase(unittest.TestCase):
             self.assertNotIn(HIDDEN, handle.read())
         dry = self.run_tool('--dry-run')
         self.assertNotIn(HIDDEN, dry.stdout.lower() + dry.stderr.lower())
+
+    def test_folder_changed_after_planning_is_refused(self):
+        loader = importlib.machinery.SourceFileLoader('install_local', TOOL)
+        spec = importlib.util.spec_from_loader('install_local', loader)
+        tool = importlib.util.module_from_spec(spec)
+        loader.exec_module(tool)
+        self.commit_tag('v1')
+        self.assertEqual(self.run_tool().returncode, 0)
+        self.skills['alpha']['SKILL.md'] = b'alpha v2\n'
+        self.commit_tag('v2')
+        tag, commit = tool.resolve_tag(self.repo, 'v2')
+        files = tool.read_tag(self.repo, commit, set())
+        skills, held = tool.catalog_skills(files, set())
+        wanted = tool.build_wanted(files, skills, held, set())
+        state = tool.read_state(self.state)
+        dests = state['destinations']
+        plans = {self.claude: tool.plan_destination(self.claude, wanted, dests[self.claude], set())}
+        self.assertIn(('update', 'alpha', None), plans[self.claude])
+        edited = os.path.join(self.claude, 'alpha', 'SKILL.md')
+        with open(edited, 'w') as handle:
+            handle.write('edited after the plan')
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            _changed, refused = tool.apply([self.claude], plans, dests, wanted, tag, commit,
+                                           state, self.state)
+        self.assertTrue(refused)
+        with open(edited) as handle:
+            self.assertEqual(handle.read(), 'edited after the plan')
+
+    def test_symlinked_skill_folder_in_the_tag_is_refused(self):
+        self.commit_tag('v1')
+        os.symlink('alpha', os.path.join(self.repo, 'skills', 'delta'))
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'folder link')
+        self.git('tag', 'v2')
+        run = self.run_tool(ref='v2')
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('symlink', run.stderr)
+        self.assertFalse(os.path.exists(self.claude))
+
+    def test_malformed_excluded_entry_is_skipped(self):
+        def add_bad(catalog):
+            catalog['skills'].append({'name': HIDDEN, 'path': 7})
+        self.commit_tag('v1', manifest_override=add_bad)
+        with open(self.exclude, 'w') as handle:
+            handle.write(HIDDEN + '\n')
+        run = self.run_tool()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assert_installed(self.claude, self.skills)
+        self.assertNotIn(HIDDEN, run.stdout + run.stderr)
 
     def test_excluded_skill_with_odd_path_is_never_named(self):
         self.skills[HIDDEN] = {'SKILL.md': b'private\n', 'odd\\name.md': b'x\n'}

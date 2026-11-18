@@ -28,6 +28,7 @@ verification, 2 usage or git error. Python 3.9+, standard library only.
 """
 
 import argparse
+import errno
 import hashlib
 import io
 import json
@@ -134,16 +135,17 @@ def is_excluded_path(name, excluded):
 
 
 def read_tag(repo, commit, excluded):
-    """{path: (bytes, executable)} for regular files, plus the set of links.
+    """{path: (bytes, executable)} for the regular files of the tag.
 
     Paths are '/'-separated and relative to the repository root. Members of
     an excluded skill folder are dropped unread, so no check can name them.
+    Any other member that is not a regular file or a folder (a symlink, a
+    hard link, a device) is refused, on every Python version.
     """
     run = git(repo, 'archive', '--format=tar', commit, '--', 'skills', 'catalog.json')
     if run.returncode != 0:
         raise Failure('git archive failed: ' + os.fsdecode(run.stderr).strip())
     files = {}
-    others = set()
     with tarfile.open(fileobj=io.BytesIO(run.stdout), mode='r:') as archive:
         for member in archive.getmembers():
             if is_excluded_path(member.name, excluded):
@@ -156,26 +158,37 @@ def read_tag(repo, commit, excluded):
                 handle = archive.extractfile(member)
                 files[name] = (handle.read(), bool(member.mode & 0o111))
             else:
-                others.add(name)
-    return files, others
+                raise Refused('refusing a symlink or special file in the tag: ' + name)
+    return files
 
 
-def catalog_skills(files):
-    """The `skills` and the held names of the tag's catalog.json."""
+def entry_name(entry):
+    if isinstance(entry, dict) and isinstance(entry.get('name'), str):
+        return entry['name']
+    return None
+
+
+def catalog_skills(files, excluded):
+    """The `skills` entries (excluded ones dropped first) and the held names."""
     if 'catalog.json' not in files:
         raise Refused('the tag has no catalog.json')
     try:
         catalog = json.loads(files['catalog.json'][0].decode('utf-8'))
         skills = catalog['skills']
-        held = {entry['name'] for entry in catalog.get('held', [])}
+        held = {entry_name(entry) for entry in catalog.get('held', [])}
         if not isinstance(skills, list):
             raise TypeError('skills is not a list')
+        kept = []
         for entry in skills:
-            if not isinstance(entry['name'], str) or not isinstance(entry['files'], dict):
+            name = entry_name(entry)
+            if name is not None and name.lower() in excluded:
+                continue
+            if name is None or not isinstance(entry.get('files'), dict):
                 raise TypeError('bad entry')
+            kept.append(entry)
     except (ValueError, KeyError, TypeError, AttributeError, UnicodeDecodeError):
         raise Refused('the tag has an unreadable catalog.json')
-    return skills, held
+    return kept, held
 
 
 def valid_name(name):
@@ -183,10 +196,10 @@ def valid_name(name):
         and not name.startswith('.')
 
 
-def build_wanted(files, others, skills, held, excluded):
+def build_wanted(files, skills, held, excluded):
     """{name: {rel: (bytes, executable)}} for every skill to install.
 
-    Raises Refused on any manifest mismatch or link. Error text never names an
+    Raises Refused on any manifest mismatch. Error text never names an
     excluded skill: excluded entries are dropped before anything is checked.
     """
     wanted = {}
@@ -199,9 +212,6 @@ def build_wanted(files, others, skills, held, excluded):
         if not valid_name(name) or entry.get('path') != 'skills/' + name:
             raise Refused('bad catalog entry: ' + name)
         prefix = 'skills/' + name + '/'
-        links = sorted(path for path in others if path.startswith(prefix))
-        if links:
-            raise Refused('refusing a symlink or special file in the tag: ' + links[0])
         content = {}
         for path, value in files.items():
             if path.startswith(prefix) and posixpath.basename(path) not in IGNORED_FILES:
@@ -410,8 +420,10 @@ def swap_in(fresh, final, old):
             exchange(fresh, final)
             os.rename(fresh, old)
             return
-        except OSError:
-            pass
+        except OSError as err:
+            # Only a file system without the call falls back; anything else fails.
+            if err.errno not in (errno.EINVAL, errno.ENOTSUP, errno.ENOSYS):
+                raise
     os.rename(final, old)
     try:
         os.rename(fresh, final)
@@ -468,9 +480,9 @@ def main(argv=None):
     try:
         excluded = read_excluded(full_path(args.exclude_file))
         tag, commit = resolve_tag(repo, args.ref)
-        files, others = read_tag(repo, commit, excluded)
-        skills, held = catalog_skills(files)
-        wanted = build_wanted(files, others, skills, held, excluded)
+        files = read_tag(repo, commit, excluded)
+        skills, held = catalog_skills(files, excluded)
+        wanted = build_wanted(files, skills, held, excluded)
         state = read_state(state_path)
     except Failure as err:
         print(PROG + ': error: ' + str(err), file=sys.stderr)
@@ -502,11 +514,15 @@ def main(argv=None):
         return 0
 
     try:
-        changed = apply(dests, plans, destinations, wanted, tag, commit, state, state_path)
+        changed, refused = apply(dests, plans, destinations, wanted, tag, commit, state,
+                                 state_path)
     except OSError as err:
         print(PROG + ': error: ' + err.__class__.__name__ + ' while writing: '
               + str(err.strerror or err), file=sys.stderr)
         return 2
+    if refused:
+        print(PROG + ': refused some folders that changed during the run', file=sys.stderr)
+        return 1
     if not changed:
         print(PROG + ': ' + tag + ' is already installed')
     else:
@@ -524,17 +540,34 @@ def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
     changes.
     """
     changed = False
+    refused = False
+    if any(step[0] in ('install', 'update', 'remove', 'forget')
+           for steps in plans.values() for step in steps):
+        write_state(state_path, state)
     for dest in dests:
         owned = destinations.setdefault(dest, {})
         for action, name, _detail in plans[dest]:
+            folder = os.path.join(dest, name)
+            # Check again right before writing: the folder may have changed
+            # since the plan was made.
+            if action == 'install' and os.path.lexists(folder):
+                refused = True
+                print(folder + ': refusing to overwrite (' + NOT_INSTALLED + ')', file=sys.stderr)
+                continue
+            if action in ('update', 'remove') and not matches_record(
+                    installed_hashes(folder), owned.get(name)):
+                refused = True
+                print(folder + ': refusing to overwrite (' + CHANGED + ')', file=sys.stderr)
+                continue
             entry = None
             if action in ('install', 'update', 'keep'):
                 entry = record(tag, commit, wanted[name])
             if action in ('install', 'update'):
                 pending = dict(entry)
                 if action == 'update':
-                    pending['previous'] = installed_hashes(os.path.join(dest, name))
+                    pending['previous'] = installed_hashes(folder)
                 owned[name] = pending
+                changed = True
                 write_state(state_path, state)
                 place(dest, name, wanted[name])
                 print(action + ' ' + os.path.join(dest, name))
@@ -550,7 +583,7 @@ def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
                 owned.pop(name, None)
                 changed = True
                 write_state(state_path, state)
-    return changed
+    return changed, refused
 
 
 if __name__ == '__main__':
