@@ -92,8 +92,9 @@ class Base(unittest.TestCase):
         self.seen.extend(findings)
         for f in findings:
             self.assertEqual(shape_errors(f), [], f)
-            for text in (f['subject'], f['evidence'], f['file'] or ''):
-                self.assertEqual(scrub.scan_text(text, 'issue.md'), [], text)
+            # The whole serialized finding, fix included, passes the scrub.
+            text = json.dumps(f, indent=1)
+            self.assertEqual(scrub.scan_text(text, 'issue.md'), [], text)
             self.assertNotIn(self.root, f['evidence'])
             self.assertNotIn(self.root, f['subject'])
         return findings
@@ -127,15 +128,31 @@ class ModelTests(Base):
         self.assertEqual(checks.check_models(folder, 'a-skill', MODELS), [])
 
     def test_longer_id_prefix_gives_none(self):
-        body = 'Try claude-2.1-beta, gpt-5-mini, gpt-5.1 and xgpt-5.\n'
+        body = 'Try claude-2.1-beta, gpt-5-mini, gpt-5.1, gpt-5.5 and xgpt-5.\n'
         folder = self.make('a-skill', body=body)
         self.assertEqual(checks.check_models(folder, 'a-skill', MODELS), [])
 
     def test_id_at_sentence_end_and_no_replacement(self):
-        folder = self.make('a-skill', body='We used gpt-5.\nAnd old-model-x too.\n')
+        folder = self.make('a-skill', body='We used gpt-5.\nAnd old-model-x too.\nSee gpt-5.json.\n')
         out = self.check_all(checks.check_models(folder, 'a-skill', MODELS))
-        self.assertEqual([f['subject'].split(':')[-1] for f in out], ['gpt-5', 'old-model-x'])
+        self.assertEqual([f['subject'].split(':')[-1] for f in out], ['gpt-5', 'old-model-x', 'gpt-5'])
         self.assertIsNone(out[1]['fix'])
+
+    def test_symlinked_and_special_files_not_read(self):
+        outside = os.path.join(self.root, 'outside.py')
+        with open(outside, 'w') as handle:
+            handle.write('MODEL = "gpt-5"\n')
+        folder = self.make('a-skill', files={'scripts/ok.py': 'x = 1\n'})
+        os.symlink(outside, os.path.join(folder, 'scripts', 'link.py'))
+        os.symlink(os.devnull, os.path.join(folder, 'scripts', 'dev.py'))
+        os.symlink(outside, os.path.join(folder, 'references.md'))
+        self.assertEqual(checks.check_models(folder, 'a-skill', MODELS), [])
+        with open(outside, 'w') as handle:
+            handle.write('https://example.com/outside\n')
+        self.assertEqual(links.extract_links(folder), [])
+        real = self.make('real-skill')
+        os.symlink(real, os.path.join(self.root, 'skills', 'linked-skill'))
+        self.assertEqual([n for _s, n, _f in checks.iter_skills(self.root)], ['a-skill', 'real-skill'])
 
     def test_models_table_seeded(self):
         with open(os.path.join(ROOT, 'freshness', 'models.json')) as handle:
@@ -238,17 +255,22 @@ class IterSkillsTests(Base):
         self.make('b-held', section='.held')
         hidden = self.make('hidden-one')
         touched = []
-        real_isfile, real_open = os.path.isfile, open
+        real_isfile, real_lstat, real_open = os.path.isfile, os.lstat, open
 
         def isfile(path):
             touched.append(str(path))
             return real_isfile(path)
 
+        def lstat(path, *args, **kwargs):
+            touched.append(str(path))
+            return real_lstat(path, *args, **kwargs)
+
         def opener(path, *args, **kwargs):
             touched.append(str(path))
             return real_open(path, *args, **kwargs)
 
-        with mock.patch('os.path.isfile', isfile), mock.patch('builtins.open', opener):
+        with mock.patch('os.path.isfile', isfile), mock.patch('os.lstat', lstat), \
+                mock.patch('builtins.open', opener):
             got = checks.iter_skills(self.root, {'hidden-one'})
         self.assertEqual([(s, n) for s, n, _ in got], [('skills', 'a-skill'), ('.held', 'b-held')])
         self.assertFalse([p for p in touched if p.startswith(hidden)])
@@ -328,6 +350,17 @@ class LinkTests(Base):
         findings, _h = self.run_links({URL: (308, '/other')}, {}, T0)
         self.assertEqual(findings[0]['fix']['new'], 'https://example.com/other')
 
+    def test_unsafe_redirect_target_not_published(self):
+        bad = [
+            'https://build' + '.corp' + '.internal/docs',
+            'javascript' + ':alert(1)',
+            'https://example.com/a b',
+        ]
+        for target in bad:
+            findings, history = self.run_links({URL: (301, target)}, {}, T0)
+            self.assertEqual(findings, [], target)
+            self.assertNotIn(URL, history)
+
     def test_url_used_twice_fetched_once(self):
         fetch = FakeFetch({URL: (200, None)})
         items = [ITEM, ('b-skill', 'skills/b-skill/SKILL.md', 9, URL)]
@@ -366,7 +399,7 @@ class NoSideEffectsTests(unittest.TestCase):
         out += checks.check_description(checks.catalog_descriptions(ROOT))
         for f in out:
             self.assertEqual(shape_errors(f), [], f)
-            self.assertEqual(scrub.scan_text(f['evidence'] + '\n' + f['subject'], 'issue.md'), [])
+            self.assertEqual(scrub.scan_text(json.dumps(f, indent=1), 'issue.md'), [])
 
 
 if __name__ == '__main__':

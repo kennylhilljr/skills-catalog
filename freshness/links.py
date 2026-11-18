@@ -3,9 +3,10 @@
 `extract_links` finds http(s) URLs in a skill's text files. `check_links`
 applies the soft-fail rule: the first failure of a URL is only recorded in
 `history`; a failure at least `min_gap_hours` after the recorded first failure
-yields a `dead-link` finding; a success clears the entry. A 301 or 308 records
-`moved_to` and yields a finding with a `fix` that replaces the URL on that
-line (part 5 turns it into a "moved link" PR). That finding has kind
+yields a `dead-link` finding; a success clears the entry. A 301 or 308 to a
+safe target (`safe_location`) records `moved_to` and yields a finding with a
+`fix` that replaces the URL on that line (part 5 turns it into a "moved link"
+PR). That finding has kind
 `moved-link`, never `dead-link`. A `fix` means: on line `line` of `file`,
 replace the text `old` with `new`.
 
@@ -20,10 +21,18 @@ Findings have part 1's shape: `{"kind", "skill", "subject", "file", "line",
 "evidence", "fix"}`; `subject` is `<file>:<url>`, without a line number.
 """
 
+import importlib.util
 import os
 import re
-from urllib.parse import urljoin
 from datetime import datetime, timedelta
+from urllib.parse import urljoin, urlsplit
+
+from freshness.checks import _is_real_dir, _read_text
+
+_SCRUB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', 'scrub.py')
+_spec = importlib.util.spec_from_file_location('freshness_links_scrub', _SCRUB_PATH)
+_scrub = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_scrub)
 
 FETCH_TIMEOUT = 10
 USER_AGENT = 'skills-catalog-freshness'
@@ -34,20 +43,6 @@ MOVED_KIND = 'moved-link'
 
 _URL = re.compile(r'https?://[^\s<>"\'`]+')
 _TRAILING = ').,;>'
-
-
-def _read_text(path):
-    try:
-        with open(path, 'rb') as handle:
-            data = handle.read()
-    except OSError:
-        return None
-    if b'\0' in data[:8000]:
-        return None
-    try:
-        return data.decode('utf-8')
-    except UnicodeDecodeError:
-        return None
 
 
 def _rel_folder(folder):
@@ -63,6 +58,10 @@ def extract_links(folder):
     """
     base = _rel_folder(folder)
     out = []
+    if not _is_real_dir(folder):
+        return out
+    # os.walk does not descend into symlinked folders, and _read_text skips
+    # symlinked, special, binary and oversized files.
     for dirpath, dirnames, filenames in os.walk(folder):
         dirnames.sort()
         for filename in sorted(filenames):
@@ -85,6 +84,25 @@ def _parse(stamp):
 
 def _stamp(now):
     return now.isoformat()
+
+
+def safe_location(url, location):
+    """The absolute redirect target, or None when it is not fit to publish.
+
+    The `Location` header comes from a third party and ends up in evidence,
+    history and a PR, so it must be a plain http(s) URL that passes the scrub.
+    """
+    if not isinstance(location, str) or not location:
+        return None
+    target = urljoin(url, location)
+    parts = urlsplit(target)
+    if parts.scheme not in ('http', 'https') or not parts.netloc:
+        return None
+    if re.search(r'[\s<>"\'`]', target) or len(target) > 2048:
+        return None
+    if _scrub.scan_text(target, 'freshness-link.md'):
+        return None
+    return target
 
 
 def _probe(fetch, url):
@@ -113,9 +131,10 @@ def check_links(items, history, fetch, now, min_gap_hours=20):
 
     dead = set()
     for url, (ok, status, location) in results.items():
-        if ok and status in MOVED and location:
-            location = urljoin(url, location)
+        if ok and status in MOVED:
+            location = safe_location(url, location)
             results[url] = (ok, status, location)
+        if ok and status in MOVED and location:
             history[url] = {'first_fail_at': None, 'last_status': status, 'moved_to': location}
         elif ok:
             history.pop(url, None)

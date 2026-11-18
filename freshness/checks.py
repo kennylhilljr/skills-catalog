@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import stat
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LINT_PATH = os.path.join(_ROOT, 'tools', 'lint.py')
@@ -81,12 +82,38 @@ def _rel_file(folder, path):
     return _rel_folder(folder) + '/' + rel
 
 
+MAX_READ = 2 * 1024 * 1024
+
+
+def _is_regular(path):
+    """True for a regular file that is not a symlink (lstat, like tools/catalog.py)."""
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _is_real_dir(path):
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
 def _read_text(path):
-    """File text, or None for a binary or unreadable file."""
+    """File text, or None for a binary, unreadable, oversized or non-regular file.
+
+    Symlinks and special files are never read, so a link cannot pull in a file
+    outside the skill folder or a device that never ends.
+    """
+    if not _is_regular(path):
+        return None
     try:
         with open(path, 'rb') as handle:
-            data = handle.read()
+            data = handle.read(MAX_READ + 1)
     except OSError:
+        return None
+    if len(data) > MAX_READ:
         return None
     if b'\0' in data[:8000]:
         return None
@@ -113,7 +140,8 @@ def iter_skills(root, excluded=()):
             if name in excluded:
                 continue
             folder = os.path.join(base, name)
-            if os.path.isfile(os.path.join(folder, 'SKILL.md')):
+            # A symlinked folder or SKILL.md is skipped, as in tools/catalog.py.
+            if _is_real_dir(folder) and _is_regular(os.path.join(folder, 'SKILL.md')):
                 out.append((section, name, folder))
     return out
 
@@ -123,6 +151,8 @@ def _model_files(folder):
     files = [os.path.join(folder, 'SKILL.md')]
     scripts = os.path.join(folder, 'scripts')
     found = []
+    if not _is_real_dir(scripts):
+        return files
     for dirpath, dirnames, filenames in os.walk(scripts):
         dirnames.sort()
         for filename in sorted(filenames):
@@ -131,11 +161,11 @@ def _model_files(folder):
 
 
 def _id_pattern(model_id):
-    # Whole token: not preceded by a word character, `.` or `-`, and not
-    # followed by a word character, `-` or a `.` that continues the ID (so
-    # `gpt-5` does not match inside `gpt-5.1`, but does match `gpt-5.` at the
-    # end of a sentence).
-    return re.compile(r'(?<![\w.-])' + re.escape(model_id) + r'(?![\w-]|\.\w)')
+    # Whole token, as in issue #65: `(?<![\w.-])id(?![\w-])`, plus one
+    # narrowing: not followed by `.<digit>`, so `gpt-5` does not match inside
+    # the longer ID `gpt-5.1`. `gpt-5.` at a sentence end and `gpt-5.json`
+    # still match.
+    return re.compile(r'(?<![\w.-])' + re.escape(model_id) + r'(?![\w-]|\.\d)')
 
 
 def check_models(folder, skill, models):
