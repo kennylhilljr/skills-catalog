@@ -364,6 +364,18 @@ class Inv5Test(unittest.TestCase):
         gh.bot_login = 'other-app[bot]'
         self.assertEqual(gh.list_bot_items(now=NOW), [])
 
+    def test_open_pr_closes_unlabeled_pr_for_retry(self):
+        gh, fake = make_github()
+        action = {'op': 'open_pr', 'fingerprint': FP, 'title': 't', 'body': 'b', 'labels': ['freshness'],
+                  'files': {'a.txt': '1\n'}, 'branch': fmod.branch_name(FP)}
+        fake.label_failures = 2
+        result = gh.apply([action])[0]
+        self.assertFalse(result['ok'])
+        self.assertEqual(fake.issues[1]['state'], 'closed')
+        result = gh.apply([action])[0]   # the next run opens it again on the same branch
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(fake.issues[2]['head']['ref'], fmod.branch_name(FP))
+
     def test_open_pr_retries_labels_once(self):
         gh, fake = make_github()
         action = {'op': 'open_pr', 'fingerprint': FP, 'title': 't', 'body': 'b', 'labels': ['freshness'],
@@ -469,6 +481,11 @@ class RouteTest(RootMixin, unittest.TestCase):
                             classification={'affects': ['demo', 'sdd-demo'], 'reason': 'sdd-demo loads skills'})
         self.assertNotIn('sdd-demo', hidden['body'])
         self.assertIn('- `demo`', hidden['body'])
+        # The diff itself may name an excluded skill; that line is withheld.
+        found = dict(found, evidence=diff + '\n+See the secret-skill notes.')
+        hidden = rmod.route(found, self.root, MODELS, excluded={'secret-skill'}, classification=None)
+        self.assertNotIn('secret-skill', json.dumps(hidden))
+        self.assertIn('[line withheld', hidden['body'])
 
     def test_stale_fix_or_excluded_skill_is_not_a_pr(self):
         found = model_finding()
@@ -512,6 +529,8 @@ class ClassifyTest(unittest.TestCase):
         result = cmod.classify('-| gpt-5 | deprecated |', {'y': 'Runs on gpt-5 by default.'}, state, call, '2026-11-18')
         self.assertEqual(result['affects'], ['y'])
         self.assertEqual(calls, [])
+        # gpt-5.1 in a diff does not mark a skill that uses only gpt-5.
+        self.assertIsNone(cmod.rules('+| gpt-5.1 | deprecated |', {'y': 'Runs on gpt-5 by default.'}))
 
     def test_prose_words_do_not_match(self):
         call, calls = self.counting()

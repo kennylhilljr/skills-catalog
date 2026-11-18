@@ -376,6 +376,28 @@ def _upstream_issue(finding, classification, unclassified_reason):
             'title': _title('upstream-change: ', finding.get('skill') or '')}
 
 
+def _withhold(text, pattern):
+    if not text or pattern is None:
+        return text
+    return '\n'.join('[line withheld: it names an excluded skill]' if pattern.search(line) else line
+                     for line in text.split('\n'))
+
+
+def _hide_excluded(item, excluded):
+    """Withhold every line of the item that names an excluded skill (DESIGN 5.1)."""
+    if not excluded:
+        return item
+    pattern = re.compile(r'(?<![\w-])(?:' + '|'.join(re.escape(n) for n in sorted(excluded)) + r')(?![\w-])')
+    if pattern.search(item['title']):
+        item['title'] = _title('freshness: ', item['finding']['kind'] + ' (subject withheld)')
+    item['body'] = _withhold(item['body'], pattern)
+    found = item['finding']
+    item['finding'] = dict(found, evidence=_withhold(found.get('evidence') or '', pattern))
+    if any(pattern.search(text) for text in item['files'].values()):
+        item.update({'as': 'issue', 'files': {}, 'labels': [LABEL_FRESHNESS]})
+    return item
+
+
 def route(finding, root, models, classification=None, unclassified_reason=None, today=None, excluded=()):
     """The routed item for one Finding (FRS-12), or None for an excluded skill.
 
@@ -393,6 +415,10 @@ def route(finding, root, models, classification=None, unclassified_reason=None, 
             reason = 'withheld'
         classification = dict(classification, reason=reason, affects=[
             name for name in classification.get('affects') or () if name not in excluded])
+    return _hide_excluded(_route(finding, root, models, classification, unclassified_reason, today), excluded)
+
+
+def _route(finding, root, models, classification, unclassified_reason, today):
     if finding['kind'] == 'upstream-change':
         item = _schema_pr(finding, root)
         return item or _upstream_issue(finding, classification, unclassified_reason)

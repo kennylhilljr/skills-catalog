@@ -52,7 +52,6 @@ CLOSED_WINDOW = datetime.timedelta(days=14)
 PER_PAGE = 100
 MAX_PAGES = 50
 ISSUE_URL_PLACEHOLDER = '{issue_url}'
-TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 
 _PR_REF = re.compile(r'^refs/heads/freshness/[0-9a-f]{12}$')
 
@@ -221,7 +220,7 @@ class GitHub:
         user = item.get('user') or {}
         if self.bot_login is not None:
             return user.get('login') == self.bot_login
-        return user.get('type') == 'Bot' or item.get('author_association') in TRUSTED_ASSOCIATIONS
+        return user.get('type') == 'Bot'
 
     def list_bot_items(self, now=None):
         """Open, and closed in the last 14 days, issues and PRs carrying a fingerprint marker."""
@@ -320,7 +319,11 @@ class GitHub:
                 except RefusedWrite:
                     raise
                 except GitHubError as err:
-                    pr = dict(pr, label_error=self._clean(err))
+                    # Close the unlabeled PR, so the next run opens it again
+                    # (same branch, force-moved) with its labels.
+                    self._request('PATCH', '/issues/%d' % pr['number'], {'state': 'closed'})
+                    raise GitHubError('labels failed, PR #%d closed for a retry next run: %s'
+                                      % (pr['number'], self._clean(err)), err.status) from None
         return pr
 
     def _update_pr(self, action):
@@ -371,8 +374,6 @@ class GitHub:
                 elif op == 'open_pr':
                     pr = self._open_pr(action)
                     result.update(number=pr['number'], url=pr.get('html_url'))
-                    if pr.get('label_error'):
-                        result['label_error'] = pr['label_error']
                 elif op == 'update_pr':
                     self._update_pr(action)
                     result['number'] = action['number']
