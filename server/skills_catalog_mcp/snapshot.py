@@ -29,6 +29,7 @@ DEFAULT_EXCLUDE_FILE = os.path.join('~', '.config', 'skills-catalog', 'exclude.t
 TAG_PATTERN = 'refs/tags/v*'
 _NAME = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 _MISMATCH = 'skills/ does not match catalog.json'
+_TAG_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]*$')
 
 
 class SnapshotError(Exception):
@@ -55,8 +56,6 @@ def load_exclusions(path):
     One name per line, `#` starts a comment, case-insensitive. A missing file
     means an empty list. The names are never logged or returned in an error.
     """
-    if path is None:
-        return frozenset()
     try:
         with open(os.path.expanduser(path), encoding='utf-8') as handle:
             lines = handle.read().splitlines()
@@ -93,9 +92,18 @@ def _resolve_tag(repo, ref):
         if not tags:
             raise SnapshotError('no catalog tag')
         ref = tags[0]
-    if not ref or ref.startswith('-') or any(c.isspace() for c in ref):
+    # The ref is a literal tag name, never a revision expression such as
+    # `v1~1` or `v1^{tree}`, which would resolve to an untagged commit.
+    if not isinstance(ref, str) or not _TAG_NAME.match(ref):
         raise SnapshotError('ref is not a tag')
-    code, out = _git(repo, 'rev-parse', '--verify', '--quiet', 'refs/tags/%s^{commit}' % ref)
+    code, _out = _git(repo, 'check-ref-format', 'refs/tags/' + ref)
+    if code != 0:
+        raise SnapshotError('ref is not a tag')
+    code, out = _git(repo, 'show-ref', '--verify', '--hash', 'refs/tags/' + ref)
+    if code != 0:
+        raise SnapshotError('ref is not a tag')
+    oid = out.decode('ascii').strip()
+    code, out = _git(repo, 'rev-parse', '--verify', '--quiet', oid + '^{commit}')
     if code != 0:
         raise SnapshotError('ref is not a tag')
     return ref, out.decode('ascii').strip()
@@ -126,16 +134,17 @@ def _hash_files(folder):
     return found
 
 
-def materialize(repo, ref=None, exclude_file=None):
+def materialize(repo, ref=None, exclude_file=DEFAULT_EXCLUDE_FILE):
     """Extract the delivered skills of tag `ref` (default: newest `v*` tag) of `repo`.
 
-    `exclude_file` is the local exclusion list; None means no list. Raises
-    SnapshotError when the ref is not a tag or the tree does not match the
-    tag's catalog.json.
+    `exclude_file` is the local exclusion list, by default
+    `~/.config/skills-catalog/exclude.txt`; a missing file is an empty list.
+    Tests pass their own file. Raises SnapshotError when the ref is not a tag
+    or the tree does not match the tag's catalog.json.
     """
     excluded = load_exclusions(exclude_file)
     tag, commit = _resolve_tag(repo, ref)
-    code, data = _git(repo, 'archive', '--format=tar', 'refs/tags/' + tag, '--', 'skills', 'catalog.json')
+    code, data = _git(repo, 'archive', '--format=tar', commit, '--', 'skills', 'catalog.json')
     if code != 0:
         raise SnapshotError('tag has no skills/ or catalog.json')
 

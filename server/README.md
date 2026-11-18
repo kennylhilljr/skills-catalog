@@ -66,7 +66,7 @@ It refuses to start when a folder under `skills/` is not in the manifest, a file
 
 - Held skills: `.held/` (the `sdd-*` mirrors and `zz-canary`) and the manifest's `held` array (SPEC MCP-6, INV-8).
 - Anything outside `skills/`: `inventory/`, `freshness/`, `docs/`, `tools/`, the root `README.md` and `catalog.json` itself.
-- Skills on the local exclusion list (SPEC CAT-20, INV-7). They are dropped before the provider sees the folder. Asking for one gets the same answer as asking for a name that does not exist, and the server logs only `skipped N skill(s) from the local exclusion list`, and only when N is not zero. The server keeps FastMCP's logger at INFO or above, because FastMCP logs every requested URI at DEBUG.
+- Skills on the local exclusion list (SPEC CAT-20, INV-7). They are dropped before the provider sees the folder. Reading one gets the same fixed `Resource not found` error as reading a name that does not exist (the server never echoes a requested URI in that error), and the server logs only `skipped N skill(s) from the local exclusion list`, and only when N is not zero. The server keeps FastMCP's logger at INFO or above, because FastMCP logs every requested URI at DEBUG.
 - Commits after the tag, and the working tree.
 
 ## FastMCP version

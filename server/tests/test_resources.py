@@ -80,6 +80,10 @@ class ResourceTests(_Temp):
                 for rel, data in skill.files.items():
                     served['%s/%s' % (name, rel)] = data
             text = await self.read_text(client, 'skill://alpha-skill/references/notes.md')
+            skill = await client.read_skill('skill://alpha-skill/SKILL.md')
+        out = skill.to_directory(os.path.join(self.tmp, 'out', 'alpha-skill'))
+        for rel in ('SKILL.md', 'references/notes.md', 'assets/logo.png'):
+            self.assertEqual((out / rel).read_bytes(), tagged['alpha-skill/' + rel])
         self.assertEqual(served, tagged)
         self.assertEqual(text.encode('utf-8'), tagged['alpha-skill/references/notes.md'])
 
@@ -122,6 +126,22 @@ class RefTests(_Temp):
         repo = make_catalog_repo(self.tmp)
         with self.assertRaisesRegex(SnapshotError, '^ref is not a tag$'):
             materialize(repo, 'main', exclude_file=self.exclude)
+
+    def test_revision_expressions_are_not_tags(self):
+        repo = make_catalog_repo(self.tmp)
+        commit_all(repo, 'later', tag='v2099.1.1.2', stamp=next_stamp(1))
+        for ref in ('v2099.1.1.2~1', 'v2099.1.1.2^', 'v2099.1.1.2^{commit}', 'v2099.1.1.2:catalog.json',
+                    '-v2099.1.1.2', 'tags/v2099.1.1.2', 'HEAD', ''):
+            with self.assertRaisesRegex(SnapshotError, '^ref is not a tag$', msg=ref):
+                materialize(repo, ref, exclude_file=self.exclude)
+
+    def test_default_exclusion_list(self):
+        import inspect
+        from skills_catalog_mcp import snapshot
+        default = inspect.signature(materialize).parameters['exclude_file'].default
+        self.assertEqual(default, snapshot.DEFAULT_EXCLUDE_FILE)
+        self.assertEqual(default, os.path.join('~', '.config', 'skills-catalog', 'exclude.txt'))
+        self.assertEqual(cli.parse_args([]).exclude_file, default)
 
     def test_raw_sha_is_not_a_tag(self):
         repo = make_catalog_repo(self.tmp)
@@ -224,9 +244,9 @@ class ExclusionTests(_Temp):
                         with self.assertRaises(MCPError) as ctx:
                             await client.read_resource('skill://%s/%s' % (name, rel))
                         e = ctx.exception
-                        answers.setdefault(rel, []).append(
-                            (e.code, str(e).replace(name, 'NAME'),
-                             repr(getattr(e, 'data', None)).replace(name, 'NAME')))
+                        answer = (e.code, str(e), repr(getattr(e, 'data', None)))
+                        self.assertNotIn(name, repr(answer))
+                        answers.setdefault(rel, []).append(answer)
         for rel, pair in answers.items():
             self.assertEqual(pair[0], pair[1], rel)
         self.assertEqual(listed, [u for u in listed if hidden not in u])
