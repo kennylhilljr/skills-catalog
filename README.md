@@ -4,7 +4,7 @@
 
 Every agent skill Kenny writes lives here, once. Each one is a `SKILL.md` folder that Claude Code and Codex both read. Bots pull the catalog at a pinned commit, and a freshness bot checks that each skill still works as the tools around it change.
 
-Status: the design is decided and milestone M1, the catalog and its validation, is under way. The frontmatter linter and its tests are merged. The CI that will run them is not built yet.
+Status: milestone M1, the catalog and its validation CI, is done. Every pull request must pass the `gate` check: lint, scrub, the catalog manifest check and `skills-ref`, all run with main's tools and posted by a dedicated GitHub App. M2 (the freshness bot), M3 (the canary consumer) and M4 (the MCP server) are next.
 
 ## What is in the catalog
 
@@ -52,7 +52,7 @@ Two more sit outside that line. `sdd-triage` classifies support work by severity
 
 | Milestone | Scope | State |
 | --- | --- | --- |
-| M1 | The catalog and its validation CI | In progress |
+| M1 | The catalog and its validation CI | Done |
 | M2 | Freshness bot, static checks, upstream watch and alerting | Planned |
 | M3 | Submodule rollout to one canary consumer | Planned |
 | M4 | The MCP server | Planned |
