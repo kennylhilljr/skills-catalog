@@ -38,7 +38,7 @@ BUILTINS = frozenset((
 _SUDO_ARG_OPTIONS = frozenset((
     '-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T',
     '--user', '--group', '--close-from', '--chdir', '--host', '--prompt',
-    '--role', '--type', '--other-user', '--command-timeout',
+    '--role', '--type', '--other-user', '--command-timeout', '-R', '--chroot',
 ))
 _SHELL_SCRIPT_EXTS = ('.sh', '.bash', '.zsh')
 
@@ -254,9 +254,17 @@ def _strip_wrappers(tokens):
     return tokens
 
 
+def _tokens(text):
+    """Split a shell line, keeping quotes so a quoted word stays one token."""
+    try:
+        return shlex.split(text, posix=False)
+    except ValueError:
+        return text.split()
+
+
 def _first_word(text):
     """Return the command word of one shell line, or None."""
-    tokens = _strip_wrappers(text.split())
+    tokens = _strip_wrappers(_tokens(text))
     if not tokens:
         return None
     word = tokens[0].rstrip(';&|')
@@ -437,15 +445,11 @@ def _cli_spans(lines, start):
 def _cli_refs(text):
     """Yield (cli, [args]) for each `claude`/`codex` reference in `text`.
 
-    Quoted words (prompts) are single tokens, so they are never taken for
-    subcommands or flags. Arguments stop at a shell operator or at `--`,
-    after which words belong to another program.
+    Quoted words (prompts) stay single tokens with their quotes, so they are
+    never taken for subcommands or flags. Arguments stop at a shell operator
+    or at `--`, after which words belong to another program.
     """
-    try:
-        tokens = shlex.split(text, posix=True)
-    except ValueError:
-        tokens = text.split()
-    tokens = _strip_wrappers(tokens)
+    tokens = _strip_wrappers(_tokens(text))
     for i, tok in enumerate(tokens):
         if tok not in CLIS:
             continue
@@ -460,13 +464,20 @@ def _cli_refs(text):
         yield tok, rest
 
 
+def _takes_value(flag, text):
+    """True when help `text` shows `flag` with a value (`--model <m>`)."""
+    pat = (r'(?<![A-Za-z0-9-])' + re.escape(flag)
+           + r'(?:,\s*-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)?(?:[ =]+|\s*,?\s*)[<\[]')
+    return re.search(pat, text) is not None
+
+
 def _split_ref(rest, top):
     """Return (sub, nested, [flags]) for the arguments of one reference.
 
     Global options may come before the subcommand (`codex --profile p exec`).
-    The first word that `top` lists as a command is the subcommand; a word
-    right after an option is taken as that option's value; any other first
-    word is an unknown subcommand.
+    A word after an option that `top` shows with a value (`--profile <P>`)
+    is that option's value; the first other word is the subcommand, known
+    or not.
     """
     flags = []
     for t in rest:
@@ -477,11 +488,9 @@ def _split_ref(rest, top):
     after_option = False
     for idx, t in enumerate(rest):
         if t.startswith('-'):
-            after_option = '=' not in t
+            fm = _FLAG.match(t)
+            after_option = bool(fm) and '=' not in t and _takes_value(fm.group(1), top)
             continue
-        if _SUBCOMMAND.match(t) and _has_command(t, top):
-            sub_idx = idx
-            break
         if after_option:
             after_option = False
             continue

@@ -280,7 +280,8 @@ class TestCliRefs(Base):
         codex_help = ('Usage: codex [OPTIONS] [PROMPT]\n\nCommands:\n'
                       '  exec  Run Codex non-interactively [aliases: e]\n'
                       '  mcp   Manage MCP servers\n\n'
-                      'Options:\n  -p, --profile <PROFILE>  Config profile\n')
+                      'Options:\n  -p, --profile <PROFILE>  Config profile\n'
+                      '      --oss  Use a local model\n')
         responses = claude_helps()
         responses[('claude', '--help')] = (0, CLAUDE_HELP + '  --allowedTools <tools>  Allowed tools\n')
         responses[('codex', '--help')] = (0, codex_help)
@@ -288,14 +289,15 @@ class TestCliRefs(Base):
         responses[('codex', 'e', '--help')] = responses[('codex', 'exec', '--help')]
         body = ('Run `codex --profile p exec --json`, `codex e --json`,\n'
                 '`claude --allowedTools Read --disallowedThing`,\n'
-                '`claude mcp add name -- tool --tool-flag` and `codex --profile p teleport`.\n\n'
-                '```sh\nsudo --user root git status\n```\n')
+                '`claude mcp add name -- tool --tool-flag` and `codex --profile p teleport`.\n'
+                'Also `codex --oss nowhere`, `codex --profile exec nested` and `codex "teleport"`.\n\n'
+                '```sh\nsudo --user root git status\nsudo -R /var/empty --prompt "Pass word: " jq . f\n```\n')
         folder = self.skill('g1', body)
         run = FakeRun(responses)
         findings = cli_checks.check_cli_refs('g1', folder, self.TOOLS, run)
         self.assertEqual(sorted(f['subject'] for f in findings),
-                         ['g1:claude --disallowedThing', 'g1:codex teleport'])
-        self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['git'])
+                         ['g1:claude --disallowedThing', 'g1:codex nested', 'g1:codex nowhere', 'g1:codex teleport'])
+        self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['git', 'jq'])
 
     def test_cli_without_help_is_skipped(self):
         folder = self.skill('f4', 'Run `codex exec --nope`.\n')
