@@ -254,6 +254,43 @@ class AnnounceTest(unittest.TestCase):
         self.assertTrue(texts[6].startswith(A.DIGEST_PREFIX))
         self.assertEqual(sorted(c[1] for c in att.calls), sorted(opened.values()))
 
+    def _planner_run(self, fail_open=()):
+        old = [alert('o' + str(i)) for i in range(3)]
+        state = actions_half(old, [], S.empty_state(), NOW - DAY)
+        open_issues = [issue(90 + i, subject='o' + str(i)) for i in range(3)]
+        alerts = old + [alert('p' + str(i)) for i in range(5)]
+        actions, state = A.plan_alerts(alerts, open_issues, [], state, 'run-m', NOW)
+        results, opened = [], {}
+        for i, action in enumerate(a for a in actions if a['op'] == 'open_issue'):
+            ok = action['title'].split(': ')[-1] not in fail_open
+            results.append({'op': 'open_issue', 'fingerprint': action['fingerprint'], 'ok': ok,
+                            'number': 100 + i if ok else None, 'url': url(100 + i) if ok else None})
+            if ok:
+                opened[action['fingerprint']] = url(100 + i)
+        for action in actions:
+            if action['op'] == 'send_ops':
+                text = action['text']
+                result = {'op': 'send_ops', 'fingerprint': action['fingerprint'], 'ok': True, 'text': text}
+                if A.ISSUE_URL_PLACEHOLDER in text:
+                    if action['fingerprint'] in opened:
+                        result['text'] = text.replace(A.ISSUE_URL_PLACEHOLDER, opened[action['fingerprint']])
+                    else:
+                        result['ok'] = False
+                results.append(result)
+        return open_issues, state, results, opened
+
+    def test_planner_digest_line_for_an_issue_not_opened_is_dropped_and_due(self):
+        open_issues, state, results, opened = self._planner_run(fail_open={'p4'})
+        run, att = FakeRun(), FakeAttention()
+        new = mac(open_issues, state, run, att, ops_results=results)
+        digest = [t for t in run.texts() if t.startswith(A.DIGEST_PREFIX)]
+        for text in run.texts():
+            self.assertNotIn('new issue', text)
+        self.assertTrue(all(c[1].rstrip('/').rsplit('/', 1)[-1].isdigit() for c in att.calls))
+        self.assertFalse(new['alerts'][F.fingerprint('dwell', 'p4')]['announced'])
+        self.assertEqual(len(digest), 1)
+        self.assertNotIn('p4', digest[0])
+
     def test_planned_result_that_failed_in_apply_is_not_sent_and_is_due_again(self):
         actions, state = A.plan_alerts([alert()], [], [], S.empty_state(), 'run-m', NOW)
         send_op = [a for a in actions if a['op'] == 'send_ops'][0]

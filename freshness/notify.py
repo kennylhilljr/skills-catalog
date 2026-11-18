@@ -290,6 +290,7 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
         text = amod.scrub_text(text)
         if ops['sent'] < amod.OPS_PER_DAY:
             call_attention(*args)
+            attended.add(fp)
             ops['sent'] += 1
             ok = send(_clean(text), config, run)
             amod.record_send(new, text, ok, fp)
@@ -298,6 +299,7 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
                 table[fp]['last_reminder_at'] = now_iso
         elif not ops['digest_sent'] or incoming_digest:
             call_attention(*args)
+            attended.add(fp)
             ops['pending'].append(text)
             folded.append(fp)
         # After the digest, nothing more is sent today; the alert stays due.
@@ -306,18 +308,34 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     # are announcements it folded this run (the digest goes out once a day),
     # so their alerts get their attention call now.
     if incoming_digest:
-        for line in list(ops['pending']):
-            head = line.rsplit(': ', 1)[0]
+        kept = []
+        for line in ops['pending']:
+            head, _, tail = line.rpartition(': ')
+            match = None
             for fp in sorted(table):
-                entry = table[fp]
-                if fp in attended or not any(head == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
-                    continue
-                link = opened_urls.get(fp) or open_urls.get(fp) or (
-                    amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None
-                    else amod.ISSUE_URL_BASE.rstrip('/'))
+                if any(head == amod._ops_head(p, table[fp]) for p in amod._ANNOUNCE_PREFIXES):
+                    match = fp
+                    break
+            if match is None:
+                kept.append(line)  # a retried or reminder line: no attention
+                continue
+            entry = table[match]
+            link = tail if tail.startswith('http') else (
+                opened_urls.get(match) or open_urls.get(match)
+                or (amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None))
+            if link is None:
+                # Its issue was not opened (apply failed): due again, not announced.
+                entry['announced'] = False
+                entry['last_reminder_at'] = None
+                continue
+            kept.append(head + ': ' + link)
+            if match not in attended:
                 call_attention(entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
                                'freshness alert ' + entry['kind'] + ' is open for ' + entry['subject'])
-                attended.add(fp)
+                attended.add(match)
+        ops['pending'] = kept
+        if not kept:
+            ops['digest_sent'] = False
     if ops['pending'] and (incoming_digest or not ops['digest_sent']):
         digest = _digest(ops['pending'])
         ops['digest_sent'] = True
