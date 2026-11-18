@@ -382,6 +382,14 @@ class AnnounceTest(unittest.TestCase):
         direct_twin = [t for t in run.texts()[:-1] if 'withheld' in t]
         self.assertEqual(len(direct_twin), 1)
         self.assertNotIn(direct_twin[0].rsplit(': ', 1)[1], digest)
+        # A failed digest makes only the folded twin due again.
+        failed = mac(open_issues, state, FakeRun(fail={7}), ops_results=results)
+        twin_fps = [F.fingerprint('dwell', t['subject']) for t in twins]
+        due = [fp for fp in twin_fps if not failed['alerts'][fp]['announced']]
+        self.assertEqual(len(due), 1)
+        self.assertNotIn(opened[due[0]], direct_twin[0])
+        self.assertFalse(failed['ops']['digest_sent'])
+        self.assertEqual(failed['ops']['pending'], [])
 
     def test_planned_result_that_failed_in_apply_is_not_sent_and_is_due_again(self):
         actions, state = A.plan_alerts([alert()], [], [], S.empty_state(), 'run-m', NOW)

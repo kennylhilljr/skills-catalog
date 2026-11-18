@@ -415,8 +415,13 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
             if item['type'] == 'announce':
                 table[item['fp']]['announced'] = True
                 table[item['fp']]['last_reminder_at'] = now_iso
-    amod.record_send(new, digest, ok, fmod.fingerprint('ops-digest', ops['day']))
-    if not ok:  # record_send matched by text; reset each item by fingerprint too
+    if not ok:
+        # record_send matches alerts by scrubbed text, which two subjects can
+        # share, so it gets only the lines with no alert; the alerts in the
+        # digest are made due again by fingerprint.
+        ops['pending'] = [item['line'] for item in included if item['fp'] is None]
         for item in included:
-            _due_again(new, item)
+            if item['fp'] is not None:
+                _due_again(new, item)
+    amod.record_send(new, digest, ok, fmod.fingerprint('ops-digest', ops['day']))
     return new
