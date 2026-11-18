@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""Consumer smoke check: which skills do the installed CLIs list (SUB-14, SUB-17).
+
+Runs each agent CLI headless in a consumer checkout and reads the names of the
+skills it loaded. It fails unless every --expect name is listed by every CLI
+(SUB-14), and fails if any CLI lists a held name (SUB-17). Held names are
+every entry of the `held` array in the pinned catalog
+(CONSUMER_DIR/.agents/skills/shared/catalog.json), `zz-canary`, and every
+folder under CONSUMER_DIR/.agents/skills/shared/.held/.
+
+How each CLI reports its skills (checked on Claude Code 2.1.311 and
+codex-cli 0.169.1):
+
+- claude: `claude -p --output-format stream-json --verbose` emits a `system`
+  event with subtype `init` whose `skills` array lists every loaded skill.
+  The tool reads that array. If an older or newer version omits it, the tool
+  falls back to parsing the reply to the list prompt below.
+- codex: `codex exec --json` has no machine-readable skill list, so the tool
+  asks the list prompt and parses the last `agent_message` reply, one name
+  per line.
+
+Usage:
+
+    python3 tools/consumer-smoke CONSUMER_DIR [--expect cross-review] [--cli claude,codex]
+
+Output is one line per CLI and nothing else:
+
+    consumer-smoke: <cli> <version>: expected ok|missing <names>; held none|<names>
+
+Exit status: 0 all CLIs pass, 1 a check or a CLI failed, 2 usage error.
+
+The tool never writes to CONSUMER_DIR: Claude Code runs with no tools and no
+session persistence, and Codex runs with a read-only sandbox and
+--ephemeral. It removes API key variables from the child environment, so the
+CLIs use their subscription login. Python 3.9+, standard library only.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+LIST_PROMPT = 'List the names of every skill available to you, one per line, nothing else.'
+CANARY = 'zz-canary'
+SHARED = os.path.join('.agents', 'skills', 'shared')
+KNOWN_CLIS = ('claude', 'codex')
+API_KEY_VARS = (
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'OPENAI_API_KEY',
+    'CODEX_API_KEY',
+)
+DEFAULT_TIMEOUT = 600
+
+_BULLET = re.compile(r'^(?:[-*+•]|\d+[.)])\s+')
+_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 ._:/-]*$')
+_VERSION = re.compile(r'\d+(?:\.\d+)+[0-9A-Za-z.+-]*')
+
+
+class CliError(Exception):
+    """A CLI could not be run or failed."""
+
+
+def split_names(values):
+    """Flatten repeated and comma separated option values, keeping order."""
+    out = []
+    for value in values or ():
+        for part in value.split(','):
+            part = part.strip()
+            if part and part not in out:
+                out.append(part)
+    return out
+
+
+def held_names(consumer_dir):
+    """Names no CLI may list: the pinned catalog's held array, zz-canary, .held/ folders."""
+    shared = os.path.join(consumer_dir, SHARED)
+    names = {CANARY}
+    catalog_path = os.path.join(shared, 'catalog.json')
+    try:
+        with open(catalog_path, encoding='utf-8') as handle:
+            catalog = json.load(handle)
+    except FileNotFoundError:
+        raise CliError('no pinned catalog at ' + os.path.join(SHARED, 'catalog.json'))
+    except (OSError, ValueError) as exc:
+        raise CliError('cannot read the pinned catalog: ' + type(exc).__name__)
+    held = catalog.get('held', []) if isinstance(catalog, dict) else []
+    for entry in held if isinstance(held, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get('name'), str):
+            names.add(entry['name'])
+    held_dir = os.path.join(shared, '.held')
+    if os.path.isdir(held_dir):
+        for entry in os.listdir(held_dir):
+            if os.path.isdir(os.path.join(held_dir, entry)):
+                names.add(entry)
+    return names
+
+
+def parse_list_reply(text):
+    """Parse a plain reply with one skill name per line.
+
+    Tolerates bullets, numbering, backticks and bold markers. Lines that do not
+    look like a single name (prose, headings, code fences) are dropped.
+    """
+    names = []
+    for raw in (text or '').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('```') or line.startswith('#'):
+            continue
+        line = _BULLET.sub('', line)
+        line = line.strip().strip('`*_').strip()
+        if line.startswith('/'):
+            line = line[1:]
+        if not line or line.endswith(':') or not _NAME.match(line) or ' ' in line:
+            continue
+        if line not in names:
+            names.append(line)
+    return names
+
+
+def _events(stdout):
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def parse_claude(stdout):
+    """Skill names from Claude Code stream-json output."""
+    reply = ''
+    for event in _events(stdout):
+        if event.get('type') == 'system' and event.get('subtype') == 'init':
+            skills = event.get('skills')
+            if isinstance(skills, list):
+                return [s for s in skills if isinstance(s, str)]
+        elif event.get('type') == 'result' and isinstance(event.get('result'), str):
+            reply = event['result']
+        elif event.get('type') == 'assistant':
+            message = event.get('message') or {}
+            for block in message.get('content') or []:
+                if isinstance(block, dict) and block.get('type') == 'text':
+                    reply = block.get('text') or reply
+    return parse_list_reply(reply)
+
+
+def parse_codex(stdout):
+    """Skill names from the last agent_message of `codex exec --json` output."""
+    reply = ''
+    for event in _events(stdout):
+        item = event.get('item')
+        if isinstance(item, dict) and item.get('type') == 'agent_message':
+            text = item.get('text')
+            if isinstance(text, str):
+                reply = text
+    return parse_list_reply(reply)
+
+
+def command_for(cli):
+    """argv and stdin for one CLI. Claude reads the prompt from stdin."""
+    if cli == 'claude':
+        argv = [
+            'claude', '-p', '--output-format', 'stream-json', '--verbose',
+            '--max-turns', '1', '--no-session-persistence', '--tools', '',
+        ]
+        return argv, LIST_PROMPT
+    argv = [
+        'codex', 'exec', '--json', '--skip-git-repo-check', '--ephemeral',
+        '--sandbox', 'read-only', LIST_PROMPT,
+    ]
+    return argv, None
+
+
+def child_env():
+    env = dict(os.environ)
+    for key in API_KEY_VARS:
+        env.pop(key, None)
+    return env
+
+
+def _run(argv, cwd, stdin, timeout):
+    try:
+        return subprocess.run(
+            argv, cwd=cwd, input=stdin if stdin is not None else '',
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            universal_newlines=True, env=child_env(), timeout=timeout,
+        )
+    except FileNotFoundError:
+        raise CliError('not found on PATH')
+    except subprocess.TimeoutExpired:
+        raise CliError('timed out after %ds' % timeout)
+    except OSError as exc:
+        raise CliError('cannot run: ' + type(exc).__name__)
+
+
+def cli_version(cli, cwd, timeout):
+    try:
+        proc = _run([cli, '--version'], cwd, None, timeout)
+    except CliError:
+        return 'unknown'
+    match = _VERSION.search(proc.stdout or '')
+    return match.group(0) if match else 'unknown'
+
+
+def list_skills(cli, cwd, timeout):
+    argv, stdin = command_for(cli)
+    proc = _run(argv, cwd, stdin, timeout)
+    if proc.returncode != 0:
+        raise CliError('failed (exit %d)' % proc.returncode)
+    names = parse_claude(proc.stdout) if cli == 'claude' else parse_codex(proc.stdout)
+    if not names:
+        raise CliError('listed no skills')
+    return names
+
+
+def check_cli(cli, consumer_dir, expect, held, timeout):
+    """Return (ok, line) for one CLI."""
+    version = cli_version(cli, consumer_dir, min(timeout, 60))
+    head = 'consumer-smoke: %s %s: ' % (cli, version)
+    try:
+        listed = set(list_skills(cli, consumer_dir, timeout))
+    except CliError as exc:
+        return False, head + str(exc)
+    missing = [name for name in expect if name not in listed]
+    seen_held = sorted(listed & held)
+    expected = 'expected ok' if not missing else 'expected missing ' + ','.join(missing)
+    held_part = 'held none' if not seen_held else 'held ' + ','.join(seen_held)
+    return not missing and not seen_held, head + expected + '; ' + held_part
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog='consumer-smoke',
+        description='Check which skills the installed agent CLIs list in a consumer (SUB-14, SUB-17).',
+    )
+    parser.add_argument('consumer_dir', metavar='CONSUMER_DIR')
+    parser.add_argument('--expect', action='append', default=[],
+                        help='skill name every CLI must list; repeat or comma separate')
+    parser.add_argument('--cli', default='claude,codex',
+                        help='comma separated CLIs to check (claude, codex)')
+    parser.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT,
+                        help='seconds per CLI run (default %d)' % DEFAULT_TIMEOUT)
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    consumer_dir = os.path.abspath(args.consumer_dir)
+    if not os.path.isdir(consumer_dir):
+        print('consumer-smoke: not a directory: ' + args.consumer_dir, file=sys.stderr)
+        return 2
+    clis = split_names([args.cli])
+    unknown = [cli for cli in clis if cli not in KNOWN_CLIS]
+    if not clis or unknown:
+        print('consumer-smoke: unknown --cli value: ' + ','.join(unknown or ['(empty)']), file=sys.stderr)
+        return 2
+    if args.timeout < 1:
+        print('consumer-smoke: --timeout must be positive', file=sys.stderr)
+        return 2
+    try:
+        held = held_names(consumer_dir)
+    except CliError as exc:
+        print('consumer-smoke: ' + str(exc), file=sys.stderr)
+        return 1
+    expect = split_names(args.expect)
+    ok = True
+    for cli in clis:
+        passed, line = check_cli(cli, consumer_dir, expect, held, args.timeout)
+        print(line, flush=True)
+        ok = ok and passed
+    return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
