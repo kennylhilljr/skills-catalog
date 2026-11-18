@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "consumers": [
+    {
+      "repo": "kennylhilljr/pr-review-bots",
+      "path": ".agents/skills/shared",
+      "stage": "canary"
+    }
+  ]
+}
