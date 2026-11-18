@@ -311,11 +311,12 @@ class TestCliRefs(Base):
     def test_expansions_and_comments_do_not_split_commands(self):
         body = ('```sh\ncodex exec $(printf x|cat) --bogus\n'
                 'codex exec `a;b` "${X:-a;b}" --bogus2\n'
+                'codex exec <(printf x|cat) $(printf x\\)|cat) --bogus3\n'
                 'codex exec # explain; codex Teleport\n```\n')
         folder = self.skill('s0', body)
         findings = cli_checks.check_cli_refs('s0', folder, self.TOOLS, self.codex_run())
         self.assertEqual(sorted(f['subject'] for f in findings),
-                         ['s0:codex exec --bogus', 's0:codex exec --bogus2'])
+                         ['s0:codex exec --bogus', 's0:codex exec --bogus2', 's0:codex exec --bogus3'])
 
     def test_sudo_inline_quoted_option_value(self):
         folder = self.skill('s1', '```sh\nsudo --prompt="Pass word: " jq . f\n```\n')

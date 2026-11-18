@@ -283,7 +283,7 @@ def _tokens(text):
     their own tokens even when stuck to a word (`codex teleport;`); `&` in
     a redirection (`2>&1`, `&>f`) stays part of the word. A `$(...)`,
     `${...}` or backtick expansion stays inside its word, operators and
-    spaces included. An unquoted `#` that starts a word ends the line. An
+    spaces included; so does a `<(...)` or `>(...)` process substitution. An unquoted `#` that starts a word ends the line. An
     unclosed quote falls back to splitting on whitespace.
     """
     tokens = []
@@ -309,10 +309,14 @@ def _tokens(text):
                 quote = None
             i += 1
             continue
-        if ch in '"\'':
+        if ch == '\\' and i + 1 < n:
+            word.append(ch)
+            word.append(text[i + 1])
+            i += 1
+        elif ch in '"\'':
             quote = ch
             word.append(ch)
-        elif ch == '$' and text[i + 1:i + 2] in ('(', '{'):
+        elif ch in '$<>' and text[i + 1:i + 2] == '(' or ch == '$' and text[i + 1:i + 2] == '{':
             nest.append(')' if text[i + 1] == '(' else '}')
             word.append(text[i:i + 2])
             i += 2
@@ -331,10 +335,6 @@ def _tokens(text):
             word.append(ch)
         elif ch == '#' and not word:
             break
-        elif ch == '\\' and i + 1 < n:
-            word.append(ch)
-            word.append(text[i + 1])
-            i += 1
         elif ch.isspace():
             flush()
         elif ch in ';|&':
