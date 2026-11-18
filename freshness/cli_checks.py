@@ -35,7 +35,11 @@ BUILTINS = frozenset((
 ))
 
 # sudo options that take a separate argument (`sudo -u root git`).
-_SUDO_ARG_OPTIONS = frozenset(('-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T'))
+_SUDO_ARG_OPTIONS = frozenset((
+    '-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T',
+    '--user', '--group', '--close-from', '--chdir', '--host', '--prompt',
+    '--role', '--type', '--other-user', '--command-timeout',
+))
 _SHELL_SCRIPT_EXTS = ('.sh', '.bash', '.zsh')
 
 _FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)')
@@ -46,7 +50,8 @@ _VERSION = re.compile(r'(\d+)\.(\d+)\.(\d+)')
 _BACKTICK = re.compile(r'`([^`\n]+)`')
 _CAMEL = re.compile(r'^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*$')
 _ACRONYM = re.compile(r'^[A-Z]{2,}$')
-_FLAG = re.compile(r'^(--[a-z0-9][a-z0-9-]*|-[A-Za-z])(?:=.*)?$')
+_FLAG = re.compile(r'^(--[A-Za-z0-9][A-Za-z0-9-]*|-[A-Za-z])(?:=.*)?$')
+_ALIASES = re.compile(r'\[aliases?:\s*([^\]]+)\]')
 _SUBCOMMAND = re.compile(r'^[a-z][a-z0-9-]*$')
 _COMMANDS_HEADER = re.compile(r'^Commands:\s*$', re.MULTILINE)
 _TOOL_WORD = re.compile(r'\btools?\b', re.IGNORECASE)
@@ -373,6 +378,7 @@ def _help(cli, sub, run, nested=None):
 def _commands(text):
     """Return the command names listed under `Commands:`, or None."""
     entries = []
+    aliases = set()
     found = False
     in_section = False
     for line in text.split('\n'):
@@ -383,6 +389,8 @@ def _commands(text):
             if line.strip() and not line[:1].isspace():
                 in_section = False
                 continue
+            for group in _ALIASES.findall(line):
+                aliases.update(a.strip() for a in group.split(',') if a.strip())
             m = re.match(r'^(\s+)([a-z][a-z0-9-]*)(?:[,|]\s*([a-z][a-z0-9-]*))?', line)
             if m:
                 entries.append((len(m.group(1)), m.group(2), m.group(3)))
@@ -391,7 +399,8 @@ def _commands(text):
     # Command names sit at the shallowest indent; wrapped descriptions
     # are indented further.
     indent = min((e[0] for e in entries), default=0)
-    return {n for depth, name, alias in entries if depth == indent for n in (name, alias) if n}
+    names = {n for depth, name, alias in entries if depth == indent for n in (name, alias) if n}
+    return names | aliases
 
 
 def _has_command(word, text):
@@ -426,10 +435,11 @@ def _cli_spans(lines, start):
 
 
 def _cli_refs(text):
-    """Yield (cli, sub, nested, [flags]) for each `claude`/`codex` ref.
+    """Yield (cli, [args]) for each `claude`/`codex` reference in `text`.
 
     Quoted words (prompts) are single tokens, so they are never taken for
-    subcommands or flags.
+    subcommands or flags. Arguments stop at a shell operator or at `--`,
+    after which words belong to another program.
     """
     try:
         tokens = shlex.split(text, posix=True)
@@ -444,21 +454,47 @@ def _cli_refs(text):
             continue
         rest = []
         for t in tokens[i + 1:]:
-            if t in ('|', '&&', '||', ';') or t in CLIS:
+            if t in ('|', '&&', '||', ';', '--') or t in CLIS:
                 break
             rest.append(t)
-        sub = None
-        nested = None
-        if rest and _SUBCOMMAND.match(rest[0]):
-            sub = rest[0]
-            if len(rest) > 1 and _SUBCOMMAND.match(rest[1]):
-                nested = rest[1]
-        flags = []
-        for t in rest:
-            fm = _FLAG.match(t)
-            if fm:
-                flags.append(fm.group(1))
-        yield tok, sub, nested, flags
+        yield tok, rest
+
+
+def _split_ref(rest, top):
+    """Return (sub, nested, [flags]) for the arguments of one reference.
+
+    Global options may come before the subcommand (`codex --profile p exec`).
+    The first word that `top` lists as a command is the subcommand; a word
+    right after an option is taken as that option's value; any other first
+    word is an unknown subcommand.
+    """
+    flags = []
+    for t in rest:
+        fm = _FLAG.match(t)
+        if fm:
+            flags.append(fm.group(1))
+    sub_idx = None
+    after_option = False
+    for idx, t in enumerate(rest):
+        if t.startswith('-'):
+            after_option = '=' not in t
+            continue
+        if _SUBCOMMAND.match(t) and _has_command(t, top):
+            sub_idx = idx
+            break
+        if after_option:
+            after_option = False
+            continue
+        if _SUBCOMMAND.match(t):
+            sub_idx = idx
+        break
+    if sub_idx is None:
+        return None, None, flags
+    sub = rest[sub_idx]
+    nested = None
+    if sub_idx + 1 < len(rest) and _SUBCOMMAND.match(rest[sub_idx + 1]):
+        nested = rest[sub_idx + 1]
+    return sub, nested, flags
 
 
 def _tool_candidates(lines, start):
@@ -542,10 +578,11 @@ def _shell_scripts(folder):
 
 def _check_cli_ref(skill, rel, line, text, run, reported, findings):
     """Append `unknown-flag` findings for one span or command line."""
-    for cli, sub, nested, flags in _cli_refs(text):
+    for cli, rest in _cli_refs(text):
         top = _help(cli, None, run)
         if top is None:
             continue
+        sub, nested, flags = _split_ref(rest, top)
         sub_help = None
         if sub is not None:
             if not _has_command(sub, top):

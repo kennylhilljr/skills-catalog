@@ -61,10 +61,6 @@ def _sha(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def _normal(text):
-    return text
-
-
 def held_matches(catalog_text, source_text):
     """Return (matches, catalog sha256, source sha256) for two SKILL.md texts.
 
@@ -73,9 +69,9 @@ def held_matches(catalog_text, source_text):
     replaced first row and an added import row on top of the source's rows
     count as clean.
     """
-    cat = _normal(drop_first_changelog_row(body(catalog_text)))
-    src_full = _normal(body(source_text))
-    src_dropped = _normal(drop_first_changelog_row(body(source_text)))
+    cat = drop_first_changelog_row(body(catalog_text))
+    src_full = body(source_text)
+    src_dropped = drop_first_changelog_row(body(source_text))
     if cat == src_full:
         return True, _sha(cat), _sha(src_full)
     if cat == src_dropped:

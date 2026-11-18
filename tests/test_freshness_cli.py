@@ -276,6 +276,27 @@ class TestCliRefs(Base):
         self.assertEqual(sorted((f['subject'], f['line']) for f in findings),
                          [('f9:claude -z', 13), ('f9:claude mcp --bogus', 14)])
 
+    def test_globals_aliases_end_of_options_and_camel_flags(self):
+        codex_help = ('Usage: codex [OPTIONS] [PROMPT]\n\nCommands:\n'
+                      '  exec  Run Codex non-interactively [aliases: e]\n'
+                      '  mcp   Manage MCP servers\n\n'
+                      'Options:\n  -p, --profile <PROFILE>  Config profile\n')
+        responses = claude_helps()
+        responses[('claude', '--help')] = (0, CLAUDE_HELP + '  --allowedTools <tools>  Allowed tools\n')
+        responses[('codex', '--help')] = (0, codex_help)
+        responses[('codex', 'exec', '--help')] = (0, 'Usage: codex exec [OPTIONS]\n\nOptions:\n  --json  JSONL\n')
+        responses[('codex', 'e', '--help')] = responses[('codex', 'exec', '--help')]
+        body = ('Run `codex --profile p exec --json`, `codex e --json`,\n'
+                '`claude --allowedTools Read --disallowedThing`,\n'
+                '`claude mcp add name -- tool --tool-flag` and `codex --profile p teleport`.\n\n'
+                '```sh\nsudo --user root git status\n```\n')
+        folder = self.skill('g1', body)
+        run = FakeRun(responses)
+        findings = cli_checks.check_cli_refs('g1', folder, self.TOOLS, run)
+        self.assertEqual(sorted(f['subject'] for f in findings),
+                         ['g1:claude --disallowedThing', 'g1:codex teleport'])
+        self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['git'])
+
     def test_cli_without_help_is_skipped(self):
         folder = self.skill('f4', 'Run `codex exec --nope`.\n')
         self.assertEqual(cli_checks.check_cli_refs('f4', folder, self.TOOLS, FakeRun()), [])
