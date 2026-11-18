@@ -261,12 +261,12 @@ def route_rereview(finding):
 def rereview_since(state, open_issues, skills, now):
     """`[{"skill", "number", "opened_at"}]` for the open `re-review` issues.
 
-    `open_issues`: open bot items `{"number", "fingerprint", ...}` (from
-    `github.list_bot_items`). An issue is matched to its skill through
-    `rereview_fingerprint`. `state["rereview"][skill]` keeps the first time
-    the issue was seen open, and entries whose issue is no longer open are
-    dropped, so a reopened issue starts its 14 days again. `state` is
-    changed in place.
+    `open_issues`: open bot items `{"number", "fingerprint", "created_at"?,
+    ...}` (from `github.list_bot_items`). An issue is matched to its skill
+    through `rereview_fingerprint`. `state["rereview"][skill]` keeps when
+    the issue opened: its `created_at` when the item carries one (the
+    GitHub issue field), else the first run that saw it open. Entries whose
+    issue is no longer open are dropped. `state` is changed in place.
     """
     now_iso = smod.iso(now)
     by_fp = {rereview_fingerprint(s['name']): s['name'] for s in skills or ()}
@@ -278,6 +278,11 @@ def rereview_since(state, open_issues, skills, now):
         skill = by_fp.get(item.get('fingerprint'))
         if skill and skill not in seen:
             seen[skill] = item['number']
+            created = smod.parse_iso(item.get('created_at'))
+            if created is not None:
+                known = smod.parse_iso(table.get(skill))
+                if known is None or created < known:
+                    table[skill] = smod.iso(created)
     for skill in list(table):
         if skill not in seen:
             del table[skill]
@@ -310,16 +315,28 @@ def _catalog_sha(root):
         return 'none'
 
 
-def _render(root, changes):
-    """`catalog.json` after `changes` ({repo path: text}), built with `tools/catalog.py` `render`."""
+def _render(root, changes, excluded=()):
+    """`catalog.json` after `changes` ({repo path: text}), built with `tools/catalog.py` `render`.
+
+    Folders named in `excluded` are never copied or read (DESIGN 5.1).
+    """
+    excluded = set(excluded or ())
     with tempfile.TemporaryDirectory() as tmp:
         for section in SECTIONS:
             source = os.path.join(root, section)
             target = os.path.join(tmp, section)
-            if os.path.isdir(source):
-                shutil.copytree(source, target, symlinks=True)
-            else:
-                os.makedirs(target)
+            os.makedirs(target)
+            try:
+                names = sorted(os.listdir(source))
+            except FileNotFoundError:
+                names = []
+            for name in names:
+                if name in excluded:
+                    continue
+                path = os.path.join(source, name)
+                if os.path.islink(path) or not os.path.isdir(path):
+                    continue  # tools/catalog.py skips these too
+                shutil.copytree(path, os.path.join(target, name), symlinks=True)
         stale = os.path.join(root, *STALE_PATH.split('/'))
         if os.path.isfile(stale):
             os.makedirs(os.path.join(tmp, 'freshness'), exist_ok=True)
@@ -332,7 +349,8 @@ def _render(root, changes):
         return _catalog_module().render(tmp)
 
 
-def _manifest_names(root):
+def _manifest_names(root, excluded=()):
+    excluded = set(excluded or ())
     names = set()
     for section in SECTIONS:
         base = os.path.join(root, section)
@@ -341,7 +359,7 @@ def _manifest_names(root):
         except OSError:
             continue
         for name in entries:
-            if section == '.held' and name == _catalog_module().CANARY:
+            if name in excluded or (section == '.held' and name == _catalog_module().CANARY):
                 continue
             if _is_real_dir(os.path.join(base, name)) and _is_regular(os.path.join(base, name, 'SKILL.md')):
                 names.add(name)
@@ -413,7 +431,7 @@ def stale_actions(open_rereview, stale, now, root=None, aged=None, open_items=()
     excluded = set(excluded or ())
     stale = set(stale or ()) - excluded
     aged_set = None if aged is None else set(aged)
-    known = _manifest_names(root)
+    known = _manifest_names(root, excluded)
     actions = []
     target = set()
     open_by_skill = {}
@@ -438,7 +456,7 @@ def stale_actions(open_rereview, stale, now, root=None, aged=None, open_items=()
     key = _key_line(_STALE_KEY, target, _catalog_sha(root))
     if added or removed:
         files = {STALE_PATH: render_stale(target)}
-        files[CATALOG_PATH] = _render(root, files)
+        files[CATALOG_PATH] = _render(root, files, excluded)
     parts = (['mark %s stale' % ', '.join(added)] if added else []) + \
             (['clear stale on %s' % ', '.join(removed)] if removed else [])
     title = 'freshness: ' + '; '.join(parts) if parts else 'freshness: stale list'
@@ -547,7 +565,7 @@ def advance_actions(results, today, policy=DEFAULT_POLICY, now=None, root=None, 
     stale = read_stale(root)
     if set(stale) & set(names):
         files[STALE_PATH] = render_stale(set(stale) - set(names))
-    files[CATALOG_PATH] = _render(root, files)
+    files[CATALOG_PATH] = _render(root, files, excluded)
     key = _key_line(_ADVANCE_KEY, names, _catalog_sha(root))
     rows = []
     for skill in picked:

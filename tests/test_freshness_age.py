@@ -206,6 +206,16 @@ class TestStale(unittest.TestCase):
         self.assertEqual(actions[1]['number'], 30)
         self.assertEqual(json.loads(actions[2]['files']['freshness/stale.json']), ['alpha', 'sdd-held'])
 
+    def test_excluded_skill_never_reaches_the_pr(self):
+        """DESIGN 5.1: an excluded skill folder is not copied into the regenerated catalog.json."""
+        secret = 'priv' + 'ate-local'
+        self.repo.write_skill('skills', secret, '2026-11-11')
+        actions = age.stale_actions(self._open(14), [], NOW, root=self.repo.root, aged=self.aged,
+                                    excluded={secret})
+        pr = _only(actions, 'open_pr')[0]
+        self.assertNotIn(secret, pr['files']['catalog.json'])
+        self.assertNotIn(secret, pr['body'])
+
     def test_closed_issue_or_verified_again_clears_stale(self):
         """FRS-8: when the issue closes, or the skill is verified again, a PR removes it from stale.json."""
         self.repo.close()
@@ -230,6 +240,9 @@ class TestStale(unittest.TestCase):
         self.assertEqual(later[0]['skill'], 'alpha')
         self.assertEqual(age.rereview_since(state, [], self.skills, NOW), [])
         self.assertEqual(age.rereview_since(state, items, self.skills, NOW)[0]['opened_at'], _iso(NOW))
+        created = dict(items[0], created_at=_iso(NOW - datetime.timedelta(days=20)))
+        self.assertEqual(age.rereview_since(state, [created], self.skills, NOW)[0]['opened_at'],
+                         _iso(NOW - datetime.timedelta(days=20)))
 
 
 class TestAdvance(unittest.TestCase):
@@ -323,11 +336,21 @@ class TestDwell(unittest.TestCase):
         found = dwell.check_dwell('actions-run', old, NOW)
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]['kind'], 'heartbeat-actions')
-        self.assertEqual(found[0]['subject'], 'actions-run:nightly')
+        self.assertEqual(found[0]['subject'], 'actions-run')
+        self.assertTrue(found[0]['evidence'].startswith('actions-run:nightly: '))
         self.assertEqual(dwell.check_dwell('actions-run', fresh, NOW), [])
         actions, _state = alerts.plan_alerts(found, [], [], None, 'run-1', NOW, announce=False)
         self.assertEqual(_only(actions, 'open_issue')[0]['title'],
-                         'freshness-alert: heartbeat-actions: actions-run:nightly')
+                         'freshness-alert: heartbeat-actions: actions-run')
+
+    def test_one_alert_per_state(self):
+        """FRS-17: two stuck items of one state give one alert (one fingerprint, one ops message a day)."""
+        items = [{'id': n, 'since': _iso(NOW - datetime.timedelta(days=15))} for n in (3, 4)]
+        found = dwell.check_dwell('re-review', items, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]['evidence'].count('re-review:'), 2)
+        actions, _state = alerts.plan_alerts(found, [], [], None, 'run-1', NOW)
+        self.assertEqual(len(_only(actions, 'send_ops')), 1)
 
     def test_m5_row_skipped_in_m2(self):
         """FRS-17: an M5 row is skipped in M2 and enabled from M5."""

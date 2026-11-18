@@ -7,10 +7,12 @@ Requirements: FRS-17, INV-6 (docs/SPEC.md). Contract: docs/DESIGN.md 7.6
 every state name the runner (part 9) records; a test requires a `LIMITS`
 row with a positive limit and an alert kind for each (INV-6).
 
-`check_dwell(state, open_items, now, milestone)` returns one alert per item
-that exceeded an enabled row. Part 1's `alerts.plan_alerts` then opens or
-updates the `freshness-alert` issue and limits ops messages to one per state
-per day. Items are::
+`check_dwell(state, open_items, now, milestone)` returns at most one alert
+per state: subject `<state>`, with one evidence line `<state>:<item>` per
+item past the limit. One fingerprint per state means part 1's
+`alerts.plan_alerts` keeps one `freshness-alert` issue per state and sends
+at most one ops message per state per day (FRS-17), however many items are
+stuck. Items are::
 
     {"id": str | int, "since": iso}     # rows with max_hours: the start of the dwell
     {"id": str | int, "runs": int}      # rows with max_runs: consecutive runs in the state
@@ -70,13 +72,14 @@ def _limit_text(row):
     return '%d days' % (hours // 24) if hours % 24 == 0 and hours >= 72 else '%d hours' % hours
 
 
-def _alert(row, item, evidence):
+def _alert(row, lines):
+    count = len(lines)
     return {
         'kind': row['alert_kind'],
-        'subject': '%s:%s' % (row['state'], item['id']),
-        'evidence': evidence,
-        'what_happened': '%s: `%s` exceeded its dwell limit of %s (FRS-17, INV-6).'
-                         % (row['what'], item['id'], _limit_text(row)),
+        'subject': row['state'],
+        'evidence': '\n'.join(lines),
+        'what_happened': '%s: %d item%s exceeded the dwell limit of %s (FRS-17, INV-6).'
+                         % (row['what'], count, '' if count == 1 else 's', _limit_text(row)),
         'what_to_change': amod.DEFAULT_WHAT_TO_CHANGE,
         'files': [],
         'acceptance': amod.DEFAULT_ACCEPTANCE,
@@ -84,19 +87,20 @@ def _alert(row, item, evidence):
 
 
 def check_dwell(state, open_items, now, milestone='M2'):
-    """One alert per item of `state` past its dwell limit; [] when the row is not enabled yet."""
+    """[] or one alert listing every item of `state` past its dwell limit; [] when the row is not enabled yet."""
     row = limit(state)
     if milestone not in MILESTONES:
         raise ValueError('unknown milestone: %r' % (milestone,))
     if not enabled(row, milestone):
         return []
     now = smod.require_utc(now)
-    alerts = []
+    lines = []
     for item in open_items or ():
+        head = '%s:%s: ' % (state, item['id'])
         if 'max_runs' in row:
             runs = int(item.get('runs') or 0)
             if runs >= row['max_runs']:
-                alerts.append(_alert(row, item, '%d consecutive runs in state `%s`.' % (runs, state)))
+                lines.append(head + '%d consecutive runs (limit %d).' % (runs, row['max_runs']))
             continue
         since = smod.parse_iso(item.get('since'))
         if since is None:
@@ -106,12 +110,11 @@ def check_dwell(state, open_items, now, milestone='M2'):
             continue
         if row.get('ping_first') and not item.get('pinged_at'):
             continue  # ping_actions comments on the PR first
-        evidence = 'In state `%s` since %s, %.1f hours (limit %d).' % (state, smod.iso(since), hours,
-                                                                       row['max_hours'])
+        line = head + 'since %s, %.1f hours (limit %d).' % (smod.iso(since), hours, row['max_hours'])
         if item.get('pinged_at'):
-            evidence += ' Pinged on the PR at %s.' % item['pinged_at']
-        alerts.append(_alert(row, item, evidence))
-    return alerts
+            line += ' Pinged on the PR at %s.' % item['pinged_at']
+        lines.append(line)
+    return [_alert(row, lines)] if lines else []
 
 
 def ping_actions(open_prs, state_doc, now):
