@@ -224,9 +224,16 @@ def frontmatter_name(path):
 def yaml_scalar(text):
     """A one-line YAML scalar: quoted, or plain with an optional ` #` comment."""
     text = text.strip()
-    if text[:1] in ('"', "'"):
-        end = text.find(text[0], 1)
-        return text[1:end] if end > 0 else text[1:]
+    if text[:1] == '"':
+        try:
+            value, end = json.JSONDecoder().raw_decode(text)
+        except ValueError:
+            return None
+        rest = text[end:].strip()
+        return value if not rest or rest.startswith('#') else None
+    if text[:1] == "'":
+        match = re.match(r"'((?:[^']|'')*)'\s*(#.*)?$", text)
+        return match.group(1).replace("''", "'") if match else None
     match = re.search(r'\s#', text)
     if match:
         text = text[:match.start()]

@@ -221,6 +221,9 @@ class ConsumerSmokeTest(unittest.TestCase):
         self.assertEqual(smoke.yaml_scalar(" 'cross-review'"), 'cross-review')
         self.assertEqual(smoke.yaml_scalar(' cross-review   # note'), 'cross-review')
         self.assertEqual(smoke.yaml_scalar(' a#b'), 'a#b')
+        self.assertEqual(smoke.yaml_scalar(' "cross\\u002dreview"'), 'cross-review')
+        self.assertEqual(smoke.yaml_scalar(" 'it''s' # c"), "it's")
+        self.assertIsNone(smoke.yaml_scalar(' "cross-review"junk'))
 
     def test_commented_frontmatter_name_shadows(self):
         self.both_ok()
