@@ -36,9 +36,8 @@ BUILTINS = frozenset((
 # sudo options that take an argument (`sudo -u root git`, `sudo -Eu root git`).
 _SUDO_ARG_SHORT = frozenset('ugCDhprtUTR')
 _SUDO_ARG_OPTIONS = frozenset((
-    '-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T',
     '--user', '--group', '--close-from', '--chdir', '--host', '--prompt',
-    '--role', '--type', '--other-user', '--command-timeout', '-R', '--chroot',
+    '--role', '--type', '--other-user', '--command-timeout', '--chroot',
 ))
 _SHELL_SCRIPT_EXTS = ('.sh', '.bash', '.zsh')
 
@@ -282,12 +281,15 @@ def _tokens(text):
     Quotes are kept, so a quoted word (`"a b"`, `--prompt="Pass word: "`)
     stays one token. Unquoted `;`, `|`, `||`, `&&` and a lone `&` become
     their own tokens even when stuck to a word (`codex teleport;`); `&` in
-    a redirection (`2>&1`, `&>f`) stays part of the word. An unclosed
-    quote falls back to splitting on whitespace.
+    a redirection (`2>&1`, `&>f`) stays part of the word. A `$(...)`,
+    `${...}` or backtick expansion stays inside its word, operators and
+    spaces included. An unquoted `#` that starts a word ends the line. An
+    unclosed quote falls back to splitting on whitespace.
     """
     tokens = []
     word = []
     quote = None
+    nest = []  # open expansion closers: ')', '}' or '`'
     i = 0
     n = len(text)
 
@@ -310,6 +312,25 @@ def _tokens(text):
         if ch in '"\'':
             quote = ch
             word.append(ch)
+        elif ch == '$' and text[i + 1:i + 2] in ('(', '{'):
+            nest.append(')' if text[i + 1] == '(' else '}')
+            word.append(text[i:i + 2])
+            i += 2
+            continue
+        elif ch == '`':
+            if nest and nest[-1] == '`':
+                nest.pop()
+            else:
+                nest.append('`')
+            word.append(ch)
+        elif nest:
+            if ch == '(' and nest[-1] == ')':
+                nest.append(')')
+            elif ch == nest[-1]:
+                nest.pop()
+            word.append(ch)
+        elif ch == '#' and not word:
+            break
         elif ch == '\\' and i + 1 < n:
             word.append(ch)
             word.append(text[i + 1])
@@ -328,7 +349,7 @@ def _tokens(text):
         else:
             word.append(ch)
         i += 1
-    if quote:
+    if quote or nest:
         return text.split()
     flush()
     return tokens
