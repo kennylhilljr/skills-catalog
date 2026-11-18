@@ -80,7 +80,7 @@ class TestCatalog(unittest.TestCase):
         """FRS-19: .held/zz-canary never appears in the manifest."""
         _copy_repo(self.tmp)
         canary = os.path.join(self.tmp, '.held', 'zz-canary')
-        os.makedirs(canary)
+        os.makedirs(canary, exist_ok=True)  # the real canary is copied too (#71)
         shutil.copy(os.path.join(_repo_root, '.held', 'sdd-adopt', 'SKILL.md'), canary)
         held = [e['name'] for e in _catalog.build(self.tmp)['held']]
         self.assertNotIn('zz-canary', held)
