@@ -363,6 +363,75 @@ class ActionsHalfTests(unittest.TestCase):
         self.assertIn('upstream-change: claude-code-releases-github', _opened_titles(fake2))
 
 
+class RobustnessTests(unittest.TestCase):
+    def test_results_are_recorded_before_the_advance_rule_reads_them(self):
+        state = smod.empty_state()
+        state['results'] = {'zz-canary': {'actions_run': 'old', 'actions_ok': True, 'mac_run': None,
+                                          'mac_ok': None, 'mac_at': None}}
+        with mock.patch.object(age, 'advance_actions', wraps=age.advance_actions) as spy:
+            _execute('actions', FakeGitHub(state))
+        results = spy.call_args[0][0]
+        self.assertEqual(results['zz-canary']['actions_run'], 'actions-1')
+        self.assertFalse(results['zz-canary']['actions_ok'])  # it has findings this run
+
+    def test_a_refused_write_still_writes_a_failed_heartbeat(self):
+        state = smod.empty_state()
+        state['heartbeats'] = {'actions': _beat('2026-11-17T11:00:00+00:00')}
+        fake = FakeGitHub(state)
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        with mock.patch.object(deps.github, 'apply', side_effect=ghmod.RefusedWrite('refused: planner bug')):
+            self.assertFalse(job.execute())
+        beat = fake.written_state()['heartbeats']['actions']
+        self.assertEqual(beat['result'], 'failed')
+        self.assertEqual(beat['last_success'], '2026-11-17T11:00:00+00:00')
+        self.assertTrue(any(e.startswith('apply: RefusedWrite') for e in job.errors))
+
+    def test_listing_failure_plans_nothing_and_records_a_failed_run(self):
+        fake = FakeGitHub()
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        with mock.patch.object(deps.github, 'list_bot_items', side_effect=ghmod.GitHubError('boom')):
+            self.assertFalse(job.execute())
+        self.assertEqual(_opened_titles(fake), [])
+        self.assertEqual(fake.written_state()['heartbeats']['actions']['result'], 'failed')
+
+    def test_a_concurrent_write_by_the_other_half_is_merged(self):
+        base = smod.empty_state()
+        base['heartbeats'] = {'mac': _beat('2026-11-17T11:30:00+00:00')}
+        base['results'] = {'zz-canary': {'actions_run': 'a0', 'actions_ok': False, 'mac_run': 'm0',
+                                         'mac_ok': True, 'mac_at': '2026-11-17T11:30:00+00:00'}}
+        fresh = json.loads(json.dumps(base))
+        fresh['heartbeats']['mac'] = _beat('2026-11-18T11:00:30+00:00')
+        fresh['results']['zz-canary'].update(mac_run='m1', mac_at='2026-11-18T11:00:30+00:00')
+        fresh['cli'] = {'claude': {'installed': '1.0.0'}}
+        fake = FakeGitHub(base)
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        reads = [(smod.dump(base), 'a' * 40), (smod.dump(fresh), 'b' * 40)]
+        with mock.patch.object(deps.github, 'read_state', side_effect=reads):
+            self.assertTrue(job.execute(), job.errors)
+        written = fake.written_state()
+        self.assertEqual(written['heartbeats']['mac']['last_success'], '2026-11-18T11:00:30+00:00')
+        self.assertEqual(written['heartbeats']['actions']['run_id'], 'actions-1')
+        self.assertEqual(written['results']['zz-canary']['mac_run'], 'm1')
+        self.assertEqual(written['results']['zz-canary']['actions_run'], 'actions-1')
+        self.assertEqual(written['cli'], fresh['cli'])
+
+    def test_merge_state_rules(self):
+        base = {'a': 1, 'b': {'x': 1, 'y': 1}, 'gone': 1, 'kept': {'k': 1}}
+        ours = {'a': 2, 'b': {'x': 2, 'y': 1}, 'kept': {'k': 1}}
+        fresh = {'a': 3, 'b': {'x': 1, 'y': 3}, 'gone': 1, 'kept': {'k': 1}, 'new': 4}
+        self.assertEqual(runmod.merge_state(base, ours, fresh),
+                         {'a': 2, 'b': {'x': 2, 'y': 3}, 'kept': {'k': 1}, 'new': 4})
+
+    def test_notify_runner_uses_the_configured_path(self):
+        run = runmod.make_notify_run('/opt/tools/bin' + os.pathsep + '/usr/bin')
+        path = run.keywords['env']['PATH'].split(os.pathsep)
+        self.assertEqual(path[1:], ['/opt/tools/bin', '/usr/bin'])
+        self.assertTrue(path[0].endswith(os.path.join('.local', 'bin')))
+
+
 class MacHalfTests(unittest.TestCase):
     def test_runs_the_cli_checks_and_announces(self):
         cli = FakeCli()

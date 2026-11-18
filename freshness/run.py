@@ -46,7 +46,9 @@ else. Python 3.9+, standard library only. Importing has no side effects.
 
 import argparse
 import base64
+import copy
 import datetime
+import functools
 import importlib.util
 import json
 import os
@@ -368,6 +370,25 @@ def read_only(transport):
     return guarded
 
 
+def runner_env(path=None):
+    """The environment of the Mac half's subprocesses: iwb's PATH, `~/.local/bin` first.
+
+    launchd starts the job with a minimal PATH, so `openclaw`, `claude` and
+    `codex` are found through the configured `path`, as in
+    `cli_checks.make_run`.
+    """
+    local_bin = os.path.expanduser(os.path.join('~', '.local', 'bin'))
+    parts = [p for p in (path if path is not None else os.environ.get('PATH', '')).split(os.pathsep) if p]
+    env = dict(os.environ)
+    env['PATH'] = os.pathsep.join([local_bin] + [p for p in parts if p != local_bin])
+    return env
+
+
+def make_notify_run(path=None):
+    """`subprocess.run` for part 7's `send`, with the configured PATH."""
+    return functools.partial(subprocess.run, env=runner_env(path))
+
+
 def make_classifier(path=None):
     """`call(prompt) -> reply` through `claude -p` on iwb's PATH."""
     runner = cli_checks.make_run(path, timeout=CLASSIFIER_TIMEOUT)
@@ -432,8 +453,42 @@ def default_deps(half, dry_run, environ=None, clock=_utcnow):
         github=github, clock=clock, fetch_link=fetch_link, fetch_text=make_fetch_text(token),
         fetch_npm=fetch_npm, cli_run=cli_checks.make_run(path) if half == 'mac' else None,
         classifier=None if (dry_run or half != 'mac') else make_classifier(path),
-        notify_run=subprocess.run, attention_fn=None, local_config=local, excluded=read_excluded(),
+        notify_run=make_notify_run(path), attention_fn=None, local_config=local, excluded=read_excluded(),
         run_id=run_id)
+
+
+# ---------------------------------------------------------------------------
+# State merge
+
+_MISSING = object()
+
+
+def merge_state(base, ours, fresh):
+    """Three-way merge of the state document, for halves that overlap.
+
+    `base` is the state this run read, `ours` what it wants to write and
+    `fresh` what is on `freshness-state` now. A value only one side changed
+    keeps that change; where both changed, dicts merge key by key and any
+    other value keeps this run's. So the other half's heartbeat, results
+    fields, link or source history and alert entries survive this write.
+    """
+    if ours == base:
+        return fresh if fresh is _MISSING else copy.deepcopy(fresh)
+    if fresh is _MISSING or fresh == base or fresh == ours:
+        return ours if ours is _MISSING else copy.deepcopy(ours)
+    if ours is _MISSING:
+        return _MISSING  # this run deleted it and the other half changed it: the delete wins
+    if not (isinstance(base, dict) and isinstance(ours, dict) and isinstance(fresh, dict)):
+        if isinstance(ours, dict) and isinstance(fresh, dict):
+            base = {}
+        else:
+            return copy.deepcopy(ours)
+    out = {}
+    for key in sorted(set(base) | set(ours) | set(fresh), key=str):
+        value = merge_state(base.get(key, _MISSING), ours.get(key, _MISSING), fresh.get(key, _MISSING))
+        if value is not _MISSING:
+            out[key] = value
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -475,9 +530,7 @@ class Run:
     def _step(self, name, fn, *args):
         try:
             return fn(*args)
-        except ghmod.RefusedWrite:
-            raise
-        except Exception as err:  # one broken step must not stop the heartbeat
+        except Exception as err:  # one broken step, even a refused write, must not stop the heartbeat
             self._fail(name, '%s: %s' % (err.__class__.__name__, err))
             return None
 
@@ -487,15 +540,14 @@ class Run:
     # -- state and GitHub items -----------------------------------------
 
     def load_state(self):
-        text, _sha = self.gh.read_state()
+        text, self.state_sha = self.gh.read_state()
         self.state = smod.load(text)
         for key in ('heartbeats', 'heartbeat_watch', 'results', 'pr_seen', 'upstream_pending', 'links', 'sources'):
             self.state.setdefault(key, {})
+        self.base_state = copy.deepcopy(self.state)
 
     def load_items(self):
         if not self.gh.bot_login:
-            if not self.dry_run:
-                raise RunError('the App bot login is not known (FRESHNESS_BOT_LOGIN)')
             self._print('dry run: no App bot login, so open freshness issues and PRs are not listed')
             self.items = []
             return
@@ -685,6 +737,8 @@ class Run:
 
     def record_results(self):
         """Per-skill pass/fail of this half, for `age.advance_actions`."""
+        if not self.checked_skills:
+            return  # the checks did not run: keep the last results
         failing = {f['skill'] for f in self.findings if f['kind'] != 'past-max-age'}
         results = self.state['results']
         names = set(self.checked_skills)
@@ -720,6 +774,8 @@ class Run:
         self.actions += planned
 
     def apply(self):
+        if self.skip_writes:
+            return
         if self.dry_run:
             for action in self.actions:
                 shown = {'op': action.get('op'), 'fingerprint': (action.get('fingerprint') or '')[:12]}
@@ -773,15 +829,10 @@ class Run:
         return beat
 
     def write_state(self):
-        # Keep the other half's newest heartbeat if it wrote while this run worked.
-        other = OTHER[self.half]
-        try:
-            text, _sha = self.gh.read_state()
-            fresh = smod.load(text).get('heartbeats', {}).get(other)
-            if fresh:
-                self.state['heartbeats'][other] = fresh
-        except ghmod.GitHubError:
-            pass
+        """Commit the state; if the other half wrote meanwhile, merge its changes in first."""
+        text, sha = self.gh.read_state()
+        if sha != self.state_sha:
+            self.state = merge_state(self.base_state, self.state, smod.load(text))
         self.gh.write_state(smod.dump(self.state),
                             'freshness: %s heartbeat, run %s (FRS-16)' % (self.half, self.deps.run_id))
 
@@ -792,25 +843,33 @@ class Run:
         self.checked_skills = []
         self.age_skills = []
         self.rereview = []
+        self.skip_writes = False
         self.load_state()
-        self.load_items()
+        if not self.gh.bot_login and not self.dry_run:
+            raise RunError('the App bot login is not known (FRESHNESS_BOT_LOGIN)')
+        self._step('list freshness items', self.load_items)
+        if self.failed:
+            # Without the open items every finding would look new: plan nothing.
+            self.skip_writes = True
         if self.half == 'actions':
             self._step('upstream watch', self.watch_upstream)
             self._step('static checks', self.actions_checks)
             self._step('age', self.age_checks)
             self._step('canary', self.verify_canary)
-            self._step('dwell', self.actions_dwell)
+            if not self.skip_writes:
+                self._step('dwell', self.actions_dwell)
         else:
             self._step('cli checks', self.mac_checks)
         self._step('heartbeat watch', self.watch_other_half)
-        self._step('route', self.route_findings)
-        if self.half == 'actions':
-            self._step('age actions', self.age_actions)
-        self._step('alerts', self.plan_alerts)
-        self.apply()
-        if self.half == 'mac':
-            self._step('announce', self.announce)
         self.record_results()
+        if not self.skip_writes:
+            self._step('route', self.route_findings)
+            if self.half == 'actions':
+                self._step('age actions', self.age_actions)
+            self._step('alerts', self.plan_alerts)
+            self._step('apply', self.apply)
+            if self.half == 'mac':
+                self._step('announce', self.announce)
         beat = self.heartbeat(smod.require_utc(self.deps.clock()))
         if self.dry_run:
             self._print('dry run: heartbeat not written: ' + json.dumps(beat, sort_keys=True))
