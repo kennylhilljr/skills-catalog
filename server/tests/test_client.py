@@ -185,6 +185,29 @@ class SyncTests(_Temp):
                 self.assertFalse(target.exists())
         self.assertEqual([p.name for p in pathlib.Path(self.tmp).iterdir() if p.name.startswith('.')], [])
 
+    async def test_a_failing_read_names_the_uri_and_writes_nothing(self):
+        repo = make_catalog_repo(self.tmp, skills=SKILLS)
+        async with Client(build_server(self.snap(repo))) as real:
+            resources = await real.list_skill_resources()
+            good = await real.read_skill('skill://alpha-skill/SKILL.md')
+
+        class Dropping:
+            """Reads the first skill, then behaves like a disconnected client."""
+
+            async def list_skill_resources(self):
+                return sorted(resources, key=lambda r: str(r.uri))
+
+            async def read_skill(self, uri):
+                if uri == 'skill://alpha-skill/SKILL.md':
+                    return good
+                raise RuntimeError('Client is not connected.')
+
+        target = pathlib.Path(self.tmp, 'out')
+        with self.assertRaises(ValueError) as caught:
+            await sync_skills(Dropping(), target)
+        self.assertIn('skill://beta-skill/SKILL.md', str(caught.exception))
+        self.assertFalse(target.exists())
+
     async def test_non_empty_target_is_refused(self):
         repo = make_catalog_repo(self.tmp, skills=SKILLS)
         target = pathlib.Path(self.tmp, 'busy')

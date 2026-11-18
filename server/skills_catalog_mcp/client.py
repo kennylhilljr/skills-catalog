@@ -36,7 +36,7 @@ async def sync_skills(client, target_dir) -> list[pathlib.Path]:
         uri = str(resource.uri)
         try:
             skill = await client.read_skill(uri)
-        except (ValueError, MCPError) as exc:
+        except (ValueError, MCPError, RuntimeError) as exc:
             raise ValueError('cannot verify skill ' + uri + ': ' + _reason(exc)) from exc
         name = skill.name
         if not name or name in ('.', '..') or '/' in name or '\\' in name:
@@ -74,4 +74,6 @@ def _check_target(target):
 def _reason(exc):
     if isinstance(exc, MCPError):
         return 'the server refused a read'
+    if isinstance(exc, RuntimeError):
+        return 'the client cannot read: ' + str(exc)
     return str(exc)
