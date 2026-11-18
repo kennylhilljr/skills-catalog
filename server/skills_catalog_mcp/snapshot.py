@@ -122,6 +122,23 @@ def _resolve_tag(repo, ref):
     return ref, out.decode('ascii').strip()
 
 
+def _inside(tmp, name):
+    """True if archive member `name` is a plain relative path that stays inside tmp.
+
+    Refuses `\\`, `:` and NUL, which some platforms read as separators or
+    drive letters, absolute paths and `..` parts, then checks the resolved
+    target too.
+    """
+    if not name or any(c in name for c in '\\:\x00') or name.startswith('/'):
+        return False
+    parts = [p for p in name.split('/') if p]
+    if not parts or any(p in ('.', '..') for p in parts):
+        return False
+    base = os.path.realpath(tmp)
+    target = os.path.realpath(os.path.join(base, *parts))
+    return os.path.commonpath([base, target]) == base
+
+
 def _skill_of(member_name):
     """Return the skill folder name of a tar member under skills/, else None."""
     parts = member_name.rstrip('/').split('/')
@@ -179,8 +196,7 @@ def _extract(tag, commit, data, tmp, excluded):
                 continue  # never written to disk, never named
             if member.name not in ('catalog.json', 'skills', 'skills/') and skill is None:
                 raise SnapshotError(_MISMATCH + ': unexpected entry under skills/')
-            parts = member.name.split('/')
-            if member.name.startswith('/') or '..' in parts:
+            if not _inside(tmp, member.name):
                 raise SnapshotError('unsafe path in archive')
             if member.issym() or member.islnk():
                 raise SnapshotError('symlink in skills/' + skill if skill else 'symlink in archive')
@@ -189,11 +205,11 @@ def _extract(tag, commit, data, tmp, excluded):
             members.append(member)
         try:
             # filter='data' exists from Python 3.11.4. Before that, the
-            # checks above (regular files and folders only, no absolute or
-            # `..` path) are what keep the extraction inside tmp.
+            # checks above (regular files and folders only, every path
+            # resolving inside tmp) are what keep the extraction inside tmp.
             if hasattr(tarfile, 'data_filter'):
                 archive.extractall(tmp, members=members, filter='data')
-            else:  # pragma: no cover
+            else:
                 archive.extractall(tmp, members=members)
         except tarfile.TarError as exc:
             raise SnapshotError('cannot extract the tag: ' + type(exc).__name__) from None

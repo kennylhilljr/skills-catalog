@@ -217,6 +217,26 @@ class OnlyDeliveredSkillsTests(_Temp):
         self.assertRegex(str(ctx.exception), r'^skills/ does not match catalog\.json: skills/beta-skill ')
         self.assertNotIn('tampered', str(ctx.exception))
 
+    def test_unsafe_file_name_refuses_to_start(self):
+        odd = 'a' + chr(92) + 'b.md'
+        repo = make_catalog_repo(self.tmp, skills={'alpha-skill': {odd: 'x\n'}})
+        with self.assertRaisesRegex(SnapshotError, '^unsafe path in archive$'):
+            materialize(repo, exclude_file=self.exclude)
+
+    def test_extraction_without_the_data_filter(self):
+        # Python 3.11.0 to 3.11.3 have no tarfile.data_filter.
+        import tarfile
+        repo = make_catalog_repo(self.tmp, skills=SKILLS)
+        saved = tarfile.data_filter
+        del tarfile.data_filter
+        try:
+            with unittest.mock.patch.object(tarfile.TarFile, 'extraction_filter',
+                                            staticmethod(tarfile.fully_trusted_filter), create=True):
+                snap = self.snap(repo)
+        finally:
+            tarfile.data_filter = saved
+        self.assertEqual(sorted(os.listdir(snap.root)), ['alpha-skill', 'beta-skill'])
+
     def test_symlink_refuses_to_start(self):
         repo = make_catalog_repo(self.tmp, skills=['alpha-skill'])
         os.symlink('../../catalog.json', os.path.join(repo, 'skills', 'alpha-skill', 'link.json'))
