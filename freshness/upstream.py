@@ -364,8 +364,15 @@ def _tables(lines):
             is_md = lines[i + 1].lstrip().startswith('|') and all(_SEPARATOR_CELL.match(c) for c in sep if c)
             rows = []
             j = i + (2 if is_md else 1)
-            while j < len(lines) and lines[j].lstrip().startswith('|'):
-                rows.append(_split_row(lines[j]))
+            while j < len(lines):
+                nxt = lines[j]
+                if nxt.lstrip().startswith('|'):
+                    rows.append(_split_row(nxt))
+                elif rows and nxt.strip() and not _HEADING.match(nxt) and not _FENCE.match(nxt):
+                    # A row wrapped onto the next line: join it to the last cell.
+                    rows[-1][-1] = (rows[-1][-1] + ' ' + nxt.strip()).strip()
+                else:
+                    break
                 j += 1
             yield header, rows
             i = j
@@ -546,34 +553,51 @@ def _scrub():
     return _scrub_module
 
 
-def scrub_lines(text, allow=()):
+_SLUG = re.compile(r'[a-z0-9]+(?:[.-][a-z0-9]+)*')
+
+
+def _only_slug_entropy(line):
+    """True when every high-entropy run on `line` is a lowercase slug.
+
+    Dated model IDs (`name-2025-03-11`) and URL anchors trip the entropy
+    rule; a token or key payload has capitals, `_`, `+` or `=` and does not
+    match.
+    """
+    scrub = _scrub()
+    runs = [m.group(0) for m in scrub._ENTROPY_RUN.finditer(line) if scrub._is_high_entropy(m.group(0))]
+    return bool(runs) and all(_SLUG.fullmatch(r) for r in runs)
+
+
+def scrub_lines(text, allow_slugs=False):
     """`text` with every line that `tools/scrub.scan_text` flags withheld.
 
-    Kinds in `allow` are left in place. The result never holds a finding of
-    any other kind.
+    With `allow_slugs`, a line whose only finding is `high-entropy` is kept
+    when every high-entropy run on it is a lowercase slug (see
+    `_only_slug_entropy`). Every other finding withholds the line.
     """
-    flagged = {}
-    for number, kind in _scrub().scan_text(text):
-        if kind not in allow:
-            flagged.setdefault(number, []).append(kind)
-    if not flagged:
-        return text
     lines = text.split('\n')
-    for number, kinds in flagged.items():
+
+    def flagged(scan):
+        found = {}
+        for number, kind in scan:
+            found.setdefault(number, set()).add(kind)
+        if allow_slugs:
+            for number in list(found):
+                if found[number] == {'high-entropy'} and _only_slug_entropy(lines[number - 1]):
+                    del found[number]
+        return found
+
+    found = flagged(_scrub().scan_text(text))
+    if not found:
+        return text
+    for number, kinds in found.items():
         lines[number - 1] = '[line withheld by scrub: %s]' % ', '.join(sorted(kinds))
     out = '\n'.join(lines)
     # A withheld line can still change how a fence pairs up; rescan once and
     # withhold everything rather than publish a flagged line.
-    if any(kind not in allow for _, kind in _scrub().scan_text(out)):
+    if flagged(_scrub().scan_text(out)):
         return '[text withheld by scrub]'
     return out
-
-
-# The stored extract keeps lines that only the entropy rule flags: upstream
-# pages are public, and long model IDs such as dated snapshot names trip it,
-# while they are what the model watch exists to see. Evidence gets the full
-# scrub.
-EXTRACT_SCRUB_ALLOW = ('high-entropy',)
 
 
 def _diff(source_id, old, new):
@@ -613,8 +637,8 @@ def watch(sources, state_sources, fetch, now, run_id):
 
     Extracts are scrubbed with `tools/scrub.scan_text` before they are hashed
     and stored, since `state.sources` is published on `freshness-state`
-    (except the entropy rule, see EXTRACT_SCRUB_ALLOW). Evidence gets the
-    full scrub.
+    (lowercase slugs such as dated model IDs are kept, see `scrub_lines`).
+    Evidence gets the full scrub.
 
     `state_sources` maps a source id to
     `{"sha256", "extract", "fetched_at", "failures", "last_error", "errors"}`
@@ -668,7 +692,7 @@ def watch(sources, state_sources, fetch, now, run_id):
             try:
                 # The extract is stored on the public freshness-state branch,
                 # so it is scrubbed before it is hashed or stored.
-                extract = scrub_lines(normalize(source, text), EXTRACT_SCRUB_ALLOW)
+                extract = scrub_lines(normalize(source, text), allow_slugs=True)
             except ExtractError as exc:
                 error = _error_text(exc)
             except Exception as exc:  # a parser fault counts as a failure too

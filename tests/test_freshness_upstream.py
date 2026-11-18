@@ -386,6 +386,18 @@ class WatchTest(unittest.TestCase):
         self.assertEqual(scrub.scan_text(findings[0]['evidence']), [])
         self.assertIn('withheld by scrub: high-entropy', findings[0]['evidence'])
 
+    def test_opaque_tokens_never_reach_the_stored_extract(self):
+        # An opaque token, built at runtime (the repo is public).
+        token = 'opaque_' + ''.join(c + str(i % 10) for i, c in enumerate('AbCdEfGhIjKlMnOpQr'))
+        src = {'id': 'x-docs', 'url': 'https://example.com/d', 'extract': 'markdown-sections',
+               'params': {'headings': ['Setup']}}
+        fetch = FakeFetch({src['url']: (200, '# Setup\n\nUse %s here.\nDone.' % token)})
+        _, _, state = self.run_watch([src], {}, fetch, 'r1')
+        extract = state['x-docs']['extract']
+        self.assertNotIn(token, extract)
+        self.assertIn('[line withheld by scrub: high-entropy]', extract)
+        self.assertIn('Done.', extract)
+
 
 class ParsedListsTest(unittest.TestCase):
 
@@ -394,6 +406,15 @@ class ParsedListsTest(unittest.TestCase):
         _, _, state = upstream.watch([TOOLS], {}, fetch, NOW, 'r1')
         self.assertEqual(upstream.tool_names(state), ['Agent', 'Bash', 'Edit', 'Read', 'Skill', 'WebFetch'])
         self.assertEqual(upstream.tool_names({}), [])
+
+    def test_wrapped_table_rows_do_not_end_the_table(self):
+        page = fixture('tools-reference.md').replace(
+            '| `Bash` | Executes shell commands. See [Bash tool behavior](#bash-tool-behavior) | Yes |',
+            '| `Bash` | Executes shell commands.\nSee [Bash tool behavior](#bash-tool-behavior) | Yes |')
+        self.assertNotEqual(page, fixture('tools-reference.md'))
+        fetch = FakeFetch({TOOLS_URL: (200, page)})
+        _, _, state = upstream.watch([TOOLS], {}, fetch, NOW, 'r1')
+        self.assertEqual(upstream.tool_names(state), ['Agent', 'Bash', 'Edit', 'Read', 'Skill', 'WebFetch'])
 
     def test_field_table_parses_the_frontmatter_table(self):
         fetch = FakeFetch({SKILLS_URL: (200, fixture('skills.md'))})
