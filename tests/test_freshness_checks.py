@@ -366,6 +366,8 @@ class LinkTests(Base):
             'https://' + '.'.join(['10', '0', '0', '1']) + '/x',
             'https://999.999.999.999/x',
             'https://example.org/path' + chr(10),
+            'https://example.org/)![x](https://tracker.example/x',
+            'https://example.org/a*b|c',
             'https://' + 'a' * 64 + '.example.com/x',
         ]
         for target in bad:

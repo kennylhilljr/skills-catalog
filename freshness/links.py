@@ -44,8 +44,10 @@ MOVED_KIND = 'moved-link'
 # A plain DNS name: two or more labels of at most 63 characters and an
 # alphabetic top-level label, so IP literals and numeric hosts are rejected.
 _HOSTNAME = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
-# Visible ASCII without quotes, angle brackets or backticks (used with fullmatch).
-_PRINTABLE_ASCII = re.compile(r'[!#-&(-;=?-_a-~]+')
+# URL characters that cannot open or close Markdown or HTML syntax: no
+# quotes, angle brackets, backticks, brackets, parentheses, `!`, `*`, `|`,
+# braces or backslashes (used with fullmatch).
+_PRINTABLE_ASCII = re.compile(r'[A-Za-z0-9._~:/?#@%&=+,;-]+')
 _URL = re.compile(r'https?://[^\s<>"\'`]+')
 _TRAILING = ').,;>'
 
