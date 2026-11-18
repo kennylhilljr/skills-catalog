@@ -42,6 +42,9 @@ class Snapshot:
     root: str
     catalog: list
     _tmp: str = dataclasses.field(repr=False, default='')
+    # The lowercased local exclusion list, kept so the tools can drop any
+    # text that names an excluded skill (INV-7). Never shown in repr.
+    excluded: frozenset = dataclasses.field(repr=False, default=frozenset())
 
     def cleanup(self):
         if self._tmp:
@@ -254,4 +257,4 @@ def _extract(tag, commit, data, tmp, excluded):
         log.info('skipped %d skill(s) from the local exclusion list', skipped)
     os.remove(os.path.join(tmp, 'catalog.json'))
     catalog = [expected[name] for name in sorted(expected)]
-    return Snapshot(tag=tag, commit=commit, root=root, catalog=catalog, _tmp=tmp)
+    return Snapshot(tag=tag, commit=commit, root=root, catalog=catalog, _tmp=tmp, excluded=excluded)

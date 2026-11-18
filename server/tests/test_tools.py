@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
@@ -166,6 +167,24 @@ class SearchSkillsTests(_Base):
         for text, expected in cases.items():
             self.assertEqual(tools.parse_description(text), expected, text)
 
+    def test_description_equals_the_lint_parser(self):
+        spec = importlib.util.spec_from_file_location('catalog_lint', SERVER.parent / 'tools' / 'lint.py')
+        lint = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lint)
+        bodies = [
+            'description: Use when debugging: follow logs',
+            'description:   Use when   spaced  out  ',
+            'description: "Use when \\"quoted\\" and \\\\ slashed"',
+            "description: 'It''s for logs'",
+            'description: |\n  Use when\n\n  literal',
+            'description: |-\n  Use when\n  literal',
+            'description: >\n  Use when\n\n  folded',
+            'description: >-\n  Use when\n  folded',
+        ]
+        for body in bodies:
+            text = '---\nname: x\n' + body + '\nmetadata:\n  a: "b"\n---\n'
+            self.assertEqual(tools.parse_description(text), lint.parse_frontmatter(text)[0]['description'], body)
+
     async def test_description_with_a_colon_is_searchable(self):
         mcp = self.server(self.snapshot(_skills({'alpha-skill': 'Use when debugging: follow logs'})))
         found = await self.search(mcp, 'logs')
@@ -234,13 +253,18 @@ class SkillStatusTests(_Base):
         self.assertEqual(status['findings'], issues[:1])
         self.assertNotIn(hidden, json.dumps(status).lower())
 
-    async def test_excluded_defaults_to_the_snapshot_attribute(self):
+    async def test_excluded_list_comes_from_the_snapshot(self):
         hidden = 'private-' + 'thing'
-        snap = self.snapshot(['alpha-skill'])
-        snap.excluded = frozenset([hidden])
-        issues = [{'url': ISSUES + '8', 'title': 'freshness-alert: drift: alpha-skill ' + hidden}]
+        snap = self.snapshot(['alpha-skill', hidden], exclude=[hidden.upper()])
+        self.assertNotIn(hidden, repr(snap))
+        issues = [
+            {'url': ISSUES + '8', 'title': 'freshness-alert: drift: alpha-skill ' + hidden},
+            {'url': ISSUES + '9', 'title': 're-review: alpha-skill (see ' + hidden + '-extra)'},
+            {'url': ISSUES + '10', 'title': 're-review: alpha-skill'},
+        ]
         status = await self.status(self.server(snap, _FakeFetcher(issues)), 'alpha-skill')
-        self.assertEqual(status['findings'], [])
+        self.assertEqual(status['findings'], issues[2:])
+        self.assertNotIn(hidden, json.dumps(status).lower())
 
     async def test_fetcher_that_raises_gives_empty_findings_and_an_error(self):
         mcp = self.server(self.snapshot(['alpha-skill']), _FakeFetcher(error=OSError('boom')))

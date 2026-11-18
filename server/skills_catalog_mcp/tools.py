@@ -29,10 +29,11 @@ def _words(text):
 
 
 def _unquote(value):
+    """A scalar the way tools/lint.py parse_scalar reads a description string."""
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] == '"':
+    if value.startswith('"') and value.endswith('"'):
         return value[1:-1].replace('\\"', '"').replace('\\\\', '\\')
-    if len(value) >= 2 and value[0] == value[-1] == "'":
+    if value.startswith("'") and value.endswith("'"):
         return value[1:-1].replace("''", "'")
     return value
 
@@ -42,12 +43,13 @@ def parse_description(text):
 
     That grammar is a subset of YAML that also accepts plain scalars YAML
     rejects (such as a `: ` inside the value), so the server reads it the
-    same way instead of with a YAML parser. Missing or unreadable gives ''.
+    same way, with the same value, instead of with a YAML parser. Missing,
+    unreadable or not a string gives ''.
     """
     lines = text.split('\n')
-    if not lines or lines[0].rstrip('\r') != '---':
+    if not lines or lines[0] != '---':
         return ''
-    lines = [line.rstrip('\r') for line in lines[1:]]
+    lines = lines[1:]
     if '---' not in lines:
         return ''
     lines = lines[:lines.index('---')]
@@ -55,17 +57,23 @@ def parse_description(text):
         match = _DESCRIPTION.match(line)
         if not match:
             continue
-        value = (match.group(1) or '').strip()
-        if value in ('>', '>-', '|', '|-'):
+        value = match.group(1) or ''
+        indicator = value.strip()
+        if indicator in ('>', '>-', '|', '|-'):
             block = []
             for more in lines[i + 1:]:
                 if more and not more.startswith('  '):
                     break
-                block.append(more[2:])
-            value = ' '.join(block)
-        else:
-            value = _unquote(value)
-        return ' '.join(value.split())
+                if more.startswith('  '):
+                    block.append(more[2:])
+                elif not more.strip():
+                    block.append('')
+            if indicator in ('>', '>-'):
+                result = ' '.join(b for b in block if b.strip())
+            else:
+                result = '\n'.join(block)
+            return result + '\n' if indicator in ('>', '|') else result
+        return _unquote(value)
     return ''
 
 
@@ -89,6 +97,10 @@ class Catalog:
         self.entries = {e['name']: e for e in snapshot.catalog}
         self.descriptions = {name: _description(snapshot.root, name) for name in self.entries}
         self.fetcher = findings_fetcher if findings_fetcher is not None else findings.GitHubFindings()
+
+    def _names_excluded(self, text):
+        text = text.lower()
+        return any(name in text for name in self.excluded)
 
     def search(self, query, scope='catalog'):
         if scope == 'third-party':
@@ -118,9 +130,10 @@ class Catalog:
         if entry is None:
             raise ToolError(UNKNOWN_SKILL)
         found, error = findings.lookup(self.fetcher, entry['name'])
-        # A finding whose title also names an excluded skill is dropped, so
-        # no excluded name reaches a tool result (INV-7).
-        found = [f for f in found if not any(findings.title_names(f['title'], n) for n in self.excluded)]
+        # A finding whose title contains an excluded name anywhere (case-
+        # insensitive substring, like the local exclusion check) is dropped,
+        # so no excluded name reaches a tool result (INV-7).
+        found = [f for f in found if not self._names_excluded(f['title'] + ' ' + f['url'])]
         pin = version.fastmcp_version()
         return {
             'name': entry['name'],
