@@ -491,6 +491,29 @@ def merge_state(base, ours, fresh):
     return out
 
 
+STATE_WRITE_ATTEMPTS = 3
+
+
+def cas_write_state(gh, text, parent, message):
+    """One compare-and-swap write of the state file; False when the branch moved.
+
+    `parent` is the `freshness-state` sha the text was merged against (None
+    before the first write, which creates the branch). Unlike
+    `GitHub.write_state`, it never retries with the same text, so the caller
+    can merge first. Every request still goes through part 5's guarded
+    writer (INV-5): only `refs/heads/freshness-state` can move.
+    """
+    if parent is None:
+        sha = gh._commit_files({ghmod.STATE_PATH: text}, message, None, None)
+        gh._check_ref(ghmod.STATE_REF)
+        status, _ = gh._request('POST', '/git/refs', {'ref': ghmod.STATE_REF, 'sha': sha}, ok=(201, 422))
+        return status == 201
+    _, commit = gh._request('GET', '/git/commits/' + parent)
+    sha = gh._commit_files({ghmod.STATE_PATH: text}, message, parent, commit['tree']['sha'])
+    status, _ = gh._request('PATCH', '/git/' + ghmod.STATE_REF, {'sha': sha, 'force': False}, ok=(200, 409, 422))
+    return status == 200
+
+
 # ---------------------------------------------------------------------------
 # The run
 
@@ -746,8 +769,7 @@ class Run:
             if name not in names:
                 del results[name]
         for name in self.checked_skills:
-            entry = results.setdefault(name, {'actions_run': None, 'actions_ok': None, 'mac_run': None,
-                                              'mac_ok': None, 'mac_at': None})
+            entry = results.setdefault(name, {})  # each half sets only its own fields, so merges keep both
             ok = name not in failing and not self.failed
             if self.half == 'actions':
                 entry.update(actions_run=self.deps.run_id, actions_ok=ok)
@@ -829,12 +851,22 @@ class Run:
         return beat
 
     def write_state(self):
-        """Commit the state; if the other half wrote meanwhile, merge its changes in first."""
-        text, sha = self.gh.read_state()
-        if sha != self.state_sha:
-            self.state = merge_state(self.base_state, self.state, smod.load(text))
-        self.gh.write_state(smod.dump(self.state),
-                            'freshness: %s heartbeat, run %s (FRS-16)' % (self.half, self.deps.run_id))
+        """Commit the state with compare-and-swap; on a conflict, merge the other half's write and retry.
+
+        Each attempt commits on the sha it merged against and moves the ref
+        only as a fast-forward, so a commit the other half made in between
+        is never overwritten: the move fails and the next attempt merges it.
+        """
+        message = 'freshness: %s heartbeat, run %s (FRS-16)' % (self.half, self.deps.run_id)
+        for _attempt in range(STATE_WRITE_ATTEMPTS):
+            text, sha = self.gh.read_state()
+            if sha != self.state_sha:
+                fresh = smod.load(text)
+                self.state = merge_state(self.base_state, self.state, fresh)
+                self.base_state, self.state_sha = fresh, sha
+            if cas_write_state(self.gh, smod.dump(self.state), sha, message):
+                return
+        raise ghmod.GitHubError('state write conflicted %d times' % STATE_WRITE_ATTEMPTS)
 
     # -- the whole run ------------------------------------------------------
 

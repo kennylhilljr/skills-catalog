@@ -55,6 +55,8 @@ class FakeGitHub:
         self.items = list(items)
         self.blobs = []
         self.number = 500
+        self.state_sha = 'a' * 40
+        self.concurrent = []  # states the other half writes, one per conflicting ref move
 
     def writes(self):
         return [(m, p, b) for m, p, b in self.requests if m != 'GET']
@@ -63,6 +65,13 @@ class FakeGitHub:
         texts = [b['content'] for m, p, b in self.requests
                  if m == 'POST' and p.endswith('/git/blobs') and '"heartbeats"' in b['content']]
         return json.loads(texts[-1]) if texts else None
+
+    def _last_blob(self):
+        return self.blobs[-1] if self.blobs else self.state_text
+
+    def _other_half_writes(self):
+        self.state_text = smod.dump(self.concurrent.pop(0))
+        self.state_sha = format(int(self.state_sha, 16) + 1, '040x')
 
     def __call__(self, method, path, body):
         self.requests.append((method, path, body))
@@ -75,7 +84,7 @@ class FakeGitHub:
             if rel == '/git/ref/heads/freshness-state':
                 if self.state_text is None:
                     return 404, {'message': 'Not Found'}
-                return 200, {'object': {'sha': 'a' * 40}}
+                return 200, {'object': {'sha': self.state_sha}}
             if rel == '/git/ref/heads/main':
                 return 200, {'object': {'sha': 'c' * 40}}
             if rel.startswith('/git/commits/'):
@@ -98,8 +107,17 @@ class FakeGitHub:
         if rel in ('/git/trees', '/git/commits'):
             return 201, {'sha': 'f' * 40}
         if rel == '/git/refs':
+            if self.concurrent:
+                self._other_half_writes()
+                return 422, {'message': 'Reference already exists'}
+            self.state_text = self._last_blob()
             return 201, {}
         if rel.startswith('/git/refs/'):
+            if rel == '/git/refs/heads/freshness-state':
+                if self.concurrent:
+                    self._other_half_writes()
+                    return 422, {'message': 'Update is not a fast forward'}
+                self.state_text = self._last_blob()
             return 200, {}
         if rel in ('/issues', '/pulls'):
             self.number += 1
@@ -396,27 +414,66 @@ class RobustnessTests(unittest.TestCase):
         self.assertEqual(_opened_titles(fake), [])
         self.assertEqual(fake.written_state()['heartbeats']['actions']['result'], 'failed')
 
-    def test_a_concurrent_write_by_the_other_half_is_merged(self):
+    def _other_half(self, base, at):
+        fresh = json.loads(json.dumps(base))
+        fresh.setdefault('heartbeats', {})['mac'] = _beat(at)
+        fresh.setdefault('results', {}).setdefault('zz-canary', {}).update(mac_run='m-' + at, mac_at=at)
+        fresh['cli'] = {'claude': {'installed': at}}
+        return fresh
+
+    def _check_merged(self, fake, at):
+        written = json.loads(fake.state_text)
+        self.assertEqual(written['heartbeats']['mac']['last_success'], at)
+        self.assertEqual(written['heartbeats']['actions']['run_id'], 'actions-1')
+        self.assertEqual(written['results']['zz-canary']['mac_run'], 'm-' + at)
+        self.assertEqual(written['results']['zz-canary']['actions_run'], 'actions-1')
+        self.assertEqual(written['cli'], {'claude': {'installed': at}})
+
+    def test_a_write_by_the_other_half_during_the_run_is_merged(self):
         base = smod.empty_state()
         base['heartbeats'] = {'mac': _beat('2026-11-17T11:30:00+00:00')}
-        base['results'] = {'zz-canary': {'actions_run': 'a0', 'actions_ok': False, 'mac_run': 'm0',
-                                         'mac_ok': True, 'mac_at': '2026-11-17T11:30:00+00:00'}}
-        fresh = json.loads(json.dumps(base))
-        fresh['heartbeats']['mac'] = _beat('2026-11-18T11:00:30+00:00')
-        fresh['results']['zz-canary'].update(mac_run='m1', mac_at='2026-11-18T11:00:30+00:00')
-        fresh['cli'] = {'claude': {'installed': '1.0.0'}}
         fake = FakeGitHub(base)
         deps = _deps(fake, 'actions')
         job = runmod.Run('actions', deps)
-        reads = [(smod.dump(base), 'a' * 40), (smod.dump(fresh), 'b' * 40)]
-        with mock.patch.object(deps.github, 'read_state', side_effect=reads):
+        real = deps.github.read_state
+        calls = []
+
+        def read_state():
+            calls.append(1)
+            if len(calls) == 2:  # the Mac commits while this run works
+                fake.concurrent.append(self._other_half(base, '2026-11-18T11:00:30+00:00'))
+                fake._other_half_writes()
+            return real()
+        with mock.patch.object(deps.github, 'read_state', side_effect=read_state):
             self.assertTrue(job.execute(), job.errors)
-        written = fake.written_state()
-        self.assertEqual(written['heartbeats']['mac']['last_success'], '2026-11-18T11:00:30+00:00')
-        self.assertEqual(written['heartbeats']['actions']['run_id'], 'actions-1')
-        self.assertEqual(written['results']['zz-canary']['mac_run'], 'm1')
-        self.assertEqual(written['results']['zz-canary']['actions_run'], 'actions-1')
-        self.assertEqual(written['cli'], fresh['cli'])
+        self._check_merged(fake, '2026-11-18T11:00:30+00:00')
+
+    def test_a_write_by_the_other_half_during_the_commit_is_merged(self):
+        """The ref move is a compare-and-swap: a lost race re-reads and merges, never overwrites."""
+        base = smod.empty_state()
+        base['heartbeats'] = {'mac': _beat('2026-11-17T11:30:00+00:00')}
+        fake = FakeGitHub(base)
+        fake.concurrent.append(self._other_half(base, '2026-11-18T11:00:40+00:00'))
+        ok, job, _ = _execute('actions', fake)
+        self.assertTrue(ok, job.errors)
+        self._check_merged(fake, '2026-11-18T11:00:40+00:00')
+        moves = [b for m, p, b in fake.requests if m == 'PATCH' and p.endswith('/git/refs/heads/freshness-state')]
+        self.assertEqual([b['force'] for b in moves], [False, False])
+
+    def test_the_first_write_races_too(self):
+        fake = FakeGitHub()
+        fake.concurrent.append(self._other_half(smod.empty_state(), '2026-11-18T11:00:50+00:00'))
+        ok, job, _ = _execute('actions', fake)
+        self.assertTrue(ok, job.errors)
+        self._check_merged(fake, '2026-11-18T11:00:50+00:00')
+
+    def test_state_write_gives_up_after_repeated_conflicts(self):
+        fake = FakeGitHub(smod.empty_state())
+        fake.concurrent.extend(self._other_half(smod.empty_state(), '2026-11-18T11:0%d:00+00:00' % i)
+                               for i in range(runmod.STATE_WRITE_ATTEMPTS))
+        ok, job, _ = _execute('actions', fake)
+        self.assertFalse(ok)
+        self.assertTrue(any(e.startswith('state write') for e in job.errors))
 
     def test_merge_state_rules(self):
         base = {'a': 1, 'b': {'x': 1, 'y': 1}, 'gone': 1, 'kept': {'k': 1}}
