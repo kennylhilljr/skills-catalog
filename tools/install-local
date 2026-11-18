@@ -19,7 +19,8 @@ commit and per-file sha256. A destination folder that exists but is not in the
 state, or whose files no longer match the recorded hashes, is refused, and
 then nothing is written anywhere. There is no --force. An owned folder is
 written to a sibling temp folder and swapped in atomically (renamex_np or
-renameat2 through ctypes; two renames where neither exists). A skill that left the
+renameat2 through ctypes). Where those calls are missing, the run stops
+with exit 2 instead of replacing a folder non-atomically. A skill that left the
 catalog is removed when unchanged and left in place (and reported) when
 changed.
 
@@ -329,7 +330,7 @@ def plan_destination(dest, wanted, owned, excluded):
     """Steps for one destination: (action, name, detail).
 
     detail is the refusal reason for `refuse` and `leave`, and the folder's
-    current hashes for `update` and `remove`.
+    current hashes for `update`, `keep` and `remove`.
     """
     steps = []
     for name in sorted(wanted):
@@ -350,7 +351,7 @@ def plan_destination(dest, wanted, owned, excluded):
         if current != target or not modes_match(folder, content):
             steps.append(('update', name, current))
         else:
-            steps.append(('keep', name, None))
+            steps.append(('keep', name, current))
     for name in sorted(owned):
         if name in wanted or name.lower() in excluded:
             continue
@@ -420,67 +421,68 @@ def _rename_calls():
     return wrap(swap_flag), wrap(excl_flag)
 
 
-UNSUPPORTED = (errno.EINVAL, errno.ENOTSUP, errno.ENOSYS)
+class NoAtomicRename(OSError):
+    """The platform or file system lacks the atomic rename calls."""
+
+
+def _required_calls():
+    exchange, no_replace = _rename_calls()
+    if exchange is None or no_replace is None:
+        raise NoAtomicRename(errno.ENOTSUP, 'no atomic rename on this platform')
+    return exchange, no_replace
+
+
+def _atomic(call, first, second):
+    try:
+        call(first, second)
+    except OSError as err:
+        if err.errno in (errno.EINVAL, errno.ENOTSUP, errno.ENOSYS):
+            raise NoAtomicRename(err.errno, 'no atomic rename on this file system')
+        raise
 
 
 def rename_new(fresh, final):
     """Move fresh to final, failing if anything appeared at final."""
-    _exchange, no_replace = _rename_calls()
-    if no_replace is not None:
-        try:
-            no_replace(fresh, final)
-            return
-        except OSError as err:
-            if err.errno == errno.EEXIST:
-                raise Conflict(NOT_INSTALLED)
-            if err.errno not in UNSUPPORTED:
-                raise
-    if os.path.lexists(final):
+    _exchange, no_replace = _required_calls()
+    try:
+        _atomic(no_replace, fresh, final)
+    except FileExistsError:
         raise Conflict(NOT_INSTALLED)
-    # A plain rename fails on a non-empty folder or a file at final.
-    os.rename(fresh, final)
 
 
-def swap_in(fresh, final, old, expected):
-    """Replace final with fresh; the replaced folder ends at old.
+class Stranded(OSError):
+    """A folder could not be put back; it was kept in the staging folder."""
 
-    Uses an atomic exchange where the platform has one; otherwise two renames
-    leave final missing for an instant (an interrupted run then sees a
-    missing folder and installs it again). The replaced folder must still
-    hash to expected; if not, it is put back and Conflict is raised.
+
+def swap_in(fresh, final, expected):
+    """Atomically replace final with fresh; the replaced folder ends at fresh.
+
+    The replaced folder must still hash to expected; if not, it is swapped
+    back and Conflict is raised. Fails closed (NoAtomicRename) where the
+    atomic exchange is missing, so the folder is never briefly absent.
     """
-    exchange, _no_replace = _rename_calls()
-    if exchange is not None:
+    exchange, _no_replace = _required_calls()
+    _atomic(exchange, fresh, final)
+    if installed_hashes(fresh) != expected:
         try:
             exchange(fresh, final)
-            if installed_hashes(fresh) != expected:
-                exchange(fresh, final)
-                raise Conflict(CHANGED)
-            os.rename(fresh, old)
-            return
-        except OSError as err:
-            if err.errno not in UNSUPPORTED:
-                raise
-    os.rename(final, old)
-    if installed_hashes(old) != expected:
-        os.rename(old, final)
+        except OSError:
+            raise Stranded(errno.EIO, 'could not put a changed folder back; it is at', fresh)
         raise Conflict(CHANGED)
-    try:
-        os.rename(fresh, final)
-    except OSError:
-        os.rename(old, final)
-        raise
 
 
 def place(dest, name, content, expected):
     """Write content to dest/name through a sibling temp folder.
 
     expected is None for a new folder, else the hashes the folder being
-    replaced must still have.
+    replaced must still have. The staging folder is deleted unless a folder
+    could not be put back, in which case it is kept and reported.
     """
+    _required_calls()
     os.makedirs(dest, exist_ok=True)
     final = os.path.join(dest, name)
     staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
+    keep = False
     try:
         fresh = os.path.join(staging, 'new')
         os.mkdir(fresh)
@@ -489,23 +491,33 @@ def place(dest, name, content, expected):
         if expected is None:
             rename_new(fresh, final)
         else:
-            swap_in(fresh, final, os.path.join(staging, 'old'), expected)
+            swap_in(fresh, final, expected)
+    except Stranded:
+        keep = True
+        raise
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def remove(dest, name, expected):
     """Delete dest/name, unless it no longer hashes to expected."""
     folder = os.path.join(dest, name)
     staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
+    keep = False
     try:
         old = os.path.join(staging, 'old')
         os.rename(folder, old)
         if installed_hashes(old) != expected:
-            os.rename(old, folder)
+            try:
+                os.rename(old, folder)
+            except OSError:
+                keep = True
+                raise Stranded(errno.EIO, 'could not put a changed folder back; it is at', old)
             raise Conflict(CHANGED)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def record(tag, commit, content):
@@ -566,8 +578,9 @@ def main(argv=None):
         changed, refused = apply(dests, plans, destinations, wanted, tag, commit, state,
                                  state_path)
     except OSError as err:
-        print(PROG + ': error: ' + err.__class__.__name__ + ' while writing: '
-              + str(err.strerror or err), file=sys.stderr)
+        where = ' ' + str(err.filename) if err.filename else ''
+        print(PROG + ': error while writing: ' + str(err.strerror or err) + where,
+              file=sys.stderr)
         return 2
     if refused:
         print(PROG + ': refused some folders that changed during the run', file=sys.stderr)
@@ -587,8 +600,10 @@ def recheck(plans):
             folder = os.path.join(dest, name)
             if action == 'install' and os.path.lexists(folder):
                 found.append((folder, NOT_INSTALLED))
-            elif action in ('update', 'remove') and installed_hashes(folder) != snapshot:
+            elif action in ('update', 'remove', 'keep') and installed_hashes(folder) != snapshot:
                 found.append((folder, CHANGED))
+            elif action == 'forget' and os.path.lexists(folder):
+                found.append((folder, NOT_INSTALLED))
     return found
 
 
@@ -609,6 +624,8 @@ def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
         return False, True
     changed = False
     refused = False
+    if any(step[0] in ('install', 'update') for steps in plans.values() for step in steps):
+        _required_calls()
     if any(step[0] in ('install', 'update', 'remove', 'forget')
            for steps in plans.values() for step in steps):
         write_state(state_path, state)

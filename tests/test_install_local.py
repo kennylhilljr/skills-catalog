@@ -7,6 +7,7 @@ runtime, so this file itself scans clean (the repository is public).
 """
 
 import contextlib
+import errno
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -318,19 +319,35 @@ class InstallLocalCase(unittest.TestCase):
             tool.remove(self.claude, 'alpha', {'SKILL.md': sha(b'alpha v1\n')})
         with open(edited) as handle:
             self.assertEqual(handle.read(), 'edited after the plan')
-        # The same guarantees hold without the atomic rename calls.
+        # Without the atomic rename calls, nothing is replaced.
+        real_calls = tool._rename_calls
         tool._rename_calls = lambda: (None, None)
-        with self.assertRaises(tool.Conflict):
-            tool.place(self.claude, 'alpha', tree, {'SKILL.md': sha(b'alpha v1\n')})
-        with self.assertRaises(tool.Conflict):
-            tool.place(self.claude, 'beta', tree, None)
+        with self.assertRaises(tool.NoAtomicRename):
+            current = tool.installed_hashes(os.path.join(self.claude, 'alpha'))
+            tool.place(self.claude, 'alpha', tree, current)
+        with self.assertRaises(tool.NoAtomicRename):
+            tool.place(self.claude, 'gamma', tree, None)
         with open(edited) as handle:
             self.assertEqual(handle.read(), 'edited after the plan')
-        current = tool.installed_hashes(os.path.join(self.claude, 'alpha'))
-        tool.place(self.claude, 'alpha', tree, current)
-        with open(edited, 'rb') as handle:
-            self.assertEqual(handle.read(), b'new\n')
-        self.assertEqual(sorted(os.listdir(self.claude)), ['alpha', 'beta'])
+        # A folder that cannot be put back is kept, never deleted.
+        def broken():
+            exchange, no_replace = real_calls()
+            calls = []
+
+            def once(first, second):
+                calls.append(1)
+                if len(calls) > 1:
+                    raise OSError(errno.EIO, 'injected')
+                exchange(first, second)
+            return once, no_replace
+        tool._rename_calls = broken
+        with self.assertRaises(tool.Stranded) as caught:
+            tool.place(self.claude, 'alpha', tree, {'SKILL.md': sha(b'alpha v1\n')})
+        with open(os.path.join(caught.exception.filename, 'SKILL.md')) as handle:
+            self.assertEqual(handle.read(), 'edited after the plan')
+        tool._rename_calls = real_calls
+        visible = sorted(n for n in os.listdir(self.claude) if not n.startswith('.'))
+        self.assertEqual(visible, ['alpha', 'beta'])
 
     def test_symlinked_skill_folder_in_the_tag_is_refused(self):
         self.commit_tag('v1')
