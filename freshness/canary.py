@@ -16,12 +16,13 @@ records the run as failed and raises a `canary` alert when `ok` is False.
 Bootstrap: `freshness/links.py` records the first failure of a URL without a
 finding and reports `dead-link` only on a failure at least 20 hours later.
 After a state reset the canary URL therefore has only a recorded first
-failure on the first night. That recorded failure (an entry in the run's
-updated `link_history` with `first_fail_at` set) counts as the dead-link
-signal, so that night is not a false alarm. The entry counts only while it
-is younger than `min_gap_hours` at `now` (default: the current UTC time): an
-older entry should have produced a finding, so its absence is a real fault
-and never passes.
+failure on the first night. That recorded failure counts as the dead-link
+signal, so that night is not a false alarm, but only when this run wrote it:
+`check_links` stamps `first_fail_at` with the run's `now`, so the entry must
+be at most `BOOTSTRAP_WINDOW` (one hour) older than the `now` given to
+`verify` (the runner passes the same `now`; default: the current UTC time).
+An older entry is from an earlier run, so a run that skipped or broke the
+link check never passes on it.
 
 Findings have part 1's shape (`freshness/finding.py`); only `kind` and
 `skill` are read here. Python 3.9+, standard library only. Importing has no
@@ -34,7 +35,7 @@ CANARY = 'zz-canary'
 CANARY_FILE = '.held/zz-canary/SKILL.md'
 CANARY_URL = 'https://github.com/kennylhilljr/skills-catalog/blob/main/.held/zz-canary/never-created.md'
 EXPECTED = ('dead-link', 'deprecated-model', 'past-max-age')
-MIN_GAP_HOURS = 20  # freshness/links.py check_links default
+BOOTSTRAP_WINDOW = timedelta(hours=1)
 
 
 def _parse(stamp):
@@ -48,12 +49,12 @@ def _parse(stamp):
         return None
 
 
-def first_failure_recorded(link_history, url=CANARY_URL, now=None, min_gap_hours=MIN_GAP_HOURS):
-    """True when `link_history` holds only a recorded first failure for `url`.
+def first_failure_recorded(link_history, url=CANARY_URL, now=None, window=BOOTSTRAP_WINDOW):
+    """True when this run recorded the first failure of `url` in `link_history`.
 
     A moved or cleared URL, or one without `first_fail_at`, does not count.
-    The first failure must be under `min_gap_hours` old at `now` (aware;
-    default: the current UTC time).
+    `first_fail_at` must lie in `[now - window, now]`, where `now` (aware UTC,
+    default: the current time) is the run time given to `check_links`.
     """
     entry = (link_history or {}).get(url)
     if not isinstance(entry, dict) or entry.get('moved_to'):
@@ -67,10 +68,10 @@ def first_failure_recorded(link_history, url=CANARY_URL, now=None, min_gap_hours
         age = now - first
     except TypeError:  # naive against aware: do not guess
         return False
-    return timedelta(0) <= age < timedelta(hours=min_gap_hours)
+    return timedelta(0) <= age <= window
 
 
-def verify(findings, link_history, now=None, min_gap_hours=MIN_GAP_HOURS, url=CANARY_URL):
+def verify(findings, link_history, now=None, url=CANARY_URL):
     """`(ok, reason)`: ok only for exactly the three seeded `zz-canary` findings.
 
     `findings`: every finding of the run (other skills are ignored).
@@ -88,7 +89,7 @@ def verify(findings, link_history, now=None, min_gap_hours=MIN_GAP_HOURS, url=CA
         counts[kind] = counts.get(kind, 0) + 1
 
     bootstrap = False
-    if 'dead-link' not in counts and first_failure_recorded(link_history, url, now, min_gap_hours):
+    if 'dead-link' not in counts and first_failure_recorded(link_history, url, now):
         counts['dead-link'] = 1
         bootstrap = True
 

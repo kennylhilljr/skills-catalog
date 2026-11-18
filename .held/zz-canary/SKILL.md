@@ -29,4 +29,4 @@ This held skill proves that the nightly freshness checks still work (SPEC FRS-18
 
 | Version | Date | Change |
 | --- | --- | --- |
-| 1.0.0 | 2026-11-18 | Created in skills-catalog at `3f1d52f` as the freshness canary with three seeded faults (FRS-18) |
+| 1.0.0 | 2026-11-18 | Created as the freshness canary with three seeded faults (FRS-18), branched from main at `3f1d52f` |

@@ -198,8 +198,18 @@ class TestVerify(unittest.TestCase):
         ok, reason = canary.verify(THREE[1:], history, now=NOW)
         self.assertTrue(ok, reason)
         self.assertIn('first failure', reason)
-        hours19 = NOW + datetime.timedelta(hours=19)
-        self.assertTrue(canary.verify(THREE[1:], history, now=hours19)[0])
+        later = NOW + datetime.timedelta(minutes=30)
+        self.assertTrue(canary.verify(THREE[1:], history, now=later)[0])
+
+    def test_bootstrap_needs_a_failure_from_this_run(self):
+        """An entry from an earlier run (link check skipped this run) never passes."""
+        history = {canary.CANARY_URL: {'first_fail_at': NOW.isoformat(), 'last_status': 404,
+                                       'moved_to': None}}
+        for hours in (2, 19):
+            ok, reason = canary.verify(THREE[1:], history, now=NOW + datetime.timedelta(hours=hours))
+            self.assertFalse(ok, hours)
+            self.assertIn('missing: dead-link', reason)
+        self.assertFalse(canary.verify(THREE[1:], history, now=NOW - datetime.timedelta(minutes=1))[0])
 
     def test_bootstrap_default_now_rejects_an_old_failure(self):
         """The two-argument call uses the current time, so an old entry never passes."""
