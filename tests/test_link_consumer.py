@@ -152,6 +152,35 @@ class WriteModeTests(LinkConsumerTestCase):
         self.assertEqual(self.link_names(), ['a', 'b'])
         self.assertFalse(os.path.lexists(os.path.join(self.root, '.claude', 'x')))
 
+    def test_skips_name_with_newline_or_over_64_chars(self):
+        long_name = 'a' * 65
+        os.makedirs(os.path.join(self.shared, 'skills', long_name))
+        self.skills = self.skills + [entry('a\n', 'skills/a\n'),
+                                     entry(long_name, 'skills/' + long_name)]
+        self.write_catalog()
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.link_names(), ['a', 'b'])
+
+    def test_absolute_link_into_shared_counts_as_submodule_link(self):
+        os.makedirs(self.links)
+        held = os.path.join(self.shared, '.held', 'sdd-x')
+        os.symlink(held, os.path.join(self.links, 'sdd-x'))
+        os.symlink(os.path.realpath(held), os.path.join(self.links, 'other'))
+        os.symlink(os.path.join(self.shared, 'skills', 'a'),
+                   os.path.join(self.links, 'a'))
+        check = self.run_tool('--check')
+        self.assertEqual(check.returncode, 1)
+        self.assertIn('link-consumer: extra: .claude/skills/sdd-x', self.lines(check))
+        self.assertIn('link-consumer: extra: .claude/skills/other', self.lines(check))
+        self.assertIn('link-consumer: wrong-target: .claude/skills/a',
+                      self.lines(check))
+        result = self.run_tool()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.link_names(), ['a', 'b'])
+        self.assertEqual(os.readlink(os.path.join(self.links, 'a')),
+                         PREFIX + 'skills/a')
+
     def test_real_folder_shadow_blocks_all_writes(self):
         os.makedirs(os.path.join(self.links, 'b'))
         with open(os.path.join(self.links, 'b', 'SKILL.md'), 'w') as handle:
