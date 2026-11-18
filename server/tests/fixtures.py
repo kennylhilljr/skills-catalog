@@ -16,7 +16,7 @@ _BASE_TIME = 4000000000  # a fixed date, so tag order never depends on the clock
 
 
 def git_env(stamp=_BASE_TIME):
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     who = 'catalog-test'
     mail = who + '@' + 'example.invalid'
     date = '%d +0000' % stamp

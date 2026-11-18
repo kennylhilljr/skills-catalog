@@ -74,7 +74,9 @@ def _git_env():
     The snapshot then depends only on the repository, never on the user's
     git config (filters, attributes, aliases).
     """
-    env = dict(os.environ)
+    # Drop every inherited GIT_* variable: GIT_DIR, GIT_WORK_TREE and the
+    # like would override `git -C <repo>` and read another repository.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     env.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'})
     return env
 
@@ -177,13 +179,22 @@ def _extract(tag, commit, data, tmp, excluded):
                 continue  # never written to disk, never named
             if member.name not in ('catalog.json', 'skills', 'skills/') and skill is None:
                 raise SnapshotError(_MISMATCH + ': unexpected entry under skills/')
+            parts = member.name.split('/')
+            if member.name.startswith('/') or '..' in parts:
+                raise SnapshotError('unsafe path in archive')
             if member.issym() or member.islnk():
                 raise SnapshotError('symlink in skills/' + skill if skill else 'symlink in archive')
             if not (member.isfile() or member.isdir()):
                 raise SnapshotError('special file in skills/' + (skill or ''))
             members.append(member)
         try:
-            archive.extractall(tmp, members=members, filter='data')
+            # filter='data' exists from Python 3.11.4. Before that, the
+            # checks above (regular files and folders only, no absolute or
+            # `..` path) are what keep the extraction inside tmp.
+            if hasattr(tarfile, 'data_filter'):
+                archive.extractall(tmp, members=members, filter='data')
+            else:  # pragma: no cover
+                archive.extractall(tmp, members=members)
         except tarfile.TarError as exc:
             raise SnapshotError('cannot extract the tag: ' + type(exc).__name__) from None
 

@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 from fastmcp import Client
 from fastmcp.skills.client import SkillsClientExtension
@@ -143,6 +144,15 @@ class RefTests(_Temp):
         self.assertEqual(default, snapshot.DEFAULT_EXCLUDE_FILE)
         self.assertEqual(default, os.path.join('~', '.config', 'skills-catalog', 'exclude.txt'))
         self.assertEqual(cli.parse_args([]).exclude_file, default)
+
+    def test_inherited_git_dir_is_ignored(self):
+        repo = make_catalog_repo(self.tmp)
+        other = os.path.join(self.tmp, 'other')
+        os.makedirs(other)
+        git(other, 'init', '-q')
+        with unittest.mock.patch.dict(os.environ, {'GIT_DIR': os.path.join(repo, '.git')}):
+            with self.assertRaisesRegex(SnapshotError, '^no catalog tag$'):
+                materialize(other, exclude_file=self.exclude)
 
     def test_raw_sha_is_not_a_tag(self):
         repo = make_catalog_repo(self.tmp)
