@@ -145,6 +145,8 @@ class TestCommandsFor(Base):
             '$ git status\n'
             'FOO=1 BAR=two python3 -m tool\n'
             'sudo -E brew install x\n'
+            'sudo -u root launchctl list\n'
+            'sudo FOO=1 jq . f\n'
             'cd somewhere\n'
             'export X=1\n'
             'echo hi\n'
@@ -163,7 +165,7 @@ class TestCommandsFor(Base):
         )
         folder = self.skill('mixed', body)
         self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)],
-                         ['git', 'python3', 'brew', 'docker', 'cat'])
+                         ['git', 'python3', 'brew', 'launchctl', 'jq', 'docker', 'cat'])
 
 
 class TestCheckCommands(Base):
@@ -237,6 +239,25 @@ class TestCliRefs(Base):
         cli_checks.check_cli_refs('f3', folder, self.TOOLS, run)
         self.assertEqual(run.calls.count(('claude', '--help')), 1)
 
+    def test_unknown_nested_subcommand_gives_finding(self):
+        folder = self.skill('f5', 'Run `claude mcp teleport` and `claude mcp add --scope user`.\n')
+        findings = cli_checks.check_cli_refs('f5', folder, self.TOOLS, FakeRun(claude_helps()))
+        self.assertEqual([f['subject'] for f in findings], ['f5:claude mcp teleport'])
+
+    def test_shell_scripts_are_checked(self):
+        folder = self.skill('f6', 'Text.\n')
+        os.makedirs(os.path.join(folder, 'scripts'))
+        with open(os.path.join(folder, 'scripts', 'go.sh'), 'w', encoding='utf-8') as fh:
+            fh.write('#!/bin/sh\nclaude -p --print --bogus "x"\n')
+        findings = cli_checks.check_cli_refs('f6', folder, self.TOOLS, FakeRun(claude_helps()))
+        self.assertEqual([(f['file'], f['line'], f['subject']) for f in findings],
+                         [('skills/f6/scripts/go.sh', 2, 'f6:claude --bogus')])
+
+    def test_acronym_tool_counts_only_on_a_tool_line(self):
+        folder = self.skill('f7', 'Use the `LSP` tool here.\nThe `API` is documented.\n')
+        findings = cli_checks.check_cli_refs('f7', folder, self.TOOLS, FakeRun())
+        self.assertEqual([f['subject'] for f in findings], ['f7:LSP'])
+
     def test_cli_without_help_is_skipped(self):
         folder = self.skill('f4', 'Run `codex exec --nope`.\n')
         self.assertEqual(cli_checks.check_cli_refs('f4', folder, self.TOOLS, FakeRun()), [])
@@ -270,6 +291,11 @@ class TestCliLag(Base):
     def test_30_days_patch_behind_gives_none(self):
         times = {'2.1.300': '2026-10-02T00:00:00Z', '2.1.330': '2026-11-01T00:00:00Z'}
         self.assertEqual(cli_checks.check_cli_lag(self.run_for('2.1.300', '2.1.330'), npm('2.1.330', times), self.NOW), [])
+
+    def test_just_over_30_days_gives_cli_lag(self):
+        times = {'2.1.300': '2026-10-02T00:00:00Z', '2.1.330': '2026-11-01T00:00:01Z'}
+        findings = cli_checks.check_cli_lag(self.run_for('2.1.300', '2.1.330'), npm('2.1.330', times), self.NOW)
+        self.assertEqual([f['subject'] for f in findings], ['cli:claude'])
 
     def test_current_gives_none_and_versions_recorded(self):
         state = {'other': 1}

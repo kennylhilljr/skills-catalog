@@ -12,7 +12,7 @@ Findings use the part 1 shape:
 import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 TIMEOUT = 10
 LAG_DAYS = 30
@@ -33,6 +33,10 @@ BUILTINS = frozenset((
     'unset', 'until', 'wait', 'while',
 ))
 
+# sudo options that take a separate argument (`sudo -u root git`).
+_SUDO_ARG_OPTIONS = frozenset(('-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U', '-T'))
+_SHELL_SCRIPT_EXTS = ('.sh', '.bash', '.zsh')
+
 _FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)')
 _ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 _COMMAND_WORD = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+-]*$')
@@ -40,8 +44,10 @@ _HEREDOC = re.compile(r'<<-?\s*([\'"]?)([A-Za-z_][A-Za-z0-9_]*)\1')
 _VERSION = re.compile(r'(\d+)\.(\d+)\.(\d+)')
 _BACKTICK = re.compile(r'`([^`\n]+)`')
 _CAMEL = re.compile(r'^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*$')
+_ACRONYM = re.compile(r'^[A-Z]{2,}$')
 _FLAG = re.compile(r'^(--[a-z0-9][a-z0-9-]*)')
 _SUBCOMMAND = re.compile(r'^[a-z][a-z0-9-]*$')
+_COMMANDS_HEADER = re.compile(r'^Commands:\s*$', re.MULTILINE)
 _TOOL_WORD = re.compile(r'\btools?\b', re.IGNORECASE)
 # CamelCase words with these endings are code names, not tools.
 _NOT_TOOL_SUFFIXES = ('Error', 'Exception', 'Warning')
@@ -234,6 +240,10 @@ def _first_word(text):
     while tokens and tokens[0] == 'sudo':
         tokens.pop(0)
         while tokens and tokens[0].startswith('-'):
+            opt = tokens.pop(0)
+            if opt in _SUDO_ARG_OPTIONS and tokens:
+                tokens.pop(0)
+        while tokens and _ASSIGNMENT.match(tokens[0]):
             tokens.pop(0)
     if not tokens:
         return None
@@ -397,8 +407,8 @@ def _tool_candidates(lines, start):
     """Yield (line, name) for backticked CamelCase tool-shaped words.
 
     Multi-word CamelCase (`WebFetch`) always counts. A single capitalized
-    word (`Read`) counts only on a line that mentions a tool, since prose
-    uses such words for other things. Names ending in Error, Exception or
+    word (`Read`) or an all-caps name (`LSP`) counts only on a line that
+    mentions a tool, since prose uses such words for other things. Names ending in Error, Exception or
     Warning are code names and are skipped.
     """
     in_fence = None
@@ -412,6 +422,10 @@ def _tool_candidates(lines, start):
             continue
         for span in _BACKTICK.findall(line):
             word = span.strip()
+            if _ACRONYM.match(word):
+                if _TOOL_WORD.search(line):
+                    yield index + 1, word
+                continue
             if not _CAMEL.match(word) or word.endswith(_NOT_TOOL_SUFFIXES):
                 continue
             humps = len(re.findall(r'[A-Z]', word))
@@ -449,38 +463,71 @@ def check_cli_refs(skill, folder, tools, run):
                 'unknown-tool', skill, '%s:%s' % (skill, name), rel, line,
                 '`%s` is not in the current Claude Code tools reference' % name))
         for line, text in _cli_spans(lines, start):
-            for cli, sub, nested, flags in _cli_refs(text):
-                top = _help(cli, None, run)
-                if top is None:
-                    continue
-                sub_help = None
-                if sub is not None:
-                    if not _in_help(sub, top):
-                        key = ('unknown-flag', cli, sub, None)
-                        if key not in reported:
-                            reported.add(key)
-                            findings.append(_finding(
-                                'unknown-flag', skill, '%s:%s %s' % (skill, cli, sub), rel, line,
-                                '`%s %s` is not a subcommand in `%s --help`' % (cli, sub, cli)))
-                        continue
-                    sub_help = _help(cli, sub, run)
-                    if nested is not None and sub_help is not None and _in_help(nested, sub_help):
-                        # `claude mcp add --scope`: the flag lives on the
-                        # nested subcommand's help.
-                        sub_help = sub_help + '\n' + (_help(cli, sub, run, nested) or '')
-                for flag in flags:
-                    if _in_help(flag, top) or (sub_help is not None and _in_help(flag, sub_help)):
-                        continue
-                    key = ('unknown-flag', cli, sub, flag)
-                    if key in reported:
-                        continue
-                    reported.add(key)
-                    where = '`%s --help`' % cli if sub is None else '`%s --help` or `%s %s --help`' % (cli, cli, sub)
-                    label = cli if sub is None else '%s %s' % (cli, sub)
-                    findings.append(_finding(
-                        'unknown-flag', skill, '%s:%s %s' % (skill, label, flag), rel, line,
-                        '`%s` for `%s` is not in %s' % (flag, label, where)))
+            _check_cli_ref(skill, rel, line, text, run, reported, findings)
+    for path in _shell_scripts(folder):
+        rel = _rel(folder, os.path.relpath(path, folder).replace(os.sep, '/'))
+        body = list(enumerate(_read(path).split('\n'), 1))
+        for line, _, text in _shell_commands(body, 'sh'):
+            _check_cli_ref(skill, rel, line, text, run, reported, findings)
     return findings
+
+
+def _shell_scripts(folder):
+    found = []
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith('.'))
+        for name in sorted(filenames):
+            if name.endswith(_SHELL_SCRIPT_EXTS):
+                found.append(os.path.join(dirpath, name))
+    return found
+
+
+def _check_cli_ref(skill, rel, line, text, run, reported, findings):
+    """Append `unknown-flag` findings for one span or command line."""
+    for cli, sub, nested, flags in _cli_refs(text):
+        top = _help(cli, None, run)
+        if top is None:
+            continue
+        sub_help = None
+        if sub is not None:
+            if not _in_help(sub, top):
+                key = ('unknown-flag', cli, sub, None)
+                if key not in reported:
+                    reported.add(key)
+                    findings.append(_finding(
+                        'unknown-flag', skill, '%s:%s %s' % (skill, cli, sub), rel, line,
+                        '`%s %s` is not a subcommand in `%s --help`' % (cli, sub, cli)))
+                continue
+            sub_help = _help(cli, sub, run)
+            if nested is not None and sub_help is not None:
+                if _in_help(nested, sub_help):
+                    # `claude mcp add --scope`: the flag lives on
+                    # the nested subcommand's help.
+                    sub_help = sub_help + '\n' + (_help(cli, sub, run, nested) or '')
+                elif _COMMANDS_HEADER.search(sub_help):
+                    # The subcommand lists its own commands, so a
+                    # word it does not list is an unknown command,
+                    # not a positional argument.
+                    key = ('unknown-flag', cli, sub, nested)
+                    if key not in reported:
+                        reported.add(key)
+                        label = '%s %s %s' % (cli, sub, nested)
+                        findings.append(_finding(
+                            'unknown-flag', skill, '%s:%s' % (skill, label), rel, line,
+                            '`%s` is not a subcommand in `%s %s --help`' % (label, cli, sub)))
+                    continue
+        for flag in flags:
+            if _in_help(flag, top) or (sub_help is not None and _in_help(flag, sub_help)):
+                continue
+            key = ('unknown-flag', cli, sub, flag)
+            if key in reported:
+                continue
+            reported.add(key)
+            where = '`%s --help`' % cli if sub is None else '`%s --help` or `%s %s --help`' % (cli, cli, sub)
+            label = cli if sub is None else '%s %s' % (cli, sub)
+            findings.append(_finding(
+                'unknown-flag', skill, '%s:%s %s' % (skill, label, flag), rel, line,
+                '`%s` for `%s` is not in %s' % (flag, label, where)))
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +592,7 @@ def check_cli_lag(run, fetch_npm, now, state=None):
             reasons.append('at least one minor version behind')
         t_inst = _parse_time(times.get(_vstr(installed)))
         t_latest = _parse_time(times.get(_vstr(latest)))
-        if t_inst and t_latest and (t_latest - t_inst).days > LAG_DAYS:
+        if t_inst and t_latest and t_latest - t_inst > timedelta(days=LAG_DAYS):
             reasons.append('latest release is %d days newer' % (t_latest - t_inst).days)
         if reasons:
             findings.append(_finding(
