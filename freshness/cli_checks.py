@@ -11,6 +11,7 @@ Findings use the part 1 shape:
 
 import os
 import re
+import shlex
 import subprocess
 from datetime import datetime, timedelta, timezone
 
@@ -45,7 +46,7 @@ _VERSION = re.compile(r'(\d+)\.(\d+)\.(\d+)')
 _BACKTICK = re.compile(r'`([^`\n]+)`')
 _CAMEL = re.compile(r'^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*$')
 _ACRONYM = re.compile(r'^[A-Z]{2,}$')
-_FLAG = re.compile(r'^(--[a-z0-9][a-z0-9-]*)')
+_FLAG = re.compile(r'^(--[a-z0-9][a-z0-9-]*|-[A-Za-z])(?:=.*)?$')
 _SUBCOMMAND = re.compile(r'^[a-z][a-z0-9-]*$')
 _COMMANDS_HEADER = re.compile(r'^Commands:\s*$', re.MULTILINE)
 _TOOL_WORD = re.compile(r'\btools?\b', re.IGNORECASE)
@@ -232,9 +233,9 @@ def _fenced_blocks(lines, start=0):
         i += 1
 
 
-def _first_word(text):
-    """Return the command word of one shell line, or None."""
-    tokens = text.split()
+def _strip_wrappers(tokens):
+    """Drop leading `VAR=value` words and `sudo` with its options."""
+    tokens = list(tokens)
     while tokens and _ASSIGNMENT.match(tokens[0]):
         tokens.pop(0)
     while tokens and tokens[0] == 'sudo':
@@ -245,6 +246,12 @@ def _first_word(text):
                 tokens.pop(0)
         while tokens and _ASSIGNMENT.match(tokens[0]):
             tokens.pop(0)
+    return tokens
+
+
+def _first_word(text):
+    """Return the command word of one shell line, or None."""
+    tokens = _strip_wrappers(text.split())
     if not tokens:
         return None
     word = tokens[0].rstrip(';&|')
@@ -254,19 +261,32 @@ def _first_word(text):
 
 
 def _shell_commands(body, tag):
-    """Yield (line, word) for the command lines of one shell block."""
-    continued = False
+    """Yield (line, word, text) for the command lines of one shell block.
+
+    A line ending in a backslash is joined with the lines it continues, and
+    the joined text is reported at its first line.
+    """
     heredoc = None
+    pending = None
     for number, raw in body:
         line = raw.rstrip()
         if heredoc is not None:
             if line.strip() == heredoc:
                 heredoc = None
             continue
-        was_continued = continued
-        continued = line.endswith('\\')
+        if pending is not None:
+            first, text = pending
+            joined = text + ' ' + line.strip()
+            if line.endswith('\\'):
+                pending = (first, joined[:-1].rstrip())
+                continue
+            pending = None
+            number, line = first, joined
+        elif line.endswith('\\'):
+            pending = (number, line[:-1].rstrip())
+            continue
         stripped = line.strip()
-        if was_continued or not stripped or stripped.startswith('#'):
+        if not stripped or stripped.startswith('#'):
             continue
         if tag == 'console':
             if not stripped.startswith('$ '):
@@ -350,6 +370,36 @@ def _help(cli, sub, run, nested=None):
     return out if rc == 0 else None
 
 
+def _commands(text):
+    """Return the command names listed under `Commands:`, or None."""
+    entries = []
+    found = False
+    in_section = False
+    for line in text.split('\n'):
+        if _COMMANDS_HEADER.match(line):
+            found = in_section = True
+            continue
+        if in_section:
+            if line.strip() and not line[:1].isspace():
+                in_section = False
+                continue
+            m = re.match(r'^(\s+)([a-z][a-z0-9-]*)(?:[,|]\s*([a-z][a-z0-9-]*))?', line)
+            if m:
+                entries.append((len(m.group(1)), m.group(2), m.group(3)))
+    if not found:
+        return None
+    # Command names sit at the shallowest indent; wrapped descriptions
+    # are indented further.
+    indent = min((e[0] for e in entries), default=0)
+    return {n for depth, name, alias in entries if depth == indent for n in (name, alias) if n}
+
+
+def _has_command(word, text):
+    """True when `word` is a listed command (or, with no list, named)."""
+    listed = _commands(text)
+    return word in listed if listed is not None else _in_help(word, text)
+
+
 def _in_help(token, text):
     return re.search(r'(?<![A-Za-z0-9-])' + re.escape(token) + r'(?![A-Za-z0-9-])', text) is not None
 
@@ -376,8 +426,16 @@ def _cli_spans(lines, start):
 
 
 def _cli_refs(text):
-    """Yield (cli, sub or None, [flags]) for each `claude`/`codex` ref."""
-    tokens = text.split()
+    """Yield (cli, sub, nested, [flags]) for each `claude`/`codex` ref.
+
+    Quoted words (prompts) are single tokens, so they are never taken for
+    subcommands or flags.
+    """
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError:
+        tokens = text.split()
+    tokens = _strip_wrappers(tokens)
     for i, tok in enumerate(tokens):
         if tok not in CLIS:
             continue
@@ -490,7 +548,7 @@ def _check_cli_ref(skill, rel, line, text, run, reported, findings):
             continue
         sub_help = None
         if sub is not None:
-            if not _in_help(sub, top):
+            if not _has_command(sub, top):
                 key = ('unknown-flag', cli, sub, None)
                 if key not in reported:
                     reported.add(key)
@@ -500,7 +558,7 @@ def _check_cli_ref(skill, rel, line, text, run, reported, findings):
                 continue
             sub_help = _help(cli, sub, run)
             if nested is not None and sub_help is not None:
-                if _in_help(nested, sub_help):
+                if _has_command(nested, sub_help):
                     # `claude mcp add --scope`: the flag lives on
                     # the nested subcommand's help.
                     sub_help = sub_help + '\n' + (_help(cli, sub, run, nested) or '')

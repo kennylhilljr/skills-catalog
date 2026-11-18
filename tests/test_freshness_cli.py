@@ -258,6 +258,24 @@ class TestCliRefs(Base):
         findings = cli_checks.check_cli_refs('f7', folder, self.TOOLS, FakeRun())
         self.assertEqual([f['subject'] for f in findings], ['f7:LSP'])
 
+    def test_subcommand_must_be_listed_under_commands(self):
+        folder = self.skill('f8', 'Run `claude mcp command` and `claude mcp list`.\n')
+        findings = cli_checks.check_cli_refs('f8', folder, self.TOOLS, FakeRun(claude_helps()))
+        self.assertEqual([f['subject'] for f in findings], ['f8:claude mcp command'])
+
+    def test_short_flags_sudo_continuations_and_quoted_prompts(self):
+        body = ('Run `claude -p "fix -z and teleport"` and `claude "hello there"`.\n\n'
+                '```sh\n'
+                'sudo -u root claude -z\n'
+                'claude mcp add \\\n'
+                '  --scope user \\\n'
+                '  --bogus name cmd\n'
+                '```\n')
+        folder = self.skill('f9', body)
+        findings = cli_checks.check_cli_refs('f9', folder, self.TOOLS, FakeRun(claude_helps()))
+        self.assertEqual(sorted((f['subject'], f['line']) for f in findings),
+                         [('f9:claude -z', 13), ('f9:claude mcp --bogus', 14)])
+
     def test_cli_without_help_is_skipped(self):
         folder = self.skill('f4', 'Run `codex exec --nope`.\n')
         self.assertEqual(cli_checks.check_cli_refs('f4', folder, self.TOOLS, FakeRun()), [])

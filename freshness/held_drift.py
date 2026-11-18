@@ -62,7 +62,7 @@ def _sha(text):
 
 
 def _normal(text):
-    return text.strip('\n') + '\n'
+    return text
 
 
 def held_matches(catalog_text, source_text):
