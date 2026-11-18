@@ -198,10 +198,16 @@ class CapTests(unittest.TestCase):
         storm_fp = F.fingerprint('storm', '2026-11-18')
         open_now = [{'number': 20, 'fingerprint': storm_fp, 'closed_at': None}]
         more = [alert('t' + str(i)) for i in range(2)]
-        actions, state = A.plan_alerts(more, open_now, [], state, 'r2', NOW + HOUR)
+        actions, later = A.plan_alerts(more, open_now, [], state, 'r2', NOW + HOUR)
         self.assertEqual(of(actions, 'open_issue'), [])
-        self.assertEqual([c['number'] for c in of(actions, 'comment')], [20])
-        self.assertEqual(state['issues']['storm_issue'], 20)
+        self.assertEqual(of(actions, 'comment'), [])  # FRS-24 cooldown applies to the storm too
+        self.assertEqual(later['issues']['storm_issue'], 20)
+        state['alerts'][storm_fp]['last_comment_at'] = S.iso(NOW - DAY)
+        actions, _ = A.plan_alerts(more, open_now, [], state, 'r2', NOW + HOUR)
+        self.assertEqual(of(actions, 'open_issue'), [])
+        comments = of(actions, 'comment')
+        self.assertEqual([c['number'] for c in comments], [20])
+        self.assertIn('dwell: t1', comments[0]['body'])
 
     def test_seventh_ops_message_goes_into_one_digest(self):
         state = S.empty_state()
@@ -325,6 +331,30 @@ class FindingPlanTests(unittest.TestCase):
         actions = A.plan_findings([self.routed('now also in README')], open_items, state)
         self.assertEqual([(a['op'], a['number']) for a in actions], [('comment', 11)])
         self.assertEqual(A.plan_findings([self.routed('now also in README')], open_items, state), [])
+
+
+class ScrubTests(unittest.TestCase):
+    def test_evidence_that_fails_the_scrub_is_withheld(self):
+        home = '/' + 'Users' + '/someone/'
+        bad = alert('leak', evidence='ok line\nread ' + home + 'x.txt')
+        actions, _ = A.plan_alerts([bad], [], [], S.empty_state(), 'r1', NOW)
+        body = of(actions, 'open_issue')[0]['body']
+        self.assertNotIn(home, body)
+        self.assertIn('ok line', body)
+        self.assertIn('withheld by the scrub: home-path', body)
+        for action in actions:
+            for key in ('title', 'body', 'text'):
+                self.assertEqual(scrub.scan_text(action.get(key, '')), [], action)
+        title = A.alert_title('dwell', home + 'job')
+        self.assertEqual(scrub.scan_text(title), [])
+
+    def test_stale_marker_in_routed_body_is_replaced(self):
+        stale = F.marker(F.fingerprint('dead-link', 'old'))
+        item = {'finding': finding(), 'as': 'issue', 'title': 't', 'body': 'text\n' + stale + '\n',
+                'labels': [], 'files': {}}
+        body = A.plan_findings([item], [], S.empty_state())[0]['body']
+        self.assertNotIn(stale, body)
+        self.assertEqual(F.parse_marker(body), F.finding_fingerprint(finding()))
 
 
 class StateTests(unittest.TestCase):

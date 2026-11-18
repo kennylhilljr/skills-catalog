@@ -16,6 +16,8 @@ Python 3.9+, standard library only. Importing has no side effects.
 
 import copy
 import datetime
+import importlib.util
+import os
 
 from . import finding as fmod
 from . import state as smod
@@ -36,6 +38,47 @@ DEFAULT_ACCEPTANCE = 'none: closes when the next run is clean'
 
 SECTIONS = ('What happened', 'Evidence', 'What to change', 'Files', 'Acceptance')
 
+_SCRUB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', 'scrub.py')
+_scrub_module = None
+
+
+def _scan(text):
+    global _scrub_module
+    if _scrub_module is None:
+        spec = importlib.util.spec_from_file_location('freshness_tools_scrub', _SCRUB_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _scrub_module = module
+    return _scrub_module.scan_text(text)
+
+
+def scrub_text(text):
+    """`text` with every line that `tools/scrub.scan_text` flags withheld.
+
+    Everything the bot writes to GitHub or sends as an ops message passes
+    through here, so a secret, home path or address in evidence is never
+    published. The withheld line names only the finding kinds.
+    """
+    if not text:
+        return text
+    found = {}
+    for number, kind in _scan(text):
+        found.setdefault(number, []).append(kind)
+    if not found:
+        return text
+    lines = text.split('\n')
+    for number, kinds in found.items():
+        lines[number - 1] = '[line withheld by the scrub: ' + ', '.join(sorted(kinds)) + ']'
+    return '\n'.join(lines)
+
+
+def _scrub_actions(actions):
+    for action in actions:
+        for key in ('title', 'body', 'text'):
+            if isinstance(action.get(key), str):
+                action[key] = scrub_text(action[key])
+    return actions
+
 
 def alert_labels(kind):
     """Labels of an alert issue: never bot:skip or bot:stop (FRS-22)."""
@@ -43,7 +86,10 @@ def alert_labels(kind):
 
 
 def alert_title(kind, subject):
-    return ('freshness-alert: ' + kind + ': ' + subject)[:TITLE_MAX]
+    title = ('freshness-alert: ' + kind + ': ' + subject)[:TITLE_MAX]
+    if _scan(title):
+        title = 'freshness-alert: ' + kind + ': subject withheld by the scrub'
+    return title
 
 
 def _block(value, empty):
@@ -157,7 +203,7 @@ def _storm(folded, day, table, open_by_fp, closed_by_fp, issues, actions, raised
             entry = table[fp] = dict(_new_entry(kind, subject, number, '', None), announced=bool(entry and entry.get('announced')))
         entry['issue'] = number
         entry['clean_runs'] = []
-        if entry['evidence_sha'] != sha:
+        if entry['evidence_sha'] != sha and _elapsed(entry.get('last_comment_at'), now, COOLDOWN):
             actions.append({'op': 'comment', 'fingerprint': fp, 'number': number,
                             'body': 'More alerts folded into this storm in run ' + run_id + ':\n\n' + evidence})
             entry['evidence_sha'] = sha
@@ -315,7 +361,7 @@ def plan_alerts(alerts, open_issues, closed_issues, state, run_id, now, scope=No
 
     if announce:
         actions.extend(_plan_ops(new, table, open_by_fp, fresh, reminders, now_iso))
-    return actions, new
+    return _scrub_actions(actions), new
 
 
 def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
@@ -356,7 +402,7 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
             ops['sent'] += 1
             on_queued()
         elif not ops['digest_sent']:
-            ops['pending'].append(text.replace(ISSUE_URL_PLACEHOLDER, 'new issue'))
+            ops['pending'].append(scrub_text(text.replace(ISSUE_URL_PLACEHOLDER, 'new issue')))
             on_queued()
         # After the digest, nothing more is sent that day; the item stays due.
     if ops['pending'] and not ops['digest_sent']:
@@ -401,9 +447,8 @@ def plan_findings(findings, open_items, state):
                                 'body': 'Evidence changed:\n\n' + found.get('evidence', '')})
                 record['evidence_sha'] = sha
             continue
-        body = item.get('body') or ''
-        if fmod.parse_marker(body) != fp:
-            body = body.rstrip('\n') + '\n\n' + fmod.marker(fp) + '\n'
+        body = fmod.strip_markers(item.get('body') or '')
+        body = body.rstrip('\n') + '\n\n' + fmod.marker(fp) + '\n'
         action = {'fingerprint': fp, 'title': item['title'], 'body': body,
                   'labels': list(item.get('labels') or [])}
         if item.get('as') == 'pr':
@@ -414,7 +459,7 @@ def plan_findings(findings, open_items, state):
             raise ValueError('routed item "as" must be "issue" or "pr"')
         actions.append(action)
         table[fp] = {'evidence_sha': sha}
-    return actions
+    return _scrub_actions(actions)
 
 
 def record_send(state, text, ok):

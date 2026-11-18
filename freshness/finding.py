@@ -65,6 +65,7 @@ FIX_KEYS = ('file', 'line', 'old', 'new')
 MARKER_PREFIX = '<!-- freshness-fingerprint: '
 MARKER_SUFFIX = ' -->'
 _MARKER_RE = re.compile(r'<!-- freshness-fingerprint: ([0-9a-f]{64}) -->')
+_ANY_MARKER_RE = re.compile(r'[ \t]*<!-- freshness-fingerprint:[^>]*-->[ \t]*\n?')
 _HEX64 = re.compile(r'[0-9a-f]{64}')
 
 # Keys each op needs besides "op" and "fingerprint".
@@ -107,6 +108,11 @@ def parse_marker(body):
     """The fingerprint in an issue or PR body, or None."""
     m = _MARKER_RE.search(body or '')
     return m.group(1) if m else None
+
+
+def strip_markers(body):
+    """`body` without any fingerprint marker line."""
+    return _ANY_MARKER_RE.sub('', body or '')
 
 
 def _is_int(value):
