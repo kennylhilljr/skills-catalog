@@ -14,12 +14,13 @@ import tempfile
 import unittest
 
 from fastmcp import Client
+from fastmcp.skills.client import SkillsClientExtension
 from mcp.shared.exceptions import MCPError
 
 from skills_catalog_mcp import __main__ as cli
 from skills_catalog_mcp.app import build_server
 from skills_catalog_mcp.snapshot import SnapshotError, materialize
-from tests.fixtures import catalog_json, commit_all, git, make_catalog_repo, next_stamp, skill_md, write_files
+from tests.fixtures import catalog_json, commit_all, git, git_env, make_catalog_repo, next_stamp, skill_md, write_files
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 1, 2, 255, 254])
@@ -39,7 +40,7 @@ def _tag_files(repo, tag):
     out = {}
     for path in names:
         data = subprocess.run(['git', '-C', repo, 'show', '%s:%s' % (tag, path)],
-                              stdout=subprocess.PIPE, check=True).stdout
+                              env=git_env(), stdout=subprocess.PIPE, check=True).stdout
         out[path[len('skills/'):]] = data
     return out
 
@@ -131,7 +132,7 @@ class RefTests(_Temp):
         repo = make_catalog_repo(self.tmp)
         commit_all(repo, 'later', tag='v2099.1.1.2', stamp=next_stamp(1))
         for ref in ('v2099.1.1.2~1', 'v2099.1.1.2^', 'v2099.1.1.2^{commit}', 'v2099.1.1.2:catalog.json',
-                    '-v2099.1.1.2', 'tags/v2099.1.1.2', 'HEAD', ''):
+                    'v2099.1.1.2@{0}', '-v2099.1.1.2', 'tags/v2099.1.1.2', 'HEAD', ''):
             with self.assertRaisesRegex(SnapshotError, '^ref is not a tag$', msg=ref):
                 materialize(repo, ref, exclude_file=self.exclude)
 
@@ -257,6 +258,27 @@ class ExclusionTests(_Temp):
         output = '\n'.join(logs.output) + err.getvalue() + captured.getvalue()
         self.assertNotIn(hidden, output.lower())
         self.assertIn('skipped 1 skill(s) from the local exclusion list', output)
+
+    async def test_skills_get_does_not_echo_a_name(self):
+        hidden = 'priv' + 'ate-' + 'tool'
+        missing = 'nothere-' + 'skil'
+        repo = make_catalog_repo(self.tmp, skills=['alpha-skill', hidden])
+        with open(self.exclude, 'w', encoding='utf-8') as handle:
+            handle.write(hidden + '\n')
+        async with Client(build_server(self.snap(repo)), extensions=[SkillsClientExtension()]) as client:
+            listed = [s.uri for s in await client.list_skills()]
+            self.assertEqual(listed, ['skill://alpha-skill/SKILL.md'])
+            entry = await client.get_skill('skill://alpha-skill/SKILL.md')
+            self.assertEqual(entry.uri, 'skill://alpha-skill/SKILL.md')
+            answers = []
+            for name in (hidden, missing):
+                with self.assertRaises(MCPError) as ctx:
+                    await client.get_skill('skill://%s/SKILL.md' % name)
+                e = ctx.exception
+                answer = (e.code, str(e), repr(getattr(e, 'data', None)))
+                self.assertNotIn(name, repr(answer))
+                answers.append(answer)
+        self.assertEqual(answers[0], answers[1])
 
     def test_no_count_logged_without_exclusions(self):
         repo = make_catalog_repo(self.tmp)

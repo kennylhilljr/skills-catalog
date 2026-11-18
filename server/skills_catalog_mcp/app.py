@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 from fastmcp.exceptions import DisabledError, NotFoundError
 from fastmcp.server.middleware import Middleware
+from fastmcp.skills.extension import SkillsExtension
 from fastmcp.skills.provider import SkillsDirectoryProvider
 from mcp.shared.exceptions import MCPError
 from mcp_types import INVALID_PARAMS
@@ -12,6 +13,7 @@ from mcp_types import INVALID_PARAMS
 from skills_catalog_mcp import tools
 
 NOT_FOUND = 'Resource not found'
+UNKNOWN_SKILL = 'Unknown skill URI'
 
 
 class NoEchoNotFound(Middleware):
@@ -29,6 +31,24 @@ class NoEchoNotFound(Middleware):
             raise MCPError(code=INVALID_PARAMS, message=NOT_FOUND) from None
 
 
+class NoEchoSkillsExtension(SkillsExtension):
+    """The Skills extension, with a fixed `skills/get` error for an unknown URI (INV-7).
+
+    FastMCP's own handler puts the requested URI in the error message.
+    """
+
+    def clone(self):
+        return NoEchoSkillsExtension()
+
+    async def _handle_get(self, context, params):
+        try:
+            return await super()._handle_get(context, params)
+        except MCPError as exc:
+            if exc.code != INVALID_PARAMS:
+                raise
+            raise MCPError(code=INVALID_PARAMS, message=UNKNOWN_SKILL) from None
+
+
 def build_server(snapshot) -> FastMCP:
     """Serve the snapshot's skills as `skill://` resources, plus the catalog tools.
 
@@ -38,5 +58,6 @@ def build_server(snapshot) -> FastMCP:
     mcp = FastMCP('skills-catalog')
     mcp.add_middleware(NoEchoNotFound())
     mcp.add_provider(SkillsDirectoryProvider(snapshot.root))
+    mcp.add_extension(NoEchoSkillsExtension())
     tools.register(mcp, snapshot)
     return mcp

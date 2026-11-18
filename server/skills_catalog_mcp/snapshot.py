@@ -29,7 +29,6 @@ DEFAULT_EXCLUDE_FILE = os.path.join('~', '.config', 'skills-catalog', 'exclude.t
 TAG_PATTERN = 'refs/tags/v*'
 _NAME = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 _MISMATCH = 'skills/ does not match catalog.json'
-_TAG_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]*$')
 
 
 class SnapshotError(Exception):
@@ -69,9 +68,21 @@ def load_exclusions(path):
     return frozenset(names)
 
 
+def _git_env():
+    """The environment with git's global and system config switched off.
+
+    The snapshot then depends only on the repository, never on the user's
+    git config (filters, attributes, aliases).
+    """
+    env = dict(os.environ)
+    env.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'})
+    return env
+
+
 def _git(repo, *args):
     proc = subprocess.run(
         ['git', '-C', os.fspath(repo), *args],
+        env=_git_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
@@ -94,7 +105,7 @@ def _resolve_tag(repo, ref):
         ref = tags[0]
     # The ref is a literal tag name, never a revision expression such as
     # `v1~1` or `v1^{tree}`, which would resolve to an untagged commit.
-    if not isinstance(ref, str) or not _TAG_NAME.match(ref):
+    if not isinstance(ref, str) or not ref or ref.startswith('-'):
         raise SnapshotError('ref is not a tag')
     code, _out = _git(repo, 'check-ref-format', 'refs/tags/' + ref)
     if code != 0:
