@@ -32,6 +32,7 @@ CLEAN_RUNS_TO_CLOSE = 2
 
 ISSUE_URL_BASE = 'https://github.com/kennylhilljr/skills-catalog/issues/'
 ISSUE_URL_PLACEHOLDER = '{issue_url}'
+DIGEST_PREFIX = 'skills-catalog freshness digest: '
 
 DEFAULT_WHAT_TO_CHANGE = 'investigate; a no-code answer that names the fix is acceptable'
 DEFAULT_ACCEPTANCE = 'none: closes when the next run is clean'
@@ -50,6 +51,12 @@ def _scan(text):
         spec.loader.exec_module(module)
         _scrub_module = module
     return _scrub_module.scan_text(text)
+
+
+def _scan_file(path, text):
+    global _scrub_module
+    _scan('')
+    return _scrub_module.scan_text(text, path)
 
 
 def scrub_text(text):
@@ -149,7 +156,7 @@ def _render(alert):
 def _new_entry(kind, subject, issue, sha, now_iso):
     return {
         'kind': kind,
-        'subject': subject,
+        'subject': scrub_text(subject),
         'issue': issue,
         'evidence_sha': sha,
         'last_comment_at': now_iso,
@@ -203,7 +210,10 @@ def _storm(folded, day, table, open_by_fp, closed_by_fp, issues, actions, raised
             entry = table[fp] = dict(_new_entry(kind, subject, number, '', None), announced=bool(entry and entry.get('announced')))
         entry['issue'] = number
         entry['clean_runs'] = []
-        if entry['evidence_sha'] != sha and _elapsed(entry.get('last_comment_at'), now, COOLDOWN):
+        # No 24-hour cooldown here: the storm fingerprint changes every day,
+        # so a held-back list would never be posted. Each comment lists
+        # distinct alerts, at most one per run.
+        if entry['evidence_sha'] != sha:
             actions.append({'op': 'comment', 'fingerprint': fp, 'number': number,
                             'body': 'More alerts folded into this storm in run ' + run_id + ':\n\n' + evidence})
             entry['evidence_sha'] = sha
@@ -406,7 +416,7 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
             on_queued()
         # After the digest, nothing more is sent that day; the item stays due.
     if ops['pending'] and not ops['digest_sent']:
-        digest = ('skills-catalog freshness: ' + str(OPS_PER_DAY) + ' ops messages sent today, '
+        digest = (DIGEST_PREFIX + 'daily cap of ' + str(OPS_PER_DAY) + ' ops messages reached, '
                   + str(len(ops['pending'])) + ' more:\n' + '\n'.join('- ' + t for t in ops['pending']))
         actions.append({'op': 'send_ops', 'fingerprint': fmod.fingerprint('ops-digest', ops['day']),
                         'text': digest})
@@ -451,9 +461,13 @@ def plan_findings(findings, open_items, state):
         body = body.rstrip('\n') + '\n\n' + fmod.marker(fp) + '\n'
         action = {'fingerprint': fp, 'title': item['title'], 'body': body,
                   'labels': list(item.get('labels') or [])}
-        if item.get('as') == 'pr':
-            action.update(op='open_pr', files=dict(item.get('files') or {}), branch=fmod.branch_name(fp))
-        elif item.get('as') == 'issue':
+        as_ = item.get('as')
+        files = dict(item.get('files') or {})
+        if as_ == 'pr' and any(_scan_file(path, text) for path, text in files.items()):
+            as_ = 'issue'  # never publish a fix the scrub rejects; a person decides
+        if as_ == 'pr':
+            action.update(op='open_pr', files=files, branch=fmod.branch_name(fp))
+        elif as_ == 'issue':
             action['op'] = 'open_issue'
         else:
             raise ValueError('routed item "as" must be "issue" or "pr"')
@@ -463,9 +477,21 @@ def plan_findings(findings, open_items, state):
 
 
 def record_send(state, text, ok):
-    """Record one `openclaw message send` result (FRS-25); a failure is retried next run."""
+    """Record one `openclaw message send` result (FRS-25); a failure is retried next run.
+
+    Called by part 7 right after each send of the same run. A failed message
+    gives its slot under the daily cap back and goes to `failed`, which the
+    next run sends first. A failed digest is not queued as text: its lines
+    stay in `pending` and the next run sends the digest again.
+    """
+    if ok:
+        return state
     ops = state.setdefault('ops', {})
+    if text.startswith(DIGEST_PREFIX):
+        ops['digest_sent'] = False
+        return state
     failed = ops.setdefault('failed', [])
-    if not ok and text not in failed:
+    if text not in failed:
         failed.append(text)
+    ops['sent'] = max(0, int(ops.get('sent') or 0) - 1)
     return state

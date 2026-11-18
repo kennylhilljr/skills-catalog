@@ -198,16 +198,14 @@ class CapTests(unittest.TestCase):
         storm_fp = F.fingerprint('storm', '2026-11-18')
         open_now = [{'number': 20, 'fingerprint': storm_fp, 'closed_at': None}]
         more = [alert('t' + str(i)) for i in range(2)]
-        actions, later = A.plan_alerts(more, open_now, [], state, 'r2', NOW + HOUR)
-        self.assertEqual(of(actions, 'open_issue'), [])
-        self.assertEqual(of(actions, 'comment'), [])  # FRS-24 cooldown applies to the storm too
-        self.assertEqual(later['issues']['storm_issue'], 20)
-        state['alerts'][storm_fp]['last_comment_at'] = S.iso(NOW - DAY)
-        actions, _ = A.plan_alerts(more, open_now, [], state, 'r2', NOW + HOUR)
+        actions, state = A.plan_alerts(more, open_now, [], state, 'r2', NOW + HOUR)
         self.assertEqual(of(actions, 'open_issue'), [])
         comments = of(actions, 'comment')
         self.assertEqual([c['number'] for c in comments], [20])
         self.assertIn('dwell: t1', comments[0]['body'])
+        self.assertEqual(state['issues']['storm_issue'], 20)
+        actions, _ = A.plan_alerts(more, open_now, [], state, 'r3', NOW + 2 * HOUR)
+        self.assertEqual(of(actions, 'comment'), [])
 
     def test_seventh_ops_message_goes_into_one_digest(self):
         state = S.empty_state()
@@ -243,8 +241,20 @@ class CapTests(unittest.TestCase):
         sent = ops(actions)
         self.assertEqual(sent[0]['text'], text)
         self.assertEqual(len(sent), 5)
-        self.assertEqual(state['ops']['sent'], 6)
+        self.assertEqual(state['ops']['sent'], 5)  # the failed send gave its slot back; the retry took one
         self.assertEqual(state['ops']['failed'], [])
+
+    def test_failed_digest_is_sent_again_next_run(self):
+        state = A.record_send(S.empty_state(), 'f1', False)
+        actions, state = A.plan_alerts([alert('g' + str(i)) for i in range(7)], [], [], state, 'r1', NOW)
+        digest = ops(actions)[-1]['text']
+        self.assertTrue(digest.startswith(A.DIGEST_PREFIX))
+        A.record_send(state, digest, False)
+        self.assertFalse(state['ops']['digest_sent'])
+        self.assertEqual(state['ops']['failed'], [])
+        actions, state = A.plan_alerts([], [], [], state, 'r2', NOW + HOUR)
+        self.assertEqual([a['text'] for a in ops(actions)], [digest])
+        self.assertTrue(state['ops']['digest_sent'])
 
     def test_counters_reset_at_day_rollover_and_failed_kept(self):
         state = S.empty_state()
@@ -347,6 +357,16 @@ class ScrubTests(unittest.TestCase):
                 self.assertEqual(scrub.scan_text(action.get(key, '')), [], action)
         title = A.alert_title('dwell', home + 'job')
         self.assertEqual(scrub.scan_text(title), [])
+
+    def test_subject_in_state_is_scrubbed_and_bad_fix_becomes_issue(self):
+        home = '/' + 'Users' + '/someone/'
+        _, state = A.plan_alerts([alert(home + 'job')], [], [], S.empty_state(), 'r1', NOW)
+        self.assertEqual(scrub.scan_text(S.dump(state)), [])
+        item = {'finding': finding(), 'as': 'pr', 'title': 't', 'body': 'b', 'labels': [],
+                'files': {'skills/x/SKILL.md': 'see ' + home + 'notes\n'}}
+        action = A.plan_findings([item], [], S.empty_state())[0]
+        self.assertEqual(action['op'], 'open_issue')
+        self.assertNotIn('files', action)
 
     def test_stale_marker_in_routed_body_is_replaced(self):
         stale = F.marker(F.fingerprint('dead-link', 'old'))
