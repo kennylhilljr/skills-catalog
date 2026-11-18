@@ -141,6 +141,22 @@ class ConsumerSmokeTest(unittest.TestCase):
         self.assertEqual(lines[0], 'consumer-smoke: claude 9.8.7: expected ok; held none')
         self.assertEqual(lines[1], 'consumer-smoke: codex 9.8.7: expected missing cross-review; held none')
 
+    def test_user_level_copy_shadows_expected_exit_1(self):
+        self.both_ok()
+        os.makedirs(os.path.join(self.tmp.name, '.claude', 'skills', 'cross-review'))
+        rc, lines, _ = self.run_tool('--expect', 'cross-review')
+        self.assertEqual(rc, 1)
+        self.assertEqual(lines[0], 'consumer-smoke: claude 9.8.7: expected shadowed cross-review; held none')
+        self.assertEqual(lines[1], 'consumer-smoke: codex 9.8.7: expected ok; held none')
+
+    def test_user_agents_skills_shadow_codex(self):
+        self.both_ok()
+        os.makedirs(os.path.join(self.tmp.name, '.agents', 'skills'))
+        os.symlink('nowhere', os.path.join(self.tmp.name, '.agents', 'skills', 'cross-review'))
+        rc, lines, _ = self.run_tool('--expect', 'cross-review')
+        self.assertEqual(rc, 1)
+        self.assertEqual(lines[1], 'consumer-smoke: codex 9.8.7: expected shadowed cross-review; held none')
+
     def test_held_name_from_catalog_array_exit_1(self):
         self.fake('claude', claude_init(['cross-review', 'sdd-adopt']))
         self.fake('codex', codex_reply('cross-review'))
