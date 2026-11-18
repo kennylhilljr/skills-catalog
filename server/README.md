@@ -53,6 +53,14 @@ OpenClaw, under `mcp.servers` in its config (or the same object with `openclaw m
 
 Replace `<catalog>` with the path of your clone.
 
+## HTTP for OpenClaw
+
+With `--transport http` the server speaks streamable HTTP at `http://127.0.0.1:8765/mcp` (SPEC MCP-5). `--host` (default `127.0.0.1`) and `--port` (default `8765`) change the address. Only loopback is accepted: an IPv4 address in `127.0.0.0/8`, `::1`, or the exact name `localhost` (bound as `127.0.0.1`, with no DNS lookup). Every other address or hostname, including `0.0.0.0`, `::` and LAN addresses, is refused: the server prints `error: refusing to bind to a non-loopback address` and exits with status 2 before it reads the tag or opens a socket. The checked address is passed to FastMCP explicitly, so `FASTMCP_HOST` in the environment cannot widen the bind.
+
+```sh
+uv run --directory server --frozen python -m skills_catalog_mcp --repo .. --transport http
+```
+
 ## What is served
 
 At start the server extracts `skills/` and `catalog.json` of the tag with `git archive` into a private temp folder (mode 0700), and removes it on exit. It then serves:
