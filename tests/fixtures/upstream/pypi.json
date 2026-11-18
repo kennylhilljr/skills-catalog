@@ -1,0 +1,9 @@
+{"info": {"name": "example-mcp", "version": "4.1.2"},
+ "releases": {
+  "4.1.0": [{"filename": "a.whl", "yanked": false}],
+  "4.1.2": [{"filename": "b.whl", "yanked": false}],
+  "4.2.0rc1": [{"filename": "c.whl", "yanked": false}],
+  "4.10.0b2": [{"filename": "d.whl", "yanked": false}],
+  "4.1.1": [{"filename": "e.whl", "yanked": true}],
+  "3.9.0": []
+ }}
