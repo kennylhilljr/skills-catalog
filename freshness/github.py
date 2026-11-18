@@ -127,9 +127,8 @@ class GitHub:
 
     def __init__(self, repo, token, transport=None, bot_login=None):
         """`bot_login`: the App's bot user (`<app-slug>[bot]`). Only items it
-        opened count in `list_bot_items`; when None, only items opened by a bot
-        account or by the owner, a member or a collaborator count, so an
-        outside user cannot suppress a finding with a copied marker.
+        opened count in `list_bot_items`, so nobody else can suppress a
+        finding with a copied marker. `list_bot_items` raises without it.
         """
         if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo or ''):
             raise ValueError('repo must be owner/name')

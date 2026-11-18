@@ -491,6 +491,9 @@ class RouteTest(RootMixin, unittest.TestCase):
         self.assertIn('[line withheld', hidden['body'])
         # A finding whose subject or file names an excluded skill is dropped whole.
         self.assertIsNone(rmod.route(model_finding(), self.root, MODELS, excluded={'DEMO'}))
+        found = model_finding()
+        found['fix'] = dict(found['fix'], new=found['fix']['new'] + ' see hidden-one')
+        self.assertIsNone(rmod.route(found, self.root, MODELS, excluded={'Hidden-One'}))
 
     def test_stale_fix_or_excluded_skill_is_not_a_pr(self):
         found = model_finding()
@@ -567,6 +570,9 @@ class ClassifyTest(unittest.TestCase):
         state = {}
         self.assertIsNone(cmod.classify(self.UNMATCHED, self.SKILLS, state, None, '2026-11-18'))
         self.assertIn('Mac job', cmod.unclassified_reason(state, None, '2026-11-18'))
+        call, calls = self.counting()
+        cmod.classify(self.UNMATCHED, self.SKILLS, state, call, '2026-11-18', excluded={'OTHER'})
+        self.assertNotIn('other', calls[0].lower().split('skills:')[1].split('diff:')[0])
         call, calls = self.counting('not json')
         self.assertIsNone(cmod.classify(self.UNMATCHED, self.SKILLS, state, call, '2026-11-18'))
         self.assertEqual(state['classifier']['calls'], 1)

@@ -169,7 +169,8 @@ def _parse(reply, names):
 
 def classify(diff, skills, state, call, today, excluded=()):
     """`{"affects": [names], "reason": str}` or None (FRS-21). Updates `state["classifier"]`."""
-    skills = {name: text for name, text in (skills or {}).items() if name not in set(excluded)}
+    hidden = {name.lower() for name in excluded}
+    skills = {name: text for name, text in (skills or {}).items() if name.lower() not in hidden}
     found = rules(diff, skills)
     if found is not None:
         return found

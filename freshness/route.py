@@ -414,7 +414,8 @@ def route(finding, root, models, classification=None, unclassified_reason=None, 
     excluded = set(excluded)
     lowered = [name.lower() for name in excluded if name]
     fix = finding.get('fix') or {}
-    identity = [finding.get('skill'), finding.get('subject'), finding.get('file'), fix.get('file')]
+    identity = [finding.get('skill'), finding.get('subject'), finding.get('file'),
+                fix.get('file'), fix.get('old'), fix.get('new')]
     if any(_names_excluded(text, lowered) for text in identity if isinstance(text, str)):
         # Its subject is hashed into the fingerprint, so the finding is dropped
         # whole: excluded skills are never named, hashed or reported (DESIGN 5.1).
