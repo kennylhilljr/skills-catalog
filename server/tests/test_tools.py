@@ -190,6 +190,11 @@ class SearchSkillsTests(_Base):
         found = await self.search(mcp, 'logs')
         self.assertEqual(found[0]['description'], 'Use when debugging: follow logs')
 
+    async def test_unicode_words_are_whole_words(self):
+        mcp = self.server(self.snapshot(_skills({'alpha-skill': 'Use when ordering at a café.'})))
+        self.assertEqual(await self.search(mcp, 'caf'), [])
+        self.assertEqual([f['name'] for f in await self.search(mcp, 'CAFÉ')], ['alpha-skill'])
+
     async def test_held_canary_and_excluded_never_match(self):
         hidden = 'hidden-' + 'secretive'
         skills = _skills({'alpha-debug': 'Use when debugging.', hidden: 'Use when debugging privately.'})
@@ -286,6 +291,20 @@ class SkillStatusTests(_Base):
         self.assertEqual(answers[0][0], b'unknown skill')
         self.assertEqual(len(set(a[0] for a in answers)), 1)
         self.assertEqual(len(set(repr(a[1]) for a in answers)), 1)
+        self.assertEqual(self.fetcher.calls, [])
+
+    async def test_bad_arguments_never_echo_the_input(self):
+        hidden = 'private-' + 'thing'
+        mcp = self.server(self.snapshot(['alpha-skill', hidden], exclude=[hidden]))
+        calls = [
+            ('skill_status', {'name': [hidden]}),
+            ('skill_status', {'name': 'alpha-skill', 'extra': hidden}),
+            ('skill_status', {}),
+            ('search_skills', {'query': {'q': hidden}}),
+        ]
+        for tool, args in calls:
+            result = await self.call(mcp, tool, **args)
+            self.assertEqual(self.error_of(result), tools.INVALID_ARGUMENTS, args)
         self.assertEqual(self.fetcher.calls, [])
 
     async def test_build_server_registers_both_tools(self):
@@ -388,7 +407,11 @@ class GitHubFindingsTests(unittest.TestCase):
         def garbage(request, timeout):
             return _Response(b'not json')
 
-        for urlopen in (broken, garbage):
+        def incomplete(request, timeout):
+            body = {'incomplete_results': True, 'items': [{'html_url': ISSUES + '1', 'title': 'alpha-skill'}]}
+            return _Response(json.dumps(body).encode('utf-8'))
+
+        for urlopen in (broken, garbage, incomplete):
             fetch = findings.GitHubFindings(urlopen=urlopen)
             self.assertEqual(findings.lookup(fetch, 'alpha-skill'), ([], 'github unavailable'))
         self.assertEqual(findings.lookup(lambda name: [{'nope': 1}], 'alpha-skill'), ([], 'github unavailable'))

@@ -79,6 +79,8 @@ class GitHubFindings:
         if len(body) > _MAX_BYTES:
             raise ValueError('response too large')
         data = json.loads(body.decode('utf-8'))
+        if data.get('incomplete_results'):
+            raise ValueError('incomplete search results')
         found = []
         for item in data['items']:
             url, title = item.get('html_url'), item.get('title')

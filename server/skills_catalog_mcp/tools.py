@@ -11,7 +11,9 @@ from __future__ import annotations
 import os
 import re
 
-from fastmcp.exceptions import ToolError
+import pydantic
+from fastmcp.exceptions import ToolError, ValidationError
+from fastmcp.server.middleware import Middleware
 
 from skills_catalog_mcp import findings, version
 
@@ -20,7 +22,9 @@ UNKNOWN_SKILL = 'unknown skill'
 EMPTY_QUERY = 'query is empty'
 NO_THIRD_PARTY = 'third-party index is not available'
 UNKNOWN_SCOPE = 'unknown scope'
-_WORD = re.compile(r'[a-z0-9]+')
+INVALID_ARGUMENTS = 'invalid arguments'
+TOOL_NAMES = ('search_skills', 'skill_status')
+_WORD = re.compile(r'[^\W_]+')
 _DESCRIPTION = re.compile(r'^description:(?: (.*))?$')
 
 
@@ -151,6 +155,22 @@ class Catalog:
         }
 
 
+class NoEchoArguments(Middleware):
+    """Answer bad arguments to the catalog tools with one fixed error (INV-7).
+
+    Pydantic puts the rejected input value in its message, which could echo
+    an excluded name passed in a list or as an extra argument.
+    """
+
+    async def on_call_tool(self, context, call_next):
+        try:
+            return await call_next(context)
+        except (ValidationError, pydantic.ValidationError):
+            if getattr(context.message, 'name', None) not in TOOL_NAMES:
+                raise
+            raise ToolError(INVALID_ARGUMENTS) from None
+
+
 def register(mcp, snapshot, findings_fetcher=None, excluded=None):
     """Add `search_skills` and `skill_status` to `mcp`.
 
@@ -161,6 +181,7 @@ def register(mcp, snapshot, findings_fetcher=None, excluded=None):
     names an excluded skill are dropped.
     """
     catalog = Catalog(snapshot, findings_fetcher, excluded)
+    mcp.add_middleware(NoEchoArguments())
 
     @mcp.tool
     def search_skills(query: str, scope: str = 'catalog') -> list[dict]:
