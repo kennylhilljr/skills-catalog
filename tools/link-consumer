@@ -43,7 +43,6 @@ import sys
 
 PROG = 'link-consumer'
 SHARED = os.path.join('.agents', 'skills', 'shared')
-LINKS = os.path.join('.claude', 'skills')
 TARGET_PREFIX = '../../.agents/skills/shared/'
 NAME_RE = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
 CANARY = 'zz-canary'
@@ -109,28 +108,17 @@ def _under(path, base):
 
 
 def points_into_shared(root, path):
-    """True when the link at path points into the submodule.
+    """True when the link at path resolves into the submodule.
 
-    A link that resolves to an existing path counts when the fully resolved
-    path is under the resolved shared folder, so aliases count and a path
-    that leaves the submodule through an inner link does not. A dangling
-    link counts when its resolved path, or its target read lexically, is
-    under the shared folder. Only link targets are read, never skill content.
+    The link is resolved through every existing link on the way, so aliases
+    and absolute targets count, and a path that leaves the submodule through
+    an inner link does not, even when its tail is missing. A dangling link
+    into the submodule still counts: the shared folder exists (catalog.json
+    was read), so only the missing tail is taken as written. Only link
+    targets are read, never skill content.
     """
     shared = os.path.realpath(os.path.join(root, SHARED))
-    resolved = os.path.realpath(path)
-    if os.path.exists(path):
-        return _under(resolved, shared)
-    if _under(resolved, shared):
-        return True
-    target = os.readlink(path)
-    if not os.path.isabs(target):
-        return _under(os.path.normpath(os.path.join(LINKS, target)), SHARED)
-    for base in (os.path.join(root, SHARED),
-                 os.path.join(os.path.realpath(root), SHARED)):
-        if _under(os.path.normpath(target), os.path.normpath(base)):
-            return True
-    return False
+    return _under(os.path.realpath(path), shared)
 
 
 def survey(root, names):
