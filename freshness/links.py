@@ -41,6 +41,10 @@ MOVED = (301, 308)
 # Kind of the finding a permanent redirect yields; it is not a dead link.
 MOVED_KIND = 'moved-link'
 
+# A plain DNS name with at least one dot (no IP literals, no userinfo).
+_HOSTNAME = re.compile(r'^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$')
+# Visible ASCII without quotes, angle brackets or backticks.
+_PRINTABLE_ASCII = re.compile(r'^[!#-&(-;=?-_a-~]+$')
 _URL = re.compile(r'https?://[^\s<>"\'`]+')
 _TRAILING = ').,;>'
 
@@ -94,14 +98,22 @@ def safe_location(url, location):
     """
     if not isinstance(location, str) or not location:
         return None
+    if not _PRINTABLE_ASCII.match(location):
+        return None
     try:
         target = urljoin(url, location)
         parts = urlsplit(target)
+        port = parts.port
+        host = parts.hostname
     except ValueError:
         return None
-    if parts.scheme not in ('http', 'https') or not parts.netloc:
+    if parts.scheme not in ('http', 'https') or not host or not _HOSTNAME.match(host):
         return None
-    if re.search(r'[\s<>"\'`]', target) or len(target) > 2048:
+    if parts.username is not None or parts.password is not None:
+        return None
+    if port is not None and not 0 < port < 65536:
+        return None
+    if not _PRINTABLE_ASCII.match(target) or len(target) > 2048:
         return None
     if _scrub.scan_text(target, 'freshness-link.md'):
         return None

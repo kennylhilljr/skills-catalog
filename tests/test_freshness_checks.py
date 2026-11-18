@@ -238,8 +238,9 @@ class FrontmatterTests(Base):
         self.assertIn('skills/a-skill/SKILL.md:field:license', subjects)
         self.assertIn('skills/a-skill/SKILL.md:listing-cap', subjects)
         self.assertTrue(all(f['kind'] == 'frontmatter' for f in out))
-        # References and the use clause belong to check_paths and check_description.
-        self.assertFalse(any('CAT-7' in s or 'CAT-3' in s for s in subjects))
+        # Every lint finding becomes a frontmatter finding.
+        self.assertTrue(any('CAT-7' in s for s in subjects))
+        self.assertTrue(any('CAT-3' in s for s in subjects))
 
     def test_lint_finding_becomes_frontmatter(self):
         folder = self.make('a-skill')
@@ -356,6 +357,10 @@ class LinkTests(Base):
             'javascript' + ':alert(1)',
             'https://example.com/a b',
             'https://[::1/path',
+            'https://example.com:bad/path',
+            'https://example.com/a' + chr(1) + 'b',
+            'https://user' + ':pw' + '@example.com/x',
+            'https://localhost/x',
         ]
         for target in bad:
             findings, history = self.run_links({URL: (301, target)}, {}, T0)

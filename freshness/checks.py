@@ -43,9 +43,8 @@ _USE_CLAUSE = re.compile(r'\bUse (when|after|before|for)\b')
 _FIRST_SENTENCE_END = re.compile(r'[.?!] ')
 _WORD = re.compile(r'[a-z0-9]+')
 
-# Lint messages owned by another kind, so they are not reported twice.
+# A lint CAT-7 reference finding, reused by check_paths.
 _LINT_REFERENCE = re.compile(r'^CAT-7: reference "(.+)" (does not resolve to a file|is outside skill directory)$')
-_LINT_USE_CLAUSE = 'CAT-3: description does not contain "Use when/after/before/for"'
 
 STOP_WORDS = frozenset("""
 a about above after again against all am an and any are as at be because been
@@ -323,16 +322,14 @@ def catalog_descriptions(root, excluded=()):
 def check_frontmatter(folder, skill, field_table=None, listing_cap=LISTING_CAP):
     """Frontmatter (Claude Code) and catalog metadata rows of DESIGN 7.2.
 
-    Lint findings become kind `frontmatter`, except those another check
-    already owns (CAT-7 references: `check_paths`; the CAT-3 use clause:
-    `check_description`).
+    Every `lint_skill` finding becomes kind `frontmatter` (CAT-7 references
+    and the CAT-3 use clause also appear as `missing-path` and `description`
+    findings, with their own subjects).
     """
     skill_md = os.path.join(folder, 'SKILL.md')
     rel = _rel_file(folder, skill_md)
     out = []
     for message in _lint_findings(folder):
-        if _LINT_REFERENCE.match(message) or message == _LINT_USE_CLAUSE:
-            continue
         out.append(finding('frontmatter', skill, rel + ':' + message, rel, None,
                            '{}: {}'.format(rel, message)))
     text = _read_text(skill_md)
