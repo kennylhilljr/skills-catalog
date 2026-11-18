@@ -204,8 +204,30 @@ def user_skill_roots(cli, env=None):
 CODEX_SCAN_DEPTH = 6
 
 
-def _folders_named(root, wanted, depth):
-    """Names in `wanted` that appear as an entry name under `root`, `depth` levels deep."""
+def frontmatter_name(path):
+    """The `name` of a SKILL.md frontmatter block, or None."""
+    try:
+        with open(path, encoding='utf-8', errors='replace') as handle:
+            lines = handle.read(65536).splitlines()
+    except OSError:
+        return None
+    if not lines or lines[0].strip() != '---':
+        return None
+    for line in lines[1:]:
+        if line.strip() == '---':
+            break
+        if line.startswith('name:'):
+            value = line[len('name:'):].strip().strip('"').strip("'").strip()
+            return value or None
+    return None
+
+
+def _skill_names(root, depth):
+    """Names of the skills under `root`: SKILL.md folders up to `depth` levels deep.
+
+    Each skill counts under both its folder name and its frontmatter name,
+    so a copy is found whichever one the CLI uses.
+    """
     found = set()
     if depth < 1 or not os.path.isdir(root):
         return found
@@ -215,26 +237,32 @@ def _folders_named(root, wanted, depth):
         return found
     for entry in entries:
         path = os.path.join(root, entry)
-        if entry in wanted:
+        if entry.startswith('.') or not os.path.isdir(path):
+            continue
+        skill_md = os.path.join(path, 'SKILL.md')
+        if os.path.isfile(skill_md):
             found.add(entry)
-        if depth > 1 and not entry.startswith('.') and os.path.isdir(path):
-            found |= _folders_named(path, wanted, depth - 1)
+            name = frontmatter_name(skill_md)
+            if name:
+                found.add(name)
+        if depth > 1:
+            found |= _skill_names(path, depth - 1)
     return found
 
 
 def shadowed_names(cli, names):
-    """Expected names that a user level skill folder also provides.
+    """Expected names that a user level skill also provides.
 
     SUB-14 asks for the skill from the shared submodule. A CLI lists names
     only, so a user level copy with the same name would hide a broken
     submodule or link; such a name cannot count as found. Claude Code reads
-    one level of its user folder; Codex scans its roots to depth 6.
+    one level of its user folder; Codex scans its roots to depth 6 and names
+    a skill by its frontmatter.
     """
-    wanted = set(names)
     depth = 1 if cli == 'claude' else CODEX_SCAN_DEPTH
     found = set()
     for root in user_skill_roots(cli):
-        found |= _folders_named(root, wanted, depth)
+        found |= _skill_names(root, depth)
     return [name for name in names if name in found]
 
 

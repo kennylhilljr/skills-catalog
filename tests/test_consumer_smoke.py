@@ -143,7 +143,8 @@ class ConsumerSmokeTest(unittest.TestCase):
 
     def test_user_level_copy_shadows_expected_exit_1(self):
         self.both_ok()
-        os.makedirs(os.path.join(self.tmp.name, '.claude', 'skills', 'cross-review'))
+        write_skill(os.path.join(self.tmp.name, '.claude', 'skills', 'cross-review'), 'cross-review')
+        os.makedirs(os.path.join(self.tmp.name, '.agents', 'skills', 'cross-review'))
         rc, lines, _ = self.run_tool('--expect', 'cross-review')
         self.assertEqual(rc, 1)
         self.assertEqual(lines[0], 'consumer-smoke: claude 9.8.7: expected shadowed cross-review; held none')
@@ -151,16 +152,18 @@ class ConsumerSmokeTest(unittest.TestCase):
 
     def test_user_agents_skills_shadow_codex(self):
         self.both_ok()
+        real = os.path.join(self.tmp.name, 'elsewhere', 'cross-review')
+        write_skill(real, 'cross-review')
         os.makedirs(os.path.join(self.tmp.name, '.agents', 'skills'))
-        os.symlink('nowhere', os.path.join(self.tmp.name, '.agents', 'skills', 'cross-review'))
+        os.symlink(real, os.path.join(self.tmp.name, '.agents', 'skills', 'cross-review'))
         rc, lines, _ = self.run_tool('--expect', 'cross-review')
         self.assertEqual(rc, 1)
         self.assertEqual(lines[1], 'consumer-smoke: codex 9.8.7: expected shadowed cross-review; held none')
 
     def test_nested_user_copy_shadows_codex_only(self):
         self.both_ok()
-        os.makedirs(os.path.join(self.tmp.name, '.agents', 'skills', 'vendor', 'pack', 'cross-review'))
-        os.makedirs(os.path.join(self.tmp.name, '.claude', 'skills', 'vendor', 'cross-review'))
+        write_skill(os.path.join(self.tmp.name, '.agents', 'skills', 'vendor', 'pack', 'alias'), 'cross-review')
+        write_skill(os.path.join(self.tmp.name, '.claude', 'skills', 'vendor', 'cross-review'), 'cross-review')
         rc, lines, _ = self.run_tool('--expect', 'cross-review')
         self.assertEqual(rc, 1)
         self.assertEqual(lines[0], 'consumer-smoke: claude 9.8.7: expected ok; held none')
@@ -263,6 +266,12 @@ class ConsumerSmokeTest(unittest.TestCase):
         self.fake('codex', codex_reply('zz-canary'), rc=1)
         self.run_tool('--expect', 'cross-review')
         self.assertEqual(tree_digest(self.consumer), before)
+
+
+def write_skill(folder, name):
+    os.makedirs(folder)
+    with open(os.path.join(folder, 'SKILL.md'), 'w', encoding='utf-8') as handle:
+        handle.write('---\nname: "%s"\ndescription: Use when testing.\n---\nbody\n' % name)
 
 
 def tree_digest(root):
