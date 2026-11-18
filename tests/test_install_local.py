@@ -380,6 +380,21 @@ class InstallLocalCase(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertNotIn(HIDDEN, run.stdout + run.stderr)
 
+    def test_state_entry_outside_the_destination_is_rejected(self):
+        self.commit_tag('v1')
+        self.assertEqual(self.run_tool().returncode, 0)
+        outside = os.path.join(self.tmp, 'outside')
+        os.makedirs(outside)
+        with open(self.state) as handle:
+            state = json.load(handle)
+        state['destinations'][self.claude][os.path.join('..', 'outside')] = {'files': {}}
+        with open(self.state, 'w') as handle:
+            json.dump(state, handle)
+        run = self.run_tool()
+        self.assertEqual(run.returncode, 2)
+        self.assertIn('cannot read the state file', run.stderr)
+        self.assertTrue(os.path.isdir(outside))
+
     def test_unwritable_state_changes_no_folder(self):
         self.commit_tag('v1')
         blocker = os.path.join(self.tmp, 'blocker')

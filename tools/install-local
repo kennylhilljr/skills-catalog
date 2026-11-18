@@ -258,6 +258,12 @@ def read_state(path):
             state = json.load(handle)
         if not isinstance(state.get('destinations'), dict):
             raise ValueError('no destinations')
+        for owned in state['destinations'].values():
+            # A name joins a destination path: never allow one that leaves it.
+            if not isinstance(owned, dict) or not all(
+                    valid_name(name) and isinstance(entry, dict)
+                    for name, entry in owned.items()):
+                raise ValueError('bad entry')
     except (OSError, ValueError, AttributeError):
         raise Failure('cannot read the state file: ' + path)
     return state
