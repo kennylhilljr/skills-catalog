@@ -304,6 +304,36 @@ class TestCliRefs(Base):
         self.assertEqual(cli_checks.check_cli_refs('f4', folder, self.TOOLS, FakeRun()), [])
 
 
+class TestParserRareSyntaxes(Base):
+    """Shell syntaxes the parser used to miss (issue #80)."""
+
+    TOOLS = TestCliRefs.TOOLS
+
+    def test_sudo_inline_quoted_option_value(self):
+        folder = self.skill('r1', '```sh\nsudo --prompt="Pass word: " jq . f\n```\n')
+        findings = cli_checks.check_commands('r1', folder, FakeRun(ok_for('sudo')))
+        self.assertEqual([(f['kind'], f['subject']) for f in findings], [('missing-command', 'r1:jq')])
+
+    def test_operator_stuck_to_word(self):
+        folder = self.skill('r2', '```sh\ncodex teleport; echo done\n```\n')
+        responses = {('codex', '--help'): (0, 'Usage: codex\n\nCommands:\n  exec  Run\n')}
+        findings = cli_checks.check_cli_refs('r2', folder, self.TOOLS, FakeRun(responses))
+        self.assertEqual([(f['kind'], f['subject']) for f in findings], [('unknown-flag', 'r2:codex teleport')])
+
+    def test_subcommand_in_odd_case_or_with_underscore(self):
+        folder = self.skill('r3', 'Run `codex Teleport` or `codex teleport_now`.\n')
+        responses = {('codex', '--help'): (0, 'Usage: codex\n\nCommands:\n  exec  Run\n')}
+        findings = cli_checks.check_cli_refs('r3', folder, self.TOOLS, FakeRun(responses))
+        self.assertEqual(sorted((f['kind'], f['subject']) for f in findings),
+                         [('unknown-flag', 'r3:codex Teleport'), ('unknown-flag', 'r3:codex teleport_now')])
+
+    def test_grouped_sudo_flags_taking_an_argument(self):
+        folder = self.skill('r4', '```sh\nsudo -Eu root git status\nsudo -uroot gh pr list\n```\n')
+        self.assertEqual([c for _, _, c in cli_checks.commands_for(folder)], ['git', 'gh'])
+        findings = cli_checks.check_commands('r4', folder, FakeRun(ok_for('gh')))
+        self.assertEqual([(f['kind'], f['subject']) for f in findings], [('missing-command', 'r4:git')])
+
+
 def npm(latest, times):
     return lambda package: {'latest': latest, 'time': times}
 

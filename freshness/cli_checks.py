@@ -11,7 +11,6 @@ Findings use the part 1 shape:
 
 import os
 import re
-import shlex
 import subprocess
 from datetime import datetime, timedelta, timezone
 
@@ -52,7 +51,8 @@ _CAMEL = re.compile(r'^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)*$')
 _ACRONYM = re.compile(r'^[A-Z]{2,}$')
 _FLAG = re.compile(r'^(--[A-Za-z0-9][A-Za-z0-9-]*|-[A-Za-z])(?:=.*)?$')
 _ALIASES = re.compile(r'\[aliases?:\s*([^\]]+)\]')
-_SUBCOMMAND = re.compile(r'^[a-z][a-z0-9-]*$')
+# Subcommand-shaped words; odd case or `_` still counts so it gets checked.
+_SUBCOMMAND = re.compile(r'^[A-Za-z][A-Za-z0-9_-]*$')
 _COMMANDS_HEADER = re.compile(r'^Commands:\s*$', re.MULTILINE)
 _TOOL_WORD = re.compile(r'\btools?\b', re.IGNORECASE)
 # CamelCase words with these endings are code names, not tools.
@@ -247,19 +247,85 @@ def _strip_wrappers(tokens):
         tokens.pop(0)
         while tokens and tokens[0].startswith('-'):
             opt = tokens.pop(0)
-            if opt in _SUDO_ARG_OPTIONS and tokens:
+            if opt == '--':
+                break
+            if _sudo_option_needs_value(opt) and tokens:
                 tokens.pop(0)
         while tokens and _ASSIGNMENT.match(tokens[0]):
             tokens.pop(0)
     return tokens
 
 
+def _sudo_option_needs_value(opt):
+    """True when sudo option word `opt` takes the next word as its value.
+
+    `--prompt=x` carries its value inline. Grouped short flags (`-Eu root`)
+    take the next word when the first value-taking letter is the last one;
+    `-uroot` carries it attached.
+    """
+    if opt.startswith('--'):
+        return '=' not in opt and opt in _SUDO_ARG_OPTIONS
+    letters = opt[1:]
+    for i, letter in enumerate(letters):
+        if '-' + letter in _SUDO_ARG_OPTIONS:
+            return i == len(letters) - 1
+    return False
+
+
+_OPERATORS = ('&&', '||', ';;', '|&', ';', '|', '&')
+
+
 def _tokens(text):
-    """Split a shell line, keeping quotes so a quoted word stays one token."""
-    try:
-        return shlex.split(text, posix=False)
-    except ValueError:
+    """Split a shell line, keeping quotes so a quoted word stays one token.
+
+    A quote inside a word (`--prompt="Pass word: "`) belongs to that word.
+    Unquoted `;`, `|`, `&`, `&&` and `||` are tokens of their own, even when
+    stuck to a word (`codex teleport;`); `&` next to `>` stays part of a
+    redirection (`2>&1`). An unclosed quote falls back to whitespace split.
+    """
+    tokens = []
+    word = []
+    quote = None
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            word.append(c)
+            if c == '\\' and quote == '"' and i + 1 < n:
+                word.append(text[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in '"\'':
+            quote = c
+            word.append(c)
+        elif c == '\\' and i + 1 < n:
+            word.append(c + text[i + 1])
+            i += 1
+        elif c.isspace():
+            if word:
+                tokens.append(''.join(word))
+                word = []
+        elif c in ';|&' and not (c == '&' and ((word and word[-1].endswith(('>', '<')))
+                                               or text[i + 1:i + 2] == '>')):
+            op = next(o for o in _OPERATORS if text.startswith(o, i))
+            if word:
+                tokens.append(''.join(word))
+                word = []
+            tokens.append(op)
+            i += len(op)
+            continue
+        else:
+            word.append(c)
+        i += 1
+    if quote:
         return text.split()
+    if word:
+        tokens.append(''.join(word))
+    return tokens
 
 
 def _first_word(text):
