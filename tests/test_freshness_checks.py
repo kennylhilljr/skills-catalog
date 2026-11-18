@@ -350,6 +350,8 @@ class LinkTests(Base):
         self.assertEqual(history[URL]['moved_to'], new)
         findings, _h = self.run_links({URL: (308, '/other')}, {}, T0)
         self.assertEqual(findings[0]['fix']['new'], 'https://example.com/other')
+        self.assertEqual(links.safe_location(URL, 'https://docs.example.co.uk:8443/a?b=1#c'),
+                         'https://docs.example.co.uk:8443/a?b=1#c')
 
     def test_unsafe_redirect_target_not_published(self):
         bad = [
@@ -361,6 +363,10 @@ class LinkTests(Base):
             'https://example.com/a' + chr(1) + 'b',
             'https://user' + ':pw' + '@example.com/x',
             'https://localhost/x',
+            'https://' + '.'.join(['10', '0', '0', '1']) + '/x',
+            'https://999.999.999.999/x',
+            'https://example.org/path' + chr(10),
+            'https://' + 'a' * 64 + '.example.com/x',
         ]
         for target in bad:
             findings, history = self.run_links({URL: (301, target)}, {}, T0)
