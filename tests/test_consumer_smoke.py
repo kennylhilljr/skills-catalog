@@ -189,6 +189,19 @@ class ConsumerSmokeTest(unittest.TestCase):
         text = 'Skills:\n```\n- cross-review\n* /tdd\n3) ecc:pr\nnot a name here\n\n```\ncross-review\n'
         self.assertEqual(smoke.parse_list_reply(text), ['cross-review', 'tdd', 'ecc:pr'])
 
+    def test_commands_disable_hooks_and_writes(self):
+        claude, prompt = smoke.command_for('claude')
+        self.assertEqual(prompt, smoke.LIST_PROMPT)
+        self.assertIn('{"disableAllHooks": true}', claude)
+        self.assertIn('--no-session-persistence', claude)
+        self.assertEqual(claude[claude.index('--tools') + 1], '')
+        codex, stdin = smoke.command_for('codex')
+        self.assertIsNone(stdin)
+        self.assertEqual(codex[codex.index('--disable') + 1], 'hooks')
+        self.assertEqual(codex[codex.index('--sandbox') + 1], 'read-only')
+        self.assertIn('--ephemeral', codex)
+        self.assertEqual(codex[-1], smoke.LIST_PROMPT)
+
     def test_claude_init_wins_over_reply(self):
         out = claude_init(['a-skill']).replace('"ignored"', '"other-skill"')
         self.assertEqual(smoke.parse_claude(out), ['a-skill'])

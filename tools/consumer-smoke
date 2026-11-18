@@ -29,14 +29,14 @@ Output is one line per CLI and nothing else:
 
 `expected shadowed <names>` means the CLI listed the name but a user level
 skill folder (~/.claude/skills for claude; ~/.agents/skills,
-$CODEX_HOME/skills or /etc/codex/skills for codex) has the same name, so the
+$CODEX_HOME/skills or the system Codex skills folder for codex) has the same name, so the
 listing does not prove the shared submodule delivered it. That fails too.
 
 Exit status: 0 all CLIs pass, 1 a check or a CLI failed, 2 usage error.
 
 The tool never writes to CONSUMER_DIR: Claude Code runs with no tools, no
 hooks, no MCP servers and no session persistence, and Codex runs with a
-read-only sandbox, --ephemeral and without the user config. It removes API key variables from the child environment, so the
+read-only sandbox, --ephemeral, hooks disabled and without the user config. It removes API key variables from the child environment, so the
 CLIs use their subscription login. Python 3.9+, standard library only.
 """
 
@@ -180,7 +180,8 @@ def command_for(cli):
         return argv, LIST_PROMPT
     argv = [
         'codex', 'exec', '--json', '--skip-git-repo-check', '--ephemeral',
-        '--ignore-user-config', '--sandbox', 'read-only', LIST_PROMPT,
+        '--ignore-user-config', '--disable', 'hooks', '--sandbox', 'read-only',
+        LIST_PROMPT,
     ]
     return argv, None
 
