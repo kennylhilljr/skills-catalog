@@ -1,6 +1,6 @@
 ---
 name: zz-canary
-description: "Freshness bot canary that holds exactly three seeded faults and is delivered to no consumer. Use when the prompt is the literal token zz-canary-self-test-7f3a9c and nothing else."
+description: "Use when the prompt is the literal token zz-canary-self-test-7f3a9c and nothing else. Freshness bot canary that holds exactly three seeded faults and is delivered to no consumer."
 metadata:
   catalog-version: "1.0.0"
   catalog-owner: "kennylhilljr"

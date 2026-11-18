@@ -195,9 +195,27 @@ class TestVerify(unittest.TestCase):
     def test_bootstrap_with_recorded_first_failure(self):
         history = {canary.CANARY_URL: {'first_fail_at': NOW.isoformat(), 'last_status': 404,
                                        'moved_to': None}}
-        ok, reason = canary.verify(THREE[1:], history)
+        ok, reason = canary.verify(THREE[1:], history, now=NOW)
         self.assertTrue(ok, reason)
-        self.assertTrue(canary.verify(THREE[1:], history, now=NOW)[0])
+        self.assertIn('first failure', reason)
+        hours19 = NOW + datetime.timedelta(hours=19)
+        self.assertTrue(canary.verify(THREE[1:], history, now=hours19)[0])
+
+    def test_bootstrap_default_now_rejects_an_old_failure(self):
+        """The two-argument call uses the current time, so an old entry never passes."""
+        history = {canary.CANARY_URL: {'first_fail_at': '2025-01-01T00:00:00+00:00', 'last_status': 404,
+                                       'moved_to': None}}
+        ok, reason = canary.verify(THREE[1:], history)
+        self.assertFalse(ok)
+        self.assertIn('missing: dead-link', reason)
+        fresh = datetime.datetime.now(UTC).isoformat()
+        history[canary.CANARY_URL]['first_fail_at'] = fresh
+        self.assertTrue(canary.verify(THREE[1:], history)[0])
+
+    def test_bootstrap_naive_timestamp_is_not_trusted(self):
+        history = {canary.CANARY_URL: {'first_fail_at': '2026-11-18T03:00:00', 'last_status': 404,
+                                       'moved_to': None}}
+        self.assertFalse(canary.verify(THREE[1:], history, now=NOW)[0])
 
     def test_bootstrap_does_not_hide_an_overdue_dead_link(self):
         """A first failure older than the gap should have produced a finding."""
@@ -210,16 +228,16 @@ class TestVerify(unittest.TestCase):
     def test_bootstrap_needs_the_canary_url(self):
         history = {'https://example.com/x': {'first_fail_at': NOW.isoformat(), 'last_status': 404,
                                              'moved_to': None}}
-        self.assertFalse(canary.verify(THREE[1:], history)[0])
+        self.assertFalse(canary.verify(THREE[1:], history, now=NOW)[0])
         moved = {canary.CANARY_URL: {'first_fail_at': None, 'last_status': 301,
                                      'moved_to': 'https://example.com/y'}}
-        self.assertFalse(canary.verify(THREE[1:], moved)[0])
+        self.assertFalse(canary.verify(THREE[1:], moved, now=NOW)[0])
 
     def test_bootstrap_does_not_double_count(self):
         """A dead-link finding plus a history entry is still exactly one dead link."""
         history = {canary.CANARY_URL: {'first_fail_at': NOW.isoformat(), 'last_status': 404,
                                        'moved_to': None}}
-        self.assertEqual(canary.verify(THREE, history), (True, 'canary ok'))
+        self.assertEqual(canary.verify(THREE, history, now=NOW), (True, 'canary ok'))
 
 
 if __name__ == '__main__':

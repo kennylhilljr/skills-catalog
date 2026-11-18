@@ -18,16 +18,17 @@ finding and reports `dead-link` only on a failure at least 20 hours later.
 After a state reset the canary URL therefore has only a recorded first
 failure on the first night. That recorded failure (an entry in the run's
 updated `link_history` with `first_fail_at` set) counts as the dead-link
-signal, so that night is not a false alarm. When `now` is given, the entry
-counts only while it is younger than `min_gap_hours`: an older entry should
-have produced a finding, so its absence is a real fault.
+signal, so that night is not a false alarm. The entry counts only while it
+is younger than `min_gap_hours` at `now` (default: the current UTC time): an
+older entry should have produced a finding, so its absence is a real fault
+and never passes.
 
 Findings have part 1's shape (`freshness/finding.py`); only `kind` and
 `skill` are read here. Python 3.9+, standard library only. Importing has no
 side effects.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 CANARY = 'zz-canary'
 CANARY_FILE = '.held/zz-canary/SKILL.md'
@@ -51,7 +52,8 @@ def first_failure_recorded(link_history, url=CANARY_URL, now=None, min_gap_hours
     """True when `link_history` holds only a recorded first failure for `url`.
 
     A moved or cleared URL, or one without `first_fail_at`, does not count.
-    With `now`, the first failure must be under `min_gap_hours` old.
+    The first failure must be under `min_gap_hours` old at `now` (aware;
+    default: the current UTC time).
     """
     entry = (link_history or {}).get(url)
     if not isinstance(entry, dict) or entry.get('moved_to'):
@@ -60,7 +62,7 @@ def first_failure_recorded(link_history, url=CANARY_URL, now=None, min_gap_hours
     if first is None:
         return False
     if now is None:
-        return True
+        now = datetime.now(timezone.utc)
     try:
         age = now - first
     except TypeError:  # naive against aware: do not guess
@@ -73,6 +75,8 @@ def verify(findings, link_history, now=None, min_gap_hours=MIN_GAP_HOURS, url=CA
 
     `findings`: every finding of the run (other skills are ignored).
     `link_history`: the link history after this run's `check_links`.
+    `now`: the run time (aware UTC) used for the bootstrap age; the runner
+    passes the same `now` it gave `check_links`.
     `reason` names what was missing or extra; it is 'canary ok' (or notes
     the bootstrap) when `ok` is True.
     """
