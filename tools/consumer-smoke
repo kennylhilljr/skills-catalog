@@ -201,16 +201,41 @@ def user_skill_roots(cli, env=None):
     ]
 
 
+CODEX_SCAN_DEPTH = 6
+
+
+def _folders_named(root, wanted, depth):
+    """Names in `wanted` that appear as an entry name under `root`, `depth` levels deep."""
+    found = set()
+    if depth < 1 or not os.path.isdir(root):
+        return found
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return found
+    for entry in entries:
+        path = os.path.join(root, entry)
+        if entry in wanted:
+            found.add(entry)
+        if depth > 1 and not entry.startswith('.') and os.path.isdir(path):
+            found |= _folders_named(path, wanted, depth - 1)
+    return found
+
+
 def shadowed_names(cli, names):
     """Expected names that a user level skill folder also provides.
 
     SUB-14 asks for the skill from the shared submodule. A CLI lists names
     only, so a user level copy with the same name would hide a broken
-    submodule or link; such a name cannot count as found.
+    submodule or link; such a name cannot count as found. Claude Code reads
+    one level of its user folder; Codex scans its roots to depth 6.
     """
-    roots = user_skill_roots(cli)
-    return [name for name in names
-            if any(os.path.lexists(os.path.join(root, name)) for root in roots)]
+    wanted = set(names)
+    depth = 1 if cli == 'claude' else CODEX_SCAN_DEPTH
+    found = set()
+    for root in user_skill_roots(cli):
+        found |= _folders_named(root, wanted, depth)
+    return [name for name in names if name in found]
 
 
 def child_env():

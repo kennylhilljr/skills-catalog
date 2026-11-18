@@ -157,6 +157,15 @@ class ConsumerSmokeTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(lines[1], 'consumer-smoke: codex 9.8.7: expected shadowed cross-review; held none')
 
+    def test_nested_user_copy_shadows_codex_only(self):
+        self.both_ok()
+        os.makedirs(os.path.join(self.tmp.name, '.agents', 'skills', 'vendor', 'pack', 'cross-review'))
+        os.makedirs(os.path.join(self.tmp.name, '.claude', 'skills', 'vendor', 'cross-review'))
+        rc, lines, _ = self.run_tool('--expect', 'cross-review')
+        self.assertEqual(rc, 1)
+        self.assertEqual(lines[0], 'consumer-smoke: claude 9.8.7: expected ok; held none')
+        self.assertEqual(lines[1], 'consumer-smoke: codex 9.8.7: expected shadowed cross-review; held none')
+
     def test_held_name_from_catalog_array_exit_1(self):
         self.fake('claude', claude_init(['cross-review', 'sdd-adopt']))
         self.fake('codex', codex_reply('cross-review'))
@@ -194,12 +203,14 @@ class ConsumerSmokeTest(unittest.TestCase):
         self.assertEqual(prompt, smoke.LIST_PROMPT)
         self.assertIn('{"disableAllHooks": true}', claude)
         self.assertIn('--no-session-persistence', claude)
+        self.assertIn('--strict-mcp-config', claude)
         self.assertEqual(claude[claude.index('--tools') + 1], '')
         codex, stdin = smoke.command_for('codex')
         self.assertIsNone(stdin)
         self.assertEqual(codex[codex.index('--disable') + 1], 'hooks')
         self.assertEqual(codex[codex.index('--sandbox') + 1], 'read-only')
         self.assertIn('--ephemeral', codex)
+        self.assertIn('--ignore-user-config', codex)
         self.assertEqual(codex[-1], smoke.LIST_PROMPT)
 
     def test_claude_init_wins_over_reply(self):
