@@ -1,4 +1,4 @@
-"""Tests for tools/scrub.py, the public-content scrub (CAT-24, CAT-9).
+"""Tests for tools/scrub.py, the public-content scrub (CAT-25, CAT-9).
 
 Every value that looks like a secret, an address, a host, a home path or a
 private repo name is built at runtime by concatenation, so this file itself
@@ -143,7 +143,7 @@ class DetectionKinds(unittest.TestCase):
         self.assertEqual(kinds('docs/' + ENTROPY[:20] + '/' + ENTROPY[20:]), [])
 
     def test_email_dot_atom_local(self):
-        """CAT-24: the email local part takes the dot-atom characters."""
+        """CAT-25: the email local part takes the dot-atom characters."""
         # Every dot-atom character beyond the old set is part of a local part.
         for c in "!#$&'*/=?^{|}~":
             with self.subTest(char=c):
@@ -158,7 +158,7 @@ class DetectionKinds(unittest.TestCase):
         self.assertEqual(kinds('mail jane' + chr(96) + 'noreply' + AT + 'example.com'), [])
 
     def test_email_scan_is_linear(self):
-        """CAT-24: a long run of local-part characters with no address scans in linear time."""
+        """CAT-25: a long run of local-part characters with no address scans in linear time."""
         import time
         for unit in ('a!', "a'", 'a=', 'a.'):
             line = unit * 25000 + AT + 'x'
@@ -245,6 +245,31 @@ class Exemptions(unittest.TestCase):
         # An inner fence of another kind does not close the example fence.
         nested = FENCE * 2 + 'example' + NL + FENCE + NL + ENTROPY + NL + FENCE * 2 + NL
         self.assertEqual(scrub.scan_text(nested, 'docs/x.md'), [])
+
+    def test_uv_lock_skips_only_entropy(self):
+        wheel = 'name = "pkg-1.0-cp311-cp311-' + 'macosx_10_9_universal2.whl"'
+        lock = 'server/uv.lock'
+        self.assertEqual(scrub.scan_text(ENTROPY + NL + wheel + NL, lock), [])
+        # Every other kind is still flagged in the lock file.
+        for value, kind in [(GH_TOKEN, 'github-token'), (EMAIL, 'email'), (IP, 'private-ip')]:
+            with self.subTest(kind=kind):
+                self.assertEqual(scrub.scan_text('x = "' + value + '"' + NL, lock), [(1, kind)])
+        # The exemption is for that exact path only.
+        for other in ['uv.lock', 'server/uv.lock.bak', 'server/sub/uv.lock', 'skills/x/uv.lock', 'Server/uv.lock']:
+            with self.subTest(path=other):
+                self.assertEqual(scrub.scan_text(ENTROPY + NL, other), [(1, 'high-entropy')])
+        self.assertEqual(scrub.scan_text(ENTROPY + NL, './server/uv.lock'), [])
+
+    def test_uv_lock_in_tree_still_flags_secrets(self):
+        with tempfile.TemporaryDirectory() as root:
+            git(root, 'init', '-q')
+            write(root, 'server/uv.lock', ENTROPY + NL + 'token = "' + GH_TOKEN + '"' + NL)
+            write(root, 'docs/x.md', ENTROPY + NL)
+            git(root, 'add', '-A')
+            self.assertEqual(
+                scrub.scan_tree(root),
+                [('docs/x.md', 1, 'high-entropy'), ('server/uv.lock', 2, 'github-token')],
+            )
 
     def test_private_names_only_under_skills_and_held(self):
         line = 'see ' + PRIVATE + ' here'
