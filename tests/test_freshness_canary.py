@@ -198,29 +198,25 @@ class TestVerify(unittest.TestCase):
         ok, reason = canary.verify(THREE[1:], history, now=NOW)
         self.assertTrue(ok, reason)
         self.assertIn('first failure', reason)
-        later = NOW + datetime.timedelta(minutes=30)
-        self.assertTrue(canary.verify(THREE[1:], history, now=later)[0])
+        self.assertFalse(canary.verify(THREE[1:], history)[0])  # no run time, no bootstrap
 
     def test_bootstrap_needs_a_failure_from_this_run(self):
         """An entry from an earlier run (link check skipped this run) never passes."""
         history = {canary.CANARY_URL: {'first_fail_at': NOW.isoformat(), 'last_status': 404,
                                        'moved_to': None}}
-        for hours in (2, 19):
-            ok, reason = canary.verify(THREE[1:], history, now=NOW + datetime.timedelta(hours=hours))
-            self.assertFalse(ok, hours)
+        for minutes in (1, 30, 120, 19 * 60):
+            ok, reason = canary.verify(THREE[1:], history, now=NOW + datetime.timedelta(minutes=minutes))
+            self.assertFalse(ok, minutes)
             self.assertIn('missing: dead-link', reason)
         self.assertFalse(canary.verify(THREE[1:], history, now=NOW - datetime.timedelta(minutes=1))[0])
 
-    def test_bootstrap_default_now_rejects_an_old_failure(self):
-        """The two-argument call uses the current time, so an old entry never passes."""
-        history = {canary.CANARY_URL: {'first_fail_at': '2025-01-01T00:00:00+00:00', 'last_status': 404,
-                                       'moved_to': None}}
-        ok, reason = canary.verify(THREE[1:], history)
-        self.assertFalse(ok)
-        self.assertIn('missing: dead-link', reason)
-        fresh = datetime.datetime.now(UTC).isoformat()
-        history[canary.CANARY_URL]['first_fail_at'] = fresh
-        self.assertTrue(canary.verify(THREE[1:], history)[0])
+    def test_bootstrap_without_now_never_passes(self):
+        """The two-argument call cannot prove the entry is from this run."""
+        for stamp in ('2025-01-01T00:00:00+00:00', datetime.datetime.now(UTC).isoformat()):
+            history = {canary.CANARY_URL: {'first_fail_at': stamp, 'last_status': 404, 'moved_to': None}}
+            ok, reason = canary.verify(THREE[1:], history)
+            self.assertFalse(ok)
+            self.assertIn('missing: dead-link', reason)
 
     def test_bootstrap_naive_timestamp_is_not_trusted(self):
         history = {canary.CANARY_URL: {'first_fail_at': '2026-11-18T03:00:00', 'last_status': 404,
