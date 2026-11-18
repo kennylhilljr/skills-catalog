@@ -111,21 +111,26 @@ def _under(path, base):
 def points_into_shared(root, path):
     """True when the link at path points into the submodule.
 
-    It counts when the target, read lexically from `.claude/skills`, is under
-    the shared folder, or when the link resolves there through any alias or
-    intermediate link. Only link targets are read, never skill content.
+    A link that resolves to an existing path counts when the fully resolved
+    path is under the resolved shared folder, so aliases count and a path
+    that leaves the submodule through an inner link does not. A dangling
+    link counts when its resolved path, or its target read lexically, is
+    under the shared folder. Only link targets are read, never skill content.
     """
+    shared = os.path.realpath(os.path.join(root, SHARED))
+    resolved = os.path.realpath(path)
+    if os.path.exists(path):
+        return _under(resolved, shared)
+    if _under(resolved, shared):
+        return True
     target = os.readlink(path)
     if not os.path.isabs(target):
-        if _under(os.path.normpath(os.path.join(LINKS, target)), SHARED):
+        return _under(os.path.normpath(os.path.join(LINKS, target)), SHARED)
+    for base in (os.path.join(root, SHARED),
+                 os.path.join(os.path.realpath(root), SHARED)):
+        if _under(os.path.normpath(target), os.path.normpath(base)):
             return True
-    else:
-        for base in (os.path.join(root, SHARED),
-                     os.path.join(os.path.realpath(root), SHARED)):
-            if _under(os.path.normpath(target), os.path.normpath(base)):
-                return True
-    shared = os.path.realpath(os.path.join(root, SHARED))
-    return _under(os.path.realpath(path), shared)
+    return False
 
 
 def survey(root, names):

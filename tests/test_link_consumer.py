@@ -195,6 +195,23 @@ class WriteModeTests(LinkConsumerTestCase):
         self.assertEqual(self.link_names(), ['a', 'b'])
         self.assertEqual(self.run_tool('--check').returncode, 0)
 
+    def test_link_escaping_shared_through_inner_link_is_foreign(self):
+        outside = os.path.join(self.root, 'outside')
+        os.makedirs(outside)
+        os.symlink(outside, os.path.join(self.shared, 'skills', 'a', 'escape'))
+        os.makedirs(self.links)
+        os.symlink(PREFIX + 'skills/a/escape', os.path.join(self.links, 'mine'))
+        os.symlink(PREFIX + 'skills/a/escape', os.path.join(self.links, 'b'))
+        check = self.run_tool('--check')
+        self.assertIn('link-consumer: shadow: .claude/skills/b', self.lines(check))
+        self.assertNotIn('link-consumer: extra: .claude/skills/mine',
+                         self.lines(check))
+        self.assertEqual(self.run_tool().returncode, 1)
+        self.assertEqual(os.readlink(os.path.join(self.links, 'mine')),
+                         PREFIX + 'skills/a/escape')
+        self.assertEqual(os.readlink(os.path.join(self.links, 'b')),
+                         PREFIX + 'skills/a/escape')
+
     def test_dangling_after_write_exits_one(self):
         shutil.rmtree(os.path.join(self.shared, 'skills', 'b'))
         result = self.run_tool()
