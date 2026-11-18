@@ -1,4 +1,4 @@
-"""python -m skills_catalog_mcp --repo PATH [--ref TAG] [--exclude-file PATH] [--transport stdio]"""
+"""python -m skills_catalog_mcp --repo PATH [--ref TAG] [--exclude-file PATH] [--transport stdio|http] [--host H] [--port N]"""
 
 from __future__ import annotations
 
@@ -22,7 +22,11 @@ def parse_args(argv=None):
     parser.add_argument('--repo', default=DEFAULT_REPO, help='catalog git repository (default: the parent of server/)')
     parser.add_argument('--ref', default=None, help='tag to serve (default: the newest v* tag)')
     parser.add_argument('--exclude-file', default=DEFAULT_EXCLUDE_FILE, help='local exclusion list (default: %(default)s)')
-    parser.add_argument('--transport', default='stdio', choices=transport.TRANSPORTS)
+    parser.add_argument('--transport', default='stdio', choices=transport.TRANSPORTS,
+                        help='stdio (default) or streamable HTTP on loopback')
+    parser.add_argument('--host', default=transport.DEFAULT_HOST,
+                        help='HTTP bind address: 127.0.0.0/8, ::1 or localhost only (default: %(default)s)')
+    parser.add_argument('--port', type=int, default=transport.DEFAULT_PORT, help='HTTP port (default: %(default)s)')
     return parser.parse_args(argv)
 
 
@@ -41,6 +45,18 @@ def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='skills-catalog-mcp: %(message)s')
     quiet_fastmcp_debug()
+    if args.transport == 'http':
+        # MCP-5: refuse before the snapshot is built and before any socket is opened.
+        try:
+            args.host = transport.check_bind_host(args.host)
+        except transport.BindRefused:
+            print('error: ' + transport.REFUSAL, file=sys.stderr)
+            return 2
+        try:
+            transport.check_port(args.port)
+        except ValueError as exc:
+            print('error: %s' % exc, file=sys.stderr)
+            return 2
     try:
         snapshot = materialize(args.repo, args.ref, exclude_file=args.exclude_file)
     except SnapshotError as exc:
