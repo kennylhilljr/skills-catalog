@@ -354,6 +354,35 @@ class AnnounceTest(unittest.TestCase):
         for text in run.texts():
             self.assertEqual(scrub.scan_text(text), [])
 
+    def test_new_twin_alerts_across_the_cap_keep_their_own_issue(self):
+        # Five alerts already open plus two new ones whose subjects scrub to
+        # the same text: one twin is sent directly, the other is in the digest.
+        home = '/' + 'Users' + '/someone/'
+        old = [alert('o' + str(i)) for i in range(5)]
+        state = actions_half(old, [], S.empty_state(), NOW - DAY)
+        open_issues = [issue(90 + i, subject='o' + str(i)) for i in range(5)]
+        twins = [alert(home + 'c'), alert(home + 'i')]  # fingerprints that straddle the cap
+        actions, state = A.plan_alerts(old + twins, open_issues, [], state, 'run-m', NOW)
+        self.assertIn('withheld', [a['text'] for a in actions if a['op'] == 'send_ops'][-1])
+        results, opened = [], {}
+        for i, action in enumerate(a for a in actions if a['op'] == 'open_issue'):
+            opened[action['fingerprint']] = url(100 + i)
+            results.append({'op': 'open_issue', 'fingerprint': action['fingerprint'], 'ok': True,
+                            'number': 100 + i, 'url': url(100 + i)})
+        for action in actions:
+            if action['op'] == 'send_ops':
+                text = action['text'].replace(A.ISSUE_URL_PLACEHOLDER, opened.get(action['fingerprint'], ''))
+                results.append({'op': 'send_ops', 'fingerprint': action['fingerprint'], 'ok': True, 'text': text})
+        self.assertTrue(results[-1]['text'].startswith(A.DIGEST_PREFIX))
+        run, att = FakeRun(), FakeAttention()
+        mac(open_issues, state, run, att, ops_results=results)
+        urls = [c[1] for c in att.calls]
+        self.assertEqual(sorted(urls), sorted([i['url'] for i in open_issues] + list(opened.values())))
+        digest = run.texts()[-1]
+        direct_twin = [t for t in run.texts()[:-1] if 'withheld' in t]
+        self.assertEqual(len(direct_twin), 1)
+        self.assertNotIn(direct_twin[0].rsplit(': ', 1)[1], digest)
+
     def test_planned_result_that_failed_in_apply_is_not_sent_and_is_due_again(self):
         actions, state = A.plan_alerts([alert()], [], [], S.empty_state(), 'run-m', NOW)
         send_op = [a for a in actions if a['op'] == 'send_ops'][0]

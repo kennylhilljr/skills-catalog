@@ -204,16 +204,18 @@ def _fit_digest(items):
     return included, []
 
 
-def _match_pending(pending, table, opened_urls, open_urls, failed_fps):
+def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()):
     """Tie the planner's digest lines to alert fingerprints.
 
     The planner folds announcements in fingerprint order, and two subjects
     can scrub to the same text, so each line takes the first unused
     fingerprint whose message head matches, preferring one whose issue URL
     matches the line. A line whose issue was not opened gets its URL here,
-    or is dropped as due again when there is none.
+    or is dropped as due again when there is none. `direct` holds the
+    fingerprints the planner gave a message of their own this run; a digest
+    line never belongs to one of them.
     """
-    used, items = set(), []
+    used, items = set(direct), []
     for line in pending:
         head, _, tail = line.rpartition(': ')
         kinds = {}
@@ -371,7 +373,9 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     digest_open = bool(incoming_digest or not ops['digest_sent'])
     items = []  # digest lines: {"line", "fp", "type", "args"}
     if digest_open:
-        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps)
+        direct = set(r.get('fingerprint') for r in planned
+                     if not (r.get('text') or '').startswith(amod.DIGEST_PREFIX))
+        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps, direct)
     for fp, text, args in mine:
         text = amod.scrub_text(text)
         if ops['sent'] < amod.OPS_PER_DAY:
