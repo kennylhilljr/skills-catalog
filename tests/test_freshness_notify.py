@@ -291,6 +291,69 @@ class AnnounceTest(unittest.TestCase):
         self.assertEqual(len(digest), 1)
         self.assertNotIn('p4', digest[0])
 
+    def test_failed_reopen_sends_nothing_and_stays_due(self):
+        state = actions_half([alert()], [], S.empty_state(), NOW - 3 * DAY)
+        state = mac([issue(7)], state, FakeRun(), now=NOW - 3 * DAY)
+        state = actions_half([], [issue(7)], state, NOW - 2 * DAY)
+        _, state = A.plan_alerts([], [issue(7)], [], state, 'run-b', NOW - 2 * DAY + HOUR, announce=False)
+        closed = [{'number': 7, 'fingerprint': issue(7)['fingerprint'], 'closed_at': S.iso(NOW - 2 * DAY + HOUR)}]
+        actions, state = A.plan_alerts([alert()], [], closed, state, 'run-m', NOW)
+        fp = issue(7)['fingerprint']
+        results = []
+        for action in actions:
+            ok = action['op'] != 'reopen'
+            result = {'op': action['op'], 'fingerprint': fp, 'ok': ok}
+            if action['op'] == 'send_ops':
+                result['text'] = action['text']
+            results.append(result)
+        self.assertIn('reopen', [a['op'] for a in actions])
+        run, att = FakeRun(), FakeAttention()
+        new = mac([], state, run, att, ops_results=results)
+        self.assertEqual(run.calls, [])
+        self.assertEqual(att.calls, [])
+        self.assertFalse(new['alerts'][fp]['announced'])
+
+    def test_digest_lines_that_do_not_fit_stay_due(self):
+        issues = [issue(10 + i, subject='subject-' + 'y' * 40 + str(i)) for i in range(12)]
+        run, att = FakeRun(), FakeAttention()
+        new = mac(issues, S.empty_state(), run, att)
+        digest = run.texts()[-1]
+        self.assertTrue(digest.startswith(A.DIGEST_PREFIX))
+        self.assertLess(len(digest), 300)
+        in_digest = [i for i in issues[6:] if i['url'] + '\n' in digest + '\n']
+        left = [i for i in issues[6:] if i not in in_digest]
+        self.assertTrue(in_digest and left)
+        for i in in_digest:
+            self.assertTrue(new['alerts'][i['fingerprint']]['announced'])
+        for i in left:
+            self.assertFalse(new['alerts'][i['fingerprint']]['announced'])
+        self.assertEqual(len(att.calls), 6 + len(in_digest))
+        run2 = FakeRun()
+        mac(issues, new, run2, now=NOW + DAY)
+        self.assertEqual(len(run2.calls), len(left))
+
+    def test_planner_digest_lines_with_the_same_scrubbed_text_keep_their_fingerprints(self):
+        # Two subjects that scrub to the same text (built at runtime: home paths).
+        home = '/' + 'Users' + '/someone/'
+        old = [alert('o' + str(i)) for i in range(5)]
+        state = actions_half(old, [], S.empty_state(), NOW - 2 * DAY)
+        twins = [alert(home + 'a'), alert(home + 'b')]
+        state = actions_half(twins, [], state, NOW - DAY)
+        open_issues = [issue(90 + i, subject='o' + str(i)) for i in range(5)]
+        open_issues += [dict(issue(95 + i), fingerprint=F.fingerprint('dwell', t['subject']))
+                        for i, t in enumerate(twins)]
+        actions, state = A.plan_alerts(old + twins, open_issues, [], state, 'run-m', NOW)
+        results = [{'op': 'send_ops', 'fingerprint': a['fingerprint'], 'ok': True, 'text': a['text']}
+                   for a in actions if a['op'] == 'send_ops']
+        self.assertTrue(results[-1]['text'].startswith(A.DIGEST_PREFIX))
+        run, att = FakeRun(), FakeAttention()
+        mac(open_issues, state, run, att, ops_results=results)
+        urls = [c[1] for c in att.calls]
+        self.assertEqual(len(urls), len(set(urls)))
+        self.assertEqual(sorted(urls), sorted(i['url'] for i in open_issues))
+        for text in run.texts():
+            self.assertEqual(scrub.scan_text(text), [])
+
     def test_planned_result_that_failed_in_apply_is_not_sent_and_is_due_again(self):
         actions, state = A.plan_alerts([alert()], [], [], S.empty_state(), 'run-m', NOW)
         send_op = [a for a in actions if a['op'] == 'send_ops'][0]

@@ -185,9 +185,86 @@ def _issue_url(issue):
     return issue.get('url') or issue.get('html_url') or amod.ISSUE_URL_BASE + str(issue.get('number'))
 
 
-def _digest(pending):
-    return (amod.DIGEST_PREFIX + 'daily cap of ' + str(amod.OPS_PER_DAY) + ' ops messages reached, '
-            + str(len(pending)) + ' more:\n' + '\n'.join('- ' + t for t in pending))
+def _digest(lines, total):
+    text = (amod.DIGEST_PREFIX + 'daily cap of ' + str(amod.OPS_PER_DAY) + ' ops messages reached, '
+            + str(total) + ' more:\n' + '\n'.join('- ' + t for t in lines))
+    if total > len(lines):
+        text += '\n- and ' + str(total - len(lines)) + ' more next run'
+    return text
+
+
+def _fit_digest(items):
+    """Split digest items into those that fit under 300 characters and the rest."""
+    included = []
+    for index, item in enumerate(items):
+        candidate = included + [item]
+        if len(_digest([i['line'] for i in candidate], len(items))) > MESSAGE_MAX:
+            return included, items[index:]
+        included = candidate
+    return included, []
+
+
+def _match_pending(pending, table, opened_urls, open_urls, failed_fps):
+    """Tie the planner's digest lines to alert fingerprints.
+
+    The planner folds announcements in fingerprint order, and two subjects
+    can scrub to the same text, so each line takes the first unused
+    fingerprint whose message head matches, preferring one whose issue URL
+    matches the line. A line whose issue was not opened gets its URL here,
+    or is dropped as due again when there is none.
+    """
+    used, items = set(), []
+    for line in pending:
+        head, _, tail = line.rpartition(': ')
+        kinds = {}
+        for fp in sorted(table):
+            if fp in used:
+                continue
+            entry = table[fp]
+            if any(head == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
+                kinds[fp] = 'announce'
+            elif head == amod._ops_head(amod._REMINDER_PREFIX, entry):
+                kinds[fp] = 'reminder'
+        if not kinds:
+            items.append({'line': line, 'fp': None, 'type': 'other', 'args': None})
+            continue
+
+        def link_of(fp):
+            entry = table[fp]
+            return opened_urls.get(fp) or open_urls.get(fp) or (
+                amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None)
+        if tail.startswith('http'):
+            exact = [fp for fp in kinds if link_of(fp) == tail]
+        else:
+            exact = [fp for fp in kinds if table[fp].get('issue') is None]
+        fp = (exact or list(kinds))[0]
+        used.add(fp)
+        entry = table[fp]
+        link = tail if tail.startswith('http') else link_of(fp)
+        item = {'line': head + ': ' + (link or ''), 'fp': fp, 'type': kinds[fp], 'args': None}
+        if link is None or fp in failed_fps:
+            _due_again(None, item, table)
+            continue
+        if item['type'] == 'announce':
+            item['args'] = (entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
+                            'freshness alert ' + entry['kind'] + ' is open for ' + entry['subject'])
+        items.append(item)
+    return items
+
+
+def _due_again(state, item, table=None):
+    """Make a digest item that was not delivered due on the next run (FRS-25)."""
+    table = table if table is not None else state.get('alerts') or {}
+    entry = table.get(item['fp']) if item['fp'] else None
+    if item['type'] == 'announce' and entry is not None:
+        entry['announced'] = False
+        entry['last_reminder_at'] = None
+    elif item['type'] == 'reminder' and entry is not None:
+        entry['last_reminder_at'] = None
+    elif state is not None:
+        failed = state['ops'].setdefault('failed', [])
+        if item['line'] not in failed:
+            failed.append(item['line'])
 
 
 def _new_entry(kind, subject, number):
@@ -264,6 +341,11 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
         problem = 'freshness alert ' + kind + ' is open for ' + (subject or 'the catalog')
         mine.append((fp, amod._ops_head(ANNOUNCE_PREFIX, entry) + ': ' + url, (kind, url, title, problem)))
 
+    # Issues apply could not open or reopen: their messages are not sent,
+    # and the alert stays due (FRS-23 names an issue that exists).
+    failed_fps = set(r.get('fingerprint') for r in results
+                     if r.get('op') in ('open_issue', 'reopen') and not r.get('ok'))
+
     # 1. Part 1's planned messages: their cap slots are already counted.
     incoming_digest = False
     for result in planned:
@@ -272,7 +354,8 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
         if text.startswith(amod.DIGEST_PREFIX):
             incoming_digest = True  # rebuilt below with this function's lines
             continue
-        if not result.get('ok', True) or amod.ISSUE_URL_PLACEHOLDER in text or not text:
+        if (not result.get('ok', True) or fp in failed_fps or amod.ISSUE_URL_PLACEHOLDER in text
+                or not text):
             amod.record_send(new, text, False, fp)
             continue
         entry = table.get(fp)
@@ -285,7 +368,10 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
         amod.record_send(new, text, ok, fp)
 
     # 2. This function's announcements, under the same daily cap.
-    folded = []  # fps whose line went into the digest
+    digest_open = bool(incoming_digest or not ops['digest_sent'])
+    items = []  # digest lines: {"line", "fp", "type", "args"}
+    if digest_open:
+        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps)
     for fp, text, args in mine:
         text = amod.scrub_text(text)
         if ops['sent'] < amod.OPS_PER_DAY:
@@ -297,52 +383,36 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
             if ok:
                 table[fp]['announced'] = True
                 table[fp]['last_reminder_at'] = now_iso
-        elif not ops['digest_sent'] or incoming_digest:
-            call_attention(*args)
-            attended.add(fp)
-            ops['pending'].append(text)
-            folded.append(fp)
+        elif digest_open:
+            items.append({'line': text, 'fp': fp, 'type': 'announce', 'args': args})
         # After the digest, nothing more is sent today; the alert stays due.
+    if not digest_open:
+        return new
 
-    # 3. One digest for everything past the cap. The planner's lines in it
-    # are announcements it folded this run (the digest goes out once a day),
-    # so their alerts get their attention call now.
-    if incoming_digest:
-        kept = []
-        for line in ops['pending']:
-            head, _, tail = line.rpartition(': ')
-            match = None
-            for fp in sorted(table):
-                if any(head == amod._ops_head(p, table[fp]) for p in amod._ANNOUNCE_PREFIXES):
-                    match = fp
-                    break
-            if match is None:
-                kept.append(line)  # a retried or reminder line: no attention
-                continue
-            entry = table[match]
-            link = tail if tail.startswith('http') else (
-                opened_urls.get(match) or open_urls.get(match)
-                or (amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None))
-            if link is None:
-                # Its issue was not opened (apply failed): due again, not announced.
-                entry['announced'] = False
-                entry['last_reminder_at'] = None
-                continue
-            kept.append(head + ': ' + link)
-            if match not in attended:
-                call_attention(entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
-                               'freshness alert ' + entry['kind'] + ' is open for ' + entry['subject'])
-                attended.add(match)
-        ops['pending'] = kept
-        if not kept:
-            ops['digest_sent'] = False
-    if ops['pending'] and (incoming_digest or not ops['digest_sent']):
-        digest = _digest(ops['pending'])
-        ops['digest_sent'] = True
-        ok = send(_clean(digest), config, run)
-        if ok:
-            for fp in folded:
-                table[fp]['announced'] = True
-                table[fp]['last_reminder_at'] = now_iso
-        amod.record_send(new, digest, ok, fmod.fingerprint('ops-digest', ops['day']))
+    # 3. One digest, under 300 characters, for everything past the cap. A
+    # line that does not fit is not lost: its alert stays due and any other
+    # text goes to `failed`, so the next run sends it.
+    included, omitted = _fit_digest(items)
+    for item in omitted:
+        _due_again(new, item)
+    ops['pending'] = [item['line'] for item in included]
+    if not included:
+        ops['digest_sent'] = False
+        return new
+    for item in included:
+        if item['type'] == 'announce' and item['fp'] not in attended:
+            call_attention(*item['args'])
+            attended.add(item['fp'])
+    digest = _digest(ops['pending'], len(items))
+    ops['digest_sent'] = True
+    ok = send(digest, config, run)
+    if ok:
+        for item in included:
+            if item['type'] == 'announce':
+                table[item['fp']]['announced'] = True
+                table[item['fp']]['last_reminder_at'] = now_iso
+    amod.record_send(new, digest, ok, fmod.fingerprint('ops-digest', ops['day']))
+    if not ok:  # record_send matched by text; reset each item by fingerprint too
+        for item in included:
+            _due_again(new, item)
     return new
