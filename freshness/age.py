@@ -258,7 +258,7 @@ def route_rereview(finding):
             'title': _title('re-review: ' + skill)}
 
 
-def rereview_since(state, open_issues, skills, now):
+def rereview_since(state, open_issues, skills, now, excluded=()):
     """`[{"skill", "number", "opened_at"}]` for the open `re-review` issues.
 
     `open_issues`: open bot items `{"number", "fingerprint", "created_at"?,
@@ -266,10 +266,16 @@ def rereview_since(state, open_issues, skills, now):
     through `rereview_fingerprint`. `state["rereview"][skill]` keeps when
     the issue opened: its `created_at` when the item carries one (the
     GitHub issue field), else the first run that saw it open. Entries whose
-    issue is no longer open are dropped. `state` is changed in place.
+    issue is no longer open are dropped. Skills in `excluded` are skipped
+    before they are hashed (DESIGN 5.1). `state` is changed in place.
+
+    `github.list_bot_items` does not return `created_at` yet; until the
+    runner (part 9) passes it, the clock starts at the first run that saw
+    the issue, at most one run late.
     """
     now_iso = smod.iso(now)
-    by_fp = {rereview_fingerprint(s['name']): s['name'] for s in skills or ()}
+    excluded = set(excluded or ())
+    by_fp = {rereview_fingerprint(s['name']): s['name'] for s in skills or () if s['name'] not in excluded}
     table = state.setdefault(STATE_KEY, {})
     seen = {}
     for item in open_issues or ():

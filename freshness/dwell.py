@@ -7,12 +7,13 @@ Requirements: FRS-17, INV-6 (docs/SPEC.md). Contract: docs/DESIGN.md 7.6
 every state name the runner (part 9) records; a test requires a `LIMITS`
 row with a positive limit and an alert kind for each (INV-6).
 
-`check_dwell(state, open_items, now, milestone)` returns at most one alert
-per state: subject `<state>`, with one evidence line `<state>:<item>` per
-item past the limit. One fingerprint per state means part 1's
-`alerts.plan_alerts` keeps one `freshness-alert` issue per state and sends
-at most one ops message per state per day (FRS-17), however many items are
-stuck. Items are::
+`check_dwell(state, open_items, now, milestone)` returns one alert per item
+past an enabled row, with subject `<state>:<item>`, so each stuck item has
+its own `freshness-alert` issue (part 1's `alerts.plan_alerts`).
+`fold_ops(actions, state_doc, now)` then keeps at most one ops message per
+dwell state per day (FRS-17): the first message of a state that day names
+how many more items of that state are stuck, and the rest are dropped.
+Items are::
 
     {"id": str | int, "since": iso}     # rows with max_hours: the start of the dwell
     {"id": str | int, "runs": int}      # rows with max_runs: consecutive runs in the state
@@ -72,14 +73,13 @@ def _limit_text(row):
     return '%d days' % (hours // 24) if hours % 24 == 0 and hours >= 72 else '%d hours' % hours
 
 
-def _alert(row, lines):
-    count = len(lines)
+def _alert(row, item, evidence):
     return {
         'kind': row['alert_kind'],
-        'subject': row['state'],
-        'evidence': '\n'.join(lines),
-        'what_happened': '%s: %d item%s exceeded the dwell limit of %s (FRS-17, INV-6).'
-                         % (row['what'], count, '' if count == 1 else 's', _limit_text(row)),
+        'subject': '%s:%s' % (row['state'], item['id']),
+        'evidence': evidence,
+        'what_happened': '%s: `%s` exceeded its dwell limit of %s (FRS-17, INV-6).'
+                         % (row['what'], item['id'], _limit_text(row)),
         'what_to_change': amod.DEFAULT_WHAT_TO_CHANGE,
         'files': [],
         'acceptance': amod.DEFAULT_ACCEPTANCE,
@@ -87,20 +87,20 @@ def _alert(row, lines):
 
 
 def check_dwell(state, open_items, now, milestone='M2'):
-    """[] or one alert listing every item of `state` past its dwell limit; [] when the row is not enabled yet."""
+    """One alert per item of `state` past its dwell limit; [] when the row is not enabled yet."""
     row = limit(state)
     if milestone not in MILESTONES:
         raise ValueError('unknown milestone: %r' % (milestone,))
     if not enabled(row, milestone):
         return []
     now = smod.require_utc(now)
-    lines = []
+    alerts = []
     for item in open_items or ():
-        head = '%s:%s: ' % (state, item['id'])
         if 'max_runs' in row:
             runs = int(item.get('runs') or 0)
             if runs >= row['max_runs']:
-                lines.append(head + '%d consecutive runs (limit %d).' % (runs, row['max_runs']))
+                alerts.append(_alert(row, item, '%d consecutive runs in state `%s` (limit %d).'
+                                     % (runs, state, row['max_runs'])))
             continue
         since = smod.parse_iso(item.get('since'))
         if since is None:
@@ -110,11 +110,60 @@ def check_dwell(state, open_items, now, milestone='M2'):
             continue
         if row.get('ping_first') and not item.get('pinged_at'):
             continue  # ping_actions comments on the PR first
-        line = head + 'since %s, %.1f hours (limit %d).' % (smod.iso(since), hours, row['max_hours'])
+        evidence = 'In state `%s` since %s, %.1f hours (limit %d).' % (state, smod.iso(since), hours,
+                                                                       row['max_hours'])
         if item.get('pinged_at'):
-            line += ' Pinged on the PR at %s.' % item['pinged_at']
-        lines.append(line)
-    return [_alert(row, lines)] if lines else []
+            evidence += ' Pinged on the PR at %s.' % item['pinged_at']
+        alerts.append(_alert(row, item, evidence))
+    return alerts
+
+
+def _dwell_state_of(fp, table):
+    entry = table.get(fp) or {}
+    subject = entry.get('subject') or ''
+    head = subject.split(':', 1)[0]
+    if ':' in subject and head in _BY_STATE and entry.get('kind') == _BY_STATE[head]['alert_kind']:
+        return head
+    return None
+
+
+def fold_ops(actions, state_doc, now):
+    """At most one ops message per dwell state per day (FRS-17).
+
+    `actions`: the Actions from `alerts.plan_alerts`; `state_doc`: the new
+    state it returned, whose `alerts` table maps each fingerprint to its
+    kind and subject. The first `send_ops` of a dwell state on a UTC day is
+    kept and names how many more items of that state are stuck; later ones
+    that day are dropped. `state_doc["dwell_ops"][state]` records the day.
+    Other actions pass through unchanged. Returns the new action list.
+    """
+    day = smod.day_of(now)
+    table = state_doc.get('alerts') or {}
+    sent = state_doc.setdefault('dwell_ops', {})
+    for key in list(sent):
+        if sent[key] != day:
+            del sent[key]
+    by_state = {}
+    for action in actions:
+        if action.get('op') == 'send_ops':
+            name = _dwell_state_of(action.get('fingerprint'), table)
+            if name:
+                by_state.setdefault(name, []).append(action)
+    out = []
+    for action in actions:
+        name = _dwell_state_of(action.get('fingerprint'), table) if action.get('op') == 'send_ops' else None
+        if name is None:
+            out.append(action)
+            continue
+        if sent.get(name) == day:
+            continue
+        sent[name] = day
+        more = len(by_state[name]) - 1
+        if more:
+            action = dict(action, text=action['text'] + ' (+%d more `%s` item%s)' % (
+                more, name, '' if more == 1 else 's'))
+        out.append(action)
+    return out
 
 
 def ping_actions(open_prs, state_doc, now):

@@ -240,6 +240,7 @@ class TestStale(unittest.TestCase):
         self.assertEqual(later[0]['skill'], 'alpha')
         self.assertEqual(age.rereview_since(state, [], self.skills, NOW), [])
         self.assertEqual(age.rereview_since(state, items, self.skills, NOW)[0]['opened_at'], _iso(NOW))
+        self.assertEqual(age.rereview_since(smod.empty_state(), items, self.skills, NOW, excluded={'alpha'}), [])
         created = dict(items[0], created_at=_iso(NOW - datetime.timedelta(days=20)))
         self.assertEqual(age.rereview_since(state, [created], self.skills, NOW)[0]['opened_at'],
                          _iso(NOW - datetime.timedelta(days=20)))
@@ -336,21 +337,30 @@ class TestDwell(unittest.TestCase):
         found = dwell.check_dwell('actions-run', old, NOW)
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]['kind'], 'heartbeat-actions')
-        self.assertEqual(found[0]['subject'], 'actions-run')
-        self.assertTrue(found[0]['evidence'].startswith('actions-run:nightly: '))
+        self.assertEqual(found[0]['subject'], 'actions-run:nightly')
         self.assertEqual(dwell.check_dwell('actions-run', fresh, NOW), [])
         actions, _state = alerts.plan_alerts(found, [], [], None, 'run-1', NOW, announce=False)
         self.assertEqual(_only(actions, 'open_issue')[0]['title'],
-                         'freshness-alert: heartbeat-actions: actions-run')
+                         'freshness-alert: heartbeat-actions: actions-run:nightly')
 
     def test_one_alert_per_state(self):
-        """FRS-17: two stuck items of one state give one alert (one fingerprint, one ops message a day)."""
+        """FRS-17: two stuck items of one state get two issues but one ops message per state per day."""
         items = [{'id': n, 'since': _iso(NOW - datetime.timedelta(days=15))} for n in (3, 4)]
         found = dwell.check_dwell('re-review', items, NOW)
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0]['evidence'].count('re-review:'), 2)
-        actions, _state = alerts.plan_alerts(found, [], [], None, 'run-1', NOW)
-        self.assertEqual(len(_only(actions, 'send_ops')), 1)
+        self.assertEqual([a['subject'] for a in found], ['re-review:3', 're-review:4'])
+        hb = dwell.check_dwell('mac-job', [{'id': 'mac', 'since': _iso(NOW - datetime.timedelta(hours=30))}], NOW)
+        actions, new_state = alerts.plan_alerts(found + hb, [], [], None, 'run-1', NOW)
+        self.assertEqual(len(_only(actions, 'open_issue')), 3)
+        self.assertEqual(len(_only(actions, 'send_ops')), 3)
+        folded = dwell.fold_ops(actions, new_state, NOW)
+        ops = _only(folded, 'send_ops')
+        self.assertEqual(len(ops), 2)
+        self.assertIn('(+1 more `re-review` item)', ops[0]['text'])
+        self.assertEqual(len(_only(folded, 'open_issue')), 3)
+        later_same_day = NOW + datetime.timedelta(hours=1)
+        self.assertEqual(_only(dwell.fold_ops(actions, new_state, later_same_day), 'send_ops'), [])
+        next_day = NOW + datetime.timedelta(days=1)
+        self.assertEqual(len(_only(dwell.fold_ops(actions, new_state, next_day), 'send_ops')), 2)
 
     def test_m5_row_skipped_in_m2(self):
         """FRS-17: an M5 row is skipped in M2 and enabled from M5."""
