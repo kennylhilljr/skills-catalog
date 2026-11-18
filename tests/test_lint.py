@@ -429,11 +429,12 @@ class TestFrontmatterLinter(unittest.TestCase):
 
     # Test lint_tree and full repo
     def test_lint_tree_repo_clean(self):
-        """Test lint_tree: all 22 catalog skills lint clean."""
+        """Test lint_tree: the 22 catalog skills plus zz-canary (23) lint clean."""
         results = _lint.lint_tree(self.repo_root)
 
-        # Check we have 22 skills
-        self.assertEqual(len(results), 22, f'Expected 22 skills, got {len(results)}')
+        # 22 catalog skills plus the held zz-canary (FRS-18)
+        self.assertEqual(len(results), 23, f'Expected 23 skills, got {len(results)}')
+        self.assertIn('.held/zz-canary', results)
 
         # Check all are clean
         for skill_name, findings in results.items():
