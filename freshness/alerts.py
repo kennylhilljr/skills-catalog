@@ -53,10 +53,10 @@ def _scan(text):
     return _scrub_module.scan_text(text)
 
 
-def _scan_file(path, text):
+def _scan_file(path, text, private_names=()):
     global _scrub_module
     _scan('')
-    return _scrub_module.scan_text(text, path)
+    return _scrub_module.scan_text(text, path, private_names)
 
 
 def scrub_text(text):
@@ -241,7 +241,7 @@ def _storm(folded, day, table, open_by_fp, closed_by_fp, issues, actions, raised
     )
     actions.append({'op': 'open_issue', 'fingerprint': fp, 'title': title, 'body': body,
                     'labels': alert_labels(kind)})
-    table[fp] = _new_entry(kind, subject, None, sha, now_iso)
+    table[fp] = _new_entry(kind, subject, None, sha, None)
     issues['storm_issue'] = None
     fresh[fp] = 'opened'
 
@@ -331,7 +331,7 @@ def plan_alerts(alerts, open_issues, closed_issues, state, run_id, now, scope=No
             actions.append({'op': 'open_issue', 'fingerprint': fp, 'title': title, 'body': body,
                             'labels': alert_labels(alert['kind'])})
             issues['opened'] += 1
-            table[fp] = _new_entry(alert['kind'], alert['subject'], None, sha, now_iso)
+            table[fp] = _new_entry(alert['kind'], alert['subject'], None, sha, None)  # no comment yet
             fresh[fp] = 'opened'
         else:
             folded.append(alert)
@@ -424,7 +424,7 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
     return actions
 
 
-def plan_findings(findings, open_items, state):
+def plan_findings(findings, open_items, state, private_names=()):
     """One issue or PR per finding fingerprint (FRS-13).
 
     `findings`: routed items `{"finding", "as": "issue"|"pr", "title",
@@ -433,6 +433,9 @@ def plan_findings(findings, open_items, state):
     An open item with the fingerprint gets nothing when the evidence is
     unchanged and one comment when it changed. `state["findings"]` records
     the last evidence hash per fingerprint and is updated in place.
+    `private_names`: the private repo list the scrub checks PR files
+    against (read by the caller, like `tools/scrub.py --private-repos`);
+    a PR whose files fail the scrub becomes an issue without the files.
     """
     table = state.setdefault('findings', {})
     open_by_fp = {}
@@ -463,7 +466,7 @@ def plan_findings(findings, open_items, state):
                   'labels': list(item.get('labels') or [])}
         as_ = item.get('as')
         files = dict(item.get('files') or {})
-        if as_ == 'pr' and any(_scan_file(path, text) for path, text in files.items()):
+        if as_ == 'pr' and any(_scan_file(path, text, private_names) for path, text in files.items()):
             as_ = 'issue'  # never publish a fix the scrub rejects; a person decides
         if as_ == 'pr':
             action.update(op='open_pr', files=files, branch=fmod.branch_name(fp))
@@ -481,16 +484,22 @@ def record_send(state, text, ok):
 
     Called by part 7 right after each send of the same run. A failed message
     gives its slot under the daily cap back and goes to `failed`, which the
-    next run sends first. A failed digest is not queued as text: its lines
-    stay in `pending` and the next run sends the digest again.
+    next run sends first. A failed digest is not queued as one text: its
+    lines move from `pending` to `failed`, so they survive the day rollover,
+    and the next run sends them again (folded into a new digest when the
+    day's cap is reached).
     """
     if ok:
         return state
     ops = state.setdefault('ops', {})
+    failed = ops.setdefault('failed', [])
     if text.startswith(DIGEST_PREFIX):
         ops['digest_sent'] = False
+        for line in ops.get('pending') or []:
+            if line not in failed:
+                failed.append(line)
+        ops['pending'] = []
         return state
-    failed = ops.setdefault('failed', [])
     if text not in failed:
         failed.append(text)
     ops['sent'] = max(0, int(ops.get('sent') or 0) - 1)

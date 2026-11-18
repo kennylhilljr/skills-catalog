@@ -136,10 +136,12 @@ class DedupTests(unittest.TestCase):
 
     def test_at_most_one_comment_per_24_hours(self):
         actions, state = A.plan_alerts([alert(evidence='v2')], self.open, [], self.state, 'r2', NOW + 2 * HOUR)
+        self.assertEqual(len(of(actions, 'comment')), 1)  # opening is not a comment
+        actions, state = A.plan_alerts([alert(evidence='v3')], self.open, [], state, 'r3', NOW + 20 * HOUR)
         self.assertEqual(of(actions, 'comment'), [])
-        actions, state = A.plan_alerts([alert(evidence='v2')], self.open, [], state, 'r3', NOW + 25 * HOUR)
+        actions, state = A.plan_alerts([alert(evidence='v3')], self.open, [], state, 'r4', NOW + 26 * HOUR)
         self.assertEqual(len(of(actions, 'comment')), 1)
-        actions, _ = A.plan_alerts([alert(evidence='v3')], self.open, [], state, 'r4', NOW + 30 * HOUR)
+        actions, _ = A.plan_alerts([alert(evidence='v4')], self.open, [], state, 'r5', NOW + 30 * HOUR)
         self.assertEqual(of(actions, 'comment'), [])
 
     def test_reopen_within_7_days(self):
@@ -249,12 +251,19 @@ class CapTests(unittest.TestCase):
         actions, state = A.plan_alerts([alert('g' + str(i)) for i in range(7)], [], [], state, 'r1', NOW)
         digest = ops(actions)[-1]['text']
         self.assertTrue(digest.startswith(A.DIGEST_PREFIX))
+        lines = list(state['ops']['pending'])
         A.record_send(state, digest, False)
         self.assertFalse(state['ops']['digest_sent'])
-        self.assertEqual(state['ops']['failed'], [])
+        self.assertEqual(state['ops']['failed'], lines)
+        snapshot = copy.deepcopy(state)
         actions, state = A.plan_alerts([], [], [], state, 'r2', NOW + HOUR)
         self.assertEqual([a['text'] for a in ops(actions)], [digest])
         self.assertTrue(state['ops']['digest_sent'])
+        self.assertEqual(state['ops']['failed'], [])
+        # A retry on the next UTC day sends the lost lines directly.
+        tomorrow = datetime.datetime(2026, 11, 19, 6, 0, tzinfo=UTC)
+        actions, _ = A.plan_alerts([], [], [], snapshot, 'r2', tomorrow)
+        self.assertEqual([a['text'] for a in ops(actions)], lines)
 
     def test_counters_reset_at_day_rollover_and_failed_kept(self):
         state = S.empty_state()
@@ -367,6 +376,11 @@ class ScrubTests(unittest.TestCase):
         action = A.plan_findings([item], [], S.empty_state())[0]
         self.assertEqual(action['op'], 'open_issue')
         self.assertNotIn('files', action)
+        private = 'secret' + '-repo'
+        item['files'] = {'skills/x/SKILL.md': 'see ' + private + '\n'}
+        self.assertEqual(A.plan_findings([item], [], S.empty_state())[0]['op'], 'open_pr')
+        action = A.plan_findings([item], [], S.empty_state(), private_names=[private])[0]
+        self.assertEqual(action['op'], 'open_issue')
 
     def test_stale_marker_in_routed_body_is_replaced(self):
         stale = F.marker(F.fingerprint('dead-link', 'old'))
