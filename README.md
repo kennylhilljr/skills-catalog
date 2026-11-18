@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/header.svg" width="100%" alt="skills-catalog. A card-catalog drawer: twelve staggered divider tabs name the delivered skills, a dashed stack behind them stands for the held skills, and the front card is stamped PINNED.">
+  <img src="assets/header.svg" width="100%" alt="skills-catalog. The gate bot stands on a glowing platform in front of a catalog panel listing the twelve delivered skills, each checked and pinned by commit, with the ten held skills as faded cards behind it.">
 </p>
 
 Every agent skill Kenny writes lives here, once. Each one is a `SKILL.md` folder that Claude Code and Codex both read. Bots pull the catalog at a pinned commit, and a freshness bot checks that each skill still works as the tools around it change.
