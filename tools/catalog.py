@@ -2,6 +2,13 @@
 """Build catalog.json, the manifest of skills and held skills (CAT-11, CAT-23).
 
 Usage: python3 tools/catalog.py [--root DIR] [--check]
+
+The `stale` flag (FRS-8): `freshness/stale.json`, when present, is a sorted
+JSON list of skill names that only freshness bot PRs change. Each listed
+skill gets `"stale": true` as the last key of its entry, in `skills` or
+`held`. Other entries have no `stale` key, so readers treat a missing key as
+not stale (`entry.get("stale") is True`). A listed name that is not in the
+manifest is an error.
 """
 
 import argparse
@@ -18,6 +25,7 @@ _lint = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_lint)
 
 STALE_MESSAGE = 'catalog.json is out of date; run python3 tools/catalog.py'
+STALE_LIST = os.path.join('freshness', 'stale.json')
 CANARY = 'zz-canary'
 
 # (entry key, metadata key, default when the metadata key is absent)
@@ -105,13 +113,36 @@ def _section(root, section):
     return [_entry(root, section, name) for name in sorted(names)]
 
 
+def read_stale(root='.'):
+    """The names in freshness/stale.json, or [] when the file is missing."""
+    try:
+        with open(os.path.join(root, STALE_LIST), encoding='utf-8') as handle:
+            names = json.load(handle)
+    except FileNotFoundError:
+        return []
+    if not (isinstance(names, list) and all(isinstance(name, str) for name in names)):
+        raise ValueError('freshness/stale.json must be a JSON list of skill names')
+    if names != sorted(set(names)):
+        raise ValueError('freshness/stale.json must be sorted and without duplicates')
+    return names
+
+
 def build(root='.'):
     """Return the catalog manifest for the repository at root."""
-    return {
+    doc = {
         'version': 1,
         'skills': _section(root, 'skills'),
         'held': _section(root, '.held'),
     }
+    stale = set(read_stale(root))
+    for entry in doc['skills'] + doc['held']:
+        if entry['name'] in stale:
+            entry['stale'] = True
+            stale.discard(entry['name'])
+    if stale:
+        raise ValueError('freshness/stale.json names %s, not a skill in the catalog'
+                         % ', '.join(sorted(stale)))
+    return doc
 
 
 def render(root='.'):

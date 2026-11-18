@@ -263,6 +263,54 @@ class TestCatalog(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 _catalog.main(['--root', self.tmp, '--check'])
 
+    def _write_stale(self, text):
+        os.makedirs(os.path.join(self.tmp, 'freshness'), exist_ok=True)
+        with open(os.path.join(self.tmp, 'freshness', 'stale.json'), 'w', encoding='utf-8') as handle:
+            handle.write(text)
+
+    def test_empty_stale_list_is_byte_identical(self):
+        """FRS-8: an empty freshness/stale.json leaves catalog.json byte-identical, and no entry has `stale`."""
+        _copy_repo(self.tmp)
+        without = _catalog.render(self.tmp)
+        self._write_stale('[]\n')
+        self.assertEqual(_catalog.render(self.tmp), without)
+        with open(os.path.join(_repo_root, 'catalog.json'), encoding='utf-8', newline='') as handle:
+            self.assertEqual(_catalog.render(_repo_root), handle.read())
+        doc = _catalog.build(self.tmp)
+        self.assertFalse(any('stale' in entry for entry in doc['skills'] + doc['held']))
+
+    def test_listed_skill_is_stale(self):
+        """FRS-8: a listed skill (or held skill) gets `"stale": true` as its last key; others get no key."""
+        _copy_repo(self.tmp)
+        self._write_stale(json.dumps(['ears-notation', HELD[0]]) + '\n')
+        doc = _catalog.build(self.tmp)
+        ears = self._entry(doc, 'ears-notation')
+        self.assertIs(ears['stale'], True)
+        self.assertEqual(list(ears), KEYS + ['stale'])
+        self.assertIs(self._entry(doc, HELD[0], 'held')['stale'], True)
+        others = [e for e in doc['skills'] + doc['held'] if e['name'] not in ('ears-notation', HELD[0])]
+        self.assertTrue(others)
+        self.assertFalse(any('stale' in entry for entry in others))
+
+    def test_unknown_stale_name_raises(self):
+        """FRS-8: a name in freshness/stale.json that is not a catalog skill is an error."""
+        _copy_repo(self.tmp)
+        self._write_stale('["no-such-skill"]\n')
+        with self.assertRaises(ValueError) as ctx:
+            _catalog.build(self.tmp)
+        self.assertIn('no-such-skill', str(ctx.exception))
+        for bad in ('{}', '["b-skill", "a-skill"]', '[1]'):
+            self._write_stale(bad)
+            with self.assertRaises(ValueError):
+                _catalog.build(self.tmp)
+
+    def test_canary_cannot_be_stale(self):
+        """FRS-19: zz-canary is not in the manifest, so listing it is an error."""
+        _copy_repo(self.tmp)
+        self._write_stale('["zz-canary"]\n')
+        with self.assertRaises(ValueError):
+            _catalog.build(self.tmp)
+
 
 if __name__ == '__main__':
     unittest.main()
