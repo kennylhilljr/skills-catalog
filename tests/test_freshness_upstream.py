@@ -371,6 +371,21 @@ class WatchTest(unittest.TestCase):
             self.assertEqual(set(a), {'kind', 'subject', 'evidence'})
             self.assertEqual(scrub.scan_text(a['evidence']), [])
 
+    def test_long_model_ids_stay_in_the_extract_but_not_in_evidence(self):
+        # A dated model ID that trips the entropy rule, built at runtime.
+        model = '-'.join(['gpt', '4o', 'mini', 'search', 'preview', '2025', '03', '11'])
+        src = {'id': 'openai-models-deprecations', 'url': 'https://example.com/m',
+               'extract': 'table-column', 'params': {'heading': 'Upcoming', 'column': 'Model'}}
+        page = '## Upcoming\n\n| Model |\n| - |\n| `gpt-6-luna` |\n'
+        fetch = FakeFetch({src['url']: (200, page)})
+        _, _, state = self.run_watch([src], {}, fetch, 'r1')
+        fetch.pages[src['url']] = (200, page + '| `%s` |\n' % model)
+        findings, _, state = self.run_watch([src], state, fetch, 'r2')
+        self.assertIn(model, state['openai-models-deprecations']['extract'])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(scrub.scan_text(findings[0]['evidence']), [])
+        self.assertIn('withheld by scrub: high-entropy', findings[0]['evidence'])
+
 
 class ParsedListsTest(unittest.TestCase):
 

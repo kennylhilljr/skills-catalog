@@ -546,22 +546,34 @@ def _scrub():
     return _scrub_module
 
 
-def scrub_lines(text):
-    """`text` with every line that `tools/scrub.scan_text` flags withheld."""
+def scrub_lines(text, allow=()):
+    """`text` with every line that `tools/scrub.scan_text` flags withheld.
+
+    Kinds in `allow` are left in place. The result never holds a finding of
+    any other kind.
+    """
     flagged = {}
     for number, kind in _scrub().scan_text(text):
-        flagged.setdefault(number, []).append(kind)
+        if kind not in allow:
+            flagged.setdefault(number, []).append(kind)
     if not flagged:
         return text
     lines = text.split('\n')
     for number, kinds in flagged.items():
         lines[number - 1] = '[line withheld by scrub: %s]' % ', '.join(sorted(kinds))
     out = '\n'.join(lines)
-    # A withheld line can still close a fence that opened an example block;
-    # rescan once and drop anything left rather than publish it.
-    if _scrub().scan_text(out):
+    # A withheld line can still change how a fence pairs up; rescan once and
+    # withhold everything rather than publish a flagged line.
+    if any(kind not in allow for _, kind in _scrub().scan_text(out)):
         return '[text withheld by scrub]'
     return out
+
+
+# The stored extract keeps lines that only the entropy rule flags: upstream
+# pages are public, and long model IDs such as dated snapshot names trip it,
+# while they are what the model watch exists to see. Evidence gets the full
+# scrub.
+EXTRACT_SCRUB_ALLOW = ('high-entropy',)
 
 
 def _diff(source_id, old, new):
@@ -600,7 +612,9 @@ def watch(sources, state_sources, fetch, now, run_id):
     """Fetch every source and compare it with its stored extract.
 
     Extracts are scrubbed with `tools/scrub.scan_text` before they are hashed
-    and stored, since `state.sources` is published on `freshness-state`.
+    and stored, since `state.sources` is published on `freshness-state`
+    (except the entropy rule, see EXTRACT_SCRUB_ALLOW). Evidence gets the
+    full scrub.
 
     `state_sources` maps a source id to
     `{"sha256", "extract", "fetched_at", "failures", "last_error", "errors"}`
@@ -654,7 +668,7 @@ def watch(sources, state_sources, fetch, now, run_id):
             try:
                 # The extract is stored on the public freshness-state branch,
                 # so it is scrubbed before it is hashed or stored.
-                extract = scrub_lines(normalize(source, text))
+                extract = scrub_lines(normalize(source, text), EXTRACT_SCRUB_ALLOW)
             except ExtractError as exc:
                 error = _error_text(exc)
             except Exception as exc:  # a parser fault counts as a failure too
