@@ -405,6 +405,17 @@ class ScrubTests(unittest.TestCase):
         action = A.plan_findings([item], [], S.empty_state(), private_names=[private])[0]
         self.assertEqual(action['op'], 'open_issue')
 
+    def test_failed_digest_resets_every_alert_with_the_same_scrubbed_line(self):
+        home = '/' + 'Users' + '/someone/'
+        state = S.empty_state()
+        for i in range(6):
+            A.record_send(state, 'f' + str(i), False)
+        raised = [alert(home + 'a'), alert(home + 'b')]
+        actions, state = A.plan_alerts(raised, [], [], state, 'r1', NOW)
+        self.assertEqual(len(state['ops']['pending']), 2)
+        A.record_send(state, ops(actions)[-1]['text'], False)
+        self.assertEqual([e['announced'] for e in state['alerts'].values()], [False, False])
+
     def test_stale_marker_in_routed_body_is_replaced(self):
         stale = F.marker(F.fingerprint('dead-link', 'old'))
         item = {'finding': finding(), 'as': 'issue', 'title': 't', 'body': 'text\n' + stale + '\n',

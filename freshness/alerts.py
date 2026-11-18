@@ -488,19 +488,24 @@ def _ops_head(prefix, entry):
 
 
 def _reset_alert_message(state, text, fingerprint=None):
-    """Mark the alert behind a failed ops message as due again; False if none."""
+    """Mark the alerts behind a failed ops message as due again; False if none.
+
+    Without a fingerprint every alert whose message matches is reset, since
+    two subjects can scrub to the same text; at worst one is sent twice.
+    """
     table = state.get('alerts') or {}
     head = text.rsplit(': ', 1)[0]
     entries = [table[fingerprint]] if fingerprint in table else list(table.values())
+    matched = False
     for entry in entries:
         if head == _ops_head(_REMINDER_PREFIX, entry):
             entry['last_reminder_at'] = None
-            return True
-        if any(head == _ops_head(p, entry) for p in _ANNOUNCE_PREFIXES):
+            matched = True
+        elif any(head == _ops_head(p, entry) for p in _ANNOUNCE_PREFIXES):
             entry['announced'] = False
             entry['last_reminder_at'] = None
-            return True
-    return False
+            matched = True
+    return matched
 
 
 def record_send(state, text, ok, fingerprint=None):
