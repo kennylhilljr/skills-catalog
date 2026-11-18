@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+"""Install a tagged catalog into the personal skill folders (MCP-9, INV-8, CAT-20).
+
+    python3 tools/install-local [--repo DIR] [--ref TAG] [--claude-dir DIR]
+                                [--agents-dir DIR] [--state FILE]
+                                [--exclude-file FILE] [--dry-run]
+
+Reads the tag straight from git (`git archive`), so it needs neither the MCP
+server nor a working tree checkout. It installs exactly the `skills` array of
+that tag's `catalog.json` into both destination folders, as copies: files are
+written as bytes with mode 0644 (0755 when executable in the tag), and a
+symlink in a skill folder of the tag is refused. Held skills and `zz-canary`
+are never installed (INV-8). Names on the exclusion list are skipped and never
+printed (CAT-20, INV-7). Every file's sha256 must match the manifest; on any
+mismatch nothing is installed.
+
+The state file records, per destination folder, each installed skill's tag,
+commit and per-file sha256. A destination folder that exists but is not in the
+state, or whose files no longer match the recorded hashes, is refused, and
+then nothing is written anywhere. There is no --force. An owned folder is
+replaced through a sibling temp folder and renames. A skill that left the
+catalog is removed when unchanged and left in place (and reported) when
+changed.
+
+Exit status: 0 done (or nothing to do), 1 refused or the tag failed
+verification, 2 usage or git error. Python 3.9+, standard library only.
+"""
+
+import argparse
+import hashlib
+import io
+import json
+import os
+import posixpath
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+PROG = 'install-local'
+CANARY = 'zz-canary'
+STATE_VERSION = 1
+IGNORED_FILES = ('.DS_Store',)
+NOT_INSTALLED = 'not installed by install-local'
+CHANGED = 'changed since install'
+
+
+class Refused(Exception):
+    """The tag failed verification: exit 1, nothing installed."""
+
+
+class Failure(Exception):
+    """A usage or git error: exit 2."""
+
+
+def default_repo():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description='Install a tagged catalog into the personal skill folders as copies.',
+    )
+    parser.add_argument('--repo', default=default_repo(),
+                        help='catalog repository (default: the one holding this script)')
+    parser.add_argument('--ref', help='tag to install (default: the newest v* tag)')
+    parser.add_argument('--claude-dir', default='~/.claude/skills')
+    parser.add_argument('--agents-dir', default='~/.agents/skills')
+    parser.add_argument('--state', default='~/.config/skills-catalog/installed.json')
+    parser.add_argument('--exclude-file', default='~/.config/skills-catalog/exclude.txt')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='print the plan and write nothing')
+    return parser.parse_args(argv)
+
+
+def full_path(path):
+    return os.path.abspath(os.path.expanduser(path))
+
+
+# ---------------------------------------------------------------- git source
+
+def git(repo, *args):
+    try:
+        run = subprocess.run(['git', '-C', repo] + list(args),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        raise Failure('git is not installed')
+    return run
+
+
+def resolve_tag(repo, ref):
+    """(tag, commit) for ref, which must name a tag."""
+    if ref is None:
+        run = git(repo, 'tag', '--list', 'v*', '--sort=-v:refname')
+        if run.returncode != 0:
+            raise Failure('not a git repository: ' + repo)
+        tags = os.fsdecode(run.stdout).split()
+        if not tags:
+            raise Failure('no v* tag in ' + repo)
+        ref = tags[0]
+    run = git(repo, 'rev-parse', '--verify', '--quiet', 'refs/tags/' + ref + '^{commit}')
+    if run.returncode != 0 or not ref or ref.startswith('-'):
+        raise Failure('ref is not a tag: ' + ref)
+    return ref, os.fsdecode(run.stdout).strip()
+
+
+def safe_member(member):
+    """Check one archive member the way extraction with filter='data' would."""
+    name = member.name
+    parts = name.split('/')
+    if name.startswith('/') or '..' in parts or '\\' in name:
+        raise Refused('unsafe path in the tag: ' + name)
+    data_filter = getattr(tarfile, 'data_filter', None)
+    if data_filter is not None and (member.isreg() or member.isdir()):
+        try:
+            data_filter(member, '/nonexistent-extract-root')
+        except tarfile.FilterError:
+            raise Refused('unsafe path in the tag: ' + name)
+
+
+def read_tag(repo, commit):
+    """{path: (bytes, executable)} for regular files, plus the set of links.
+
+    Paths are '/'-separated and relative to the repository root.
+    """
+    run = git(repo, 'archive', '--format=tar', commit, '--', 'skills', 'catalog.json')
+    if run.returncode != 0:
+        raise Failure('git archive failed: ' + os.fsdecode(run.stderr).strip())
+    files = {}
+    others = set()
+    with tarfile.open(fileobj=io.BytesIO(run.stdout), mode='r:') as archive:
+        for member in archive.getmembers():
+            safe_member(member)
+            name = member.name.rstrip('/')
+            if member.isdir():
+                continue
+            if member.isreg():
+                handle = archive.extractfile(member)
+                files[name] = (handle.read(), bool(member.mode & 0o111))
+            else:
+                others.add(name)
+    return files, others
+
+
+def catalog_skills(files):
+    """The `skills` and the held names of the tag's catalog.json."""
+    if 'catalog.json' not in files:
+        raise Refused('the tag has no catalog.json')
+    try:
+        catalog = json.loads(files['catalog.json'][0].decode('utf-8'))
+        skills = catalog['skills']
+        held = {entry['name'] for entry in catalog.get('held', [])}
+        if not isinstance(skills, list):
+            raise TypeError('skills is not a list')
+        for entry in skills:
+            if not isinstance(entry['name'], str) or not isinstance(entry['files'], dict):
+                raise TypeError('bad entry')
+    except (ValueError, KeyError, TypeError, AttributeError, UnicodeDecodeError):
+        raise Refused('the tag has an unreadable catalog.json')
+    return skills, held
+
+
+def valid_name(name):
+    return bool(name) and '/' not in name and '\\' not in name and name not in ('.', '..') \
+        and not name.startswith('.')
+
+
+def build_wanted(files, others, skills, held, excluded):
+    """{name: {rel: (bytes, executable)}} for every skill to install.
+
+    Raises Refused on any manifest mismatch or link. Error text never names an
+    excluded skill: excluded entries are dropped before anything is checked.
+    """
+    wanted = {}
+    for entry in skills:
+        name = entry['name']
+        if name.lower() in excluded:
+            continue
+        if name in held or name == CANARY:
+            continue
+        if not valid_name(name) or entry.get('path') != 'skills/' + name:
+            raise Refused('bad catalog entry: ' + name)
+        prefix = 'skills/' + name + '/'
+        links = sorted(path for path in others if path.startswith(prefix))
+        if links:
+            raise Refused('refusing a symlink or special file in the tag: ' + links[0])
+        content = {}
+        for path, value in files.items():
+            if path.startswith(prefix) and posixpath.basename(path) not in IGNORED_FILES:
+                content[path[len(prefix):]] = value
+        manifest = entry['files']
+        if sorted(content) != sorted(manifest):
+            raise Refused(name + ': files in the tag do not match catalog.json')
+        for rel, (data, _executable) in content.items():
+            if hashlib.sha256(data).hexdigest() != manifest[rel]:
+                raise Refused(name + '/' + rel + ': sha256 does not match catalog.json')
+        if name in wanted:
+            raise Refused('duplicate catalog entry: ' + name)
+        wanted[name] = content
+    return wanted
+
+
+# ---------------------------------------------------------------- exclusions
+
+def read_excluded(path):
+    """Lowercased names from the exclusion list; empty when it is missing."""
+    if not os.path.exists(path):
+        return set()
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        raise Failure('cannot read the exclusion list')
+    names = set()
+    for raw in lines:
+        name = raw.split('#', 1)[0].strip()
+        if name:
+            names.add(name.lower())
+    return names
+
+
+# ---------------------------------------------------------------- state
+
+def read_state(path):
+    if not os.path.exists(path):
+        return {'version': STATE_VERSION, 'destinations': {}}
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            state = json.load(handle)
+        if not isinstance(state.get('destinations'), dict):
+            raise ValueError('no destinations')
+    except (OSError, ValueError, AttributeError):
+        raise Failure('cannot read the state file: ' + path)
+    return state
+
+
+def write_state(path, state):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.installed-', suffix='.json', dir=folder)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+            handle.write('\n')
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def installed_hashes(folder):
+    """{rel: sha256} of a folder, or None when it holds a link or special file."""
+    if os.path.islink(folder) or not os.path.isdir(folder):
+        return None
+    found = {}
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        for name in dirnames:
+            if os.path.islink(os.path.join(dirpath, name)):
+                return None
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            mode = os.lstat(full).st_mode
+            if name in IGNORED_FILES and stat.S_ISREG(mode):
+                continue
+            if not stat.S_ISREG(mode):
+                return None
+            rel = os.path.relpath(full, folder).replace(os.sep, '/')
+            with open(full, 'rb') as handle:
+                found[rel] = hashlib.sha256(handle.read()).hexdigest()
+    return found
+
+
+def file_mode(executable):
+    return 0o755 if executable else 0o644
+
+
+def modes_match(folder, content):
+    for rel, (_data, executable) in content.items():
+        mode = stat.S_IMODE(os.lstat(os.path.join(folder, *rel.split('/'))).st_mode)
+        if mode != file_mode(executable):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------- plan
+
+def plan_destination(dest, wanted, owned, excluded):
+    """Steps for one destination: (action, name, detail)."""
+    steps = []
+    for name in sorted(wanted):
+        folder = os.path.join(dest, name)
+        content = wanted[name]
+        exists = os.path.lexists(folder)
+        if not exists:
+            steps.append(('install', name, None))
+            continue
+        if name not in owned:
+            steps.append(('refuse', name, NOT_INSTALLED))
+            continue
+        current = installed_hashes(folder)
+        if current is None or current != owned[name].get('files'):
+            steps.append(('refuse', name, CHANGED))
+            continue
+        target = {rel: hashlib.sha256(data).hexdigest() for rel, (data, _x) in content.items()}
+        if current != target or not modes_match(folder, content):
+            steps.append(('update', name, None))
+        else:
+            steps.append(('keep', name, None))
+    for name in sorted(owned):
+        if name in wanted or name.lower() in excluded:
+            continue
+        folder = os.path.join(dest, name)
+        if not os.path.lexists(folder):
+            steps.append(('forget', name, None))
+            continue
+        current = installed_hashes(folder)
+        if current is None or current != owned[name].get('files'):
+            steps.append(('leave', name, CHANGED))
+        else:
+            steps.append(('remove', name, None))
+    return steps
+
+
+# ---------------------------------------------------------------- apply
+
+def write_tree(root, content):
+    for rel in sorted(content):
+        data, executable = content[rel]
+        target = os.path.join(root, *rel.split('/'))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, 'wb') as handle:
+            handle.write(data)
+        os.chmod(target, file_mode(executable))
+
+
+def place(dest, name, content):
+    """Write content to dest/name through a sibling temp folder and renames."""
+    os.makedirs(dest, exist_ok=True)
+    final = os.path.join(dest, name)
+    staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
+    try:
+        fresh = os.path.join(staging, 'new')
+        os.mkdir(fresh)
+        os.chmod(fresh, 0o755)
+        write_tree(fresh, content)
+        if os.path.lexists(final):
+            old = os.path.join(staging, 'old')
+            os.rename(final, old)
+            try:
+                os.rename(fresh, final)
+            except OSError:
+                os.rename(old, final)
+                raise
+        else:
+            os.rename(fresh, final)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def remove(dest, name):
+    folder = os.path.join(dest, name)
+    staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
+    try:
+        os.rename(folder, os.path.join(staging, 'old'))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def record(tag, commit, content):
+    return {
+        'tag': tag,
+        'commit': commit,
+        'files': {rel: hashlib.sha256(data).hexdigest()
+                  for rel, (data, _x) in sorted(content.items())},
+    }
+
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    repo = full_path(args.repo)
+    dests = []
+    for raw in (args.claude_dir, args.agents_dir):
+        path = full_path(raw)
+        if path not in dests:
+            dests.append(path)
+    state_path = full_path(args.state)
+    try:
+        excluded = read_excluded(full_path(args.exclude_file))
+        tag, commit = resolve_tag(repo, args.ref)
+        files, others = read_tag(repo, commit)
+        skills, held = catalog_skills(files)
+        wanted = build_wanted(files, others, skills, held, excluded)
+        state = read_state(state_path)
+    except Failure as err:
+        print(PROG + ': error: ' + str(err), file=sys.stderr)
+        return 2
+    except Refused as err:
+        print(PROG + ': ' + str(err) + '; nothing installed', file=sys.stderr)
+        return 1
+
+    destinations = state.setdefault('destinations', {})
+    plans = {dest: plan_destination(dest, wanted, destinations.get(dest, {}), excluded)
+             for dest in dests}
+    refused = False
+    for dest in dests:
+        for action, name, detail in plans[dest]:
+            where = os.path.join(dest, name)
+            if action == 'refuse':
+                refused = True
+                print(where + ': refusing to overwrite (' + detail + ')', file=sys.stderr)
+            elif action == 'leave':
+                print(where + ': left in place (' + detail + ', no longer in the catalog)',
+                      file=sys.stderr)
+            elif args.dry_run and action in ('install', 'update', 'remove'):
+                print(action + ' ' + where)
+    if refused:
+        print(PROG + ': refused; nothing written', file=sys.stderr)
+        return 1
+    if args.dry_run:
+        print(PROG + ': dry run of ' + tag + '; nothing written')
+        return 0
+
+    try:
+        changed = apply(dests, plans, destinations, wanted, tag, commit, state, state_path)
+    except OSError as err:
+        print(PROG + ': error: ' + err.__class__.__name__ + ' while writing: '
+              + str(err.strerror or err), file=sys.stderr)
+        return 2
+    if not changed:
+        print(PROG + ': ' + tag + ' is already installed')
+    else:
+        print(PROG + ': installed ' + tag)
+    return 0
+
+
+def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
+    """Carry out the plans; the state is saved after every step."""
+    changed = False
+    for dest in dests:
+        owned = destinations.setdefault(dest, {})
+        for action, name, _detail in plans[dest]:
+            if action in ('install', 'update'):
+                place(dest, name, wanted[name])
+                print(action + ' ' + os.path.join(dest, name))
+            elif action == 'remove':
+                remove(dest, name)
+                print('remove ' + os.path.join(dest, name))
+            if action in ('install', 'update', 'keep'):
+                entry = record(tag, commit, wanted[name])
+                if owned.get(name) != entry:
+                    owned[name] = entry
+                    changed = True
+                    write_state(state_path, state)
+            elif action in ('remove', 'forget'):
+                owned.pop(name, None)
+                changed = True
+                write_state(state_path, state)
+    return changed
+
+
+if __name__ == '__main__':
+    sys.exit(main())
