@@ -143,7 +143,7 @@ class FakeGitHub:
 
 def make_github(default_branch='main'):
     fake = FakeGitHub(default_branch)
-    return gmod.GitHub('o/r', TOKEN, transport=fake), fake
+    return gmod.GitHub('o/r', TOKEN, transport=fake, bot_login='freshness[bot]'), fake
 
 
 SKILL = '''---
@@ -267,6 +267,7 @@ class Inv5Test(unittest.TestCase):
         self.assertIn('skills/demo/SKILL.md', tree)
         commit = fake.objects[fake.refs['refs/heads/freshness/' + FP[:12]]]
         self.assertEqual(commit['parents'], [main_before])
+        self.assertIn('FRS-12', commit['message'])
 
     def test_update_pr_moves_only_its_own_branch(self):
         gh, fake = make_github()
@@ -347,10 +348,11 @@ class Inv5Test(unittest.TestCase):
                    'body': 'x\n' + fmod.marker(FP) + '\n', 'labels': []}])
         bot = {'login': 'freshness[bot]', 'type': 'Bot'}
         fake.issues[2] = {'number': 2, 'state': 'open', 'body': 'no marker', 'closed_at': None, 'user': bot}
-        # An outside user copying a marker does not suppress the finding.
+        # Anyone else copying a marker, another App included, does not suppress the finding.
         fake.issues[5] = {'number': 5, 'state': 'open', 'body': fmod.marker(fmod.fingerprint('canary', 'x')),
-                          'closed_at': None, 'user': {'login': 'someone', 'type': 'User'},
-                          'author_association': 'NONE'}
+                          'closed_at': None, 'user': {'login': 'someone', 'type': 'User'}}
+        fake.issues[6] = {'number': 6, 'state': 'open', 'body': fmod.marker(fmod.fingerprint('canary', 'y')),
+                          'closed_at': None, 'user': {'login': 'other-app[bot]', 'type': 'Bot'}}
         old_fp = fmod.fingerprint('dead-link', 'old')
         fake.issues[3] = {'number': 3, 'state': 'closed', 'body': fmod.marker(old_fp),
                           'closed_at': '2026-10-01T00:00:00Z', 'pull_request': {}, 'user': bot}
@@ -361,8 +363,9 @@ class Inv5Test(unittest.TestCase):
         self.assertEqual([(i['number'], i['fingerprint'], i['is_pr']) for i in items],
                          [(1, FP, False), (4, new_fp, True)])
         self.assertTrue(all(r[0] == 'GET' for r in fake.requests[1:]))
-        gh.bot_login = 'other-app[bot]'
-        self.assertEqual(gh.list_bot_items(now=NOW), [])
+        gh.bot_login = None
+        with self.assertRaises(ValueError):
+            gh.list_bot_items(now=NOW)
 
     def test_open_pr_closes_unlabeled_pr_for_retry(self):
         gh, fake = make_github()
@@ -483,9 +486,11 @@ class RouteTest(RootMixin, unittest.TestCase):
         self.assertIn('- `demo`', hidden['body'])
         # The diff itself may name an excluded skill; that line is withheld.
         found = dict(found, evidence=diff + '\n+See the secret-skill notes.')
-        hidden = rmod.route(found, self.root, MODELS, excluded={'secret-skill'}, classification=None)
-        self.assertNotIn('secret-skill', json.dumps(hidden))
+        hidden = rmod.route(found, self.root, MODELS, excluded={'SECRET-skill'}, classification=None)
+        self.assertNotIn('secret-skill', json.dumps(hidden).lower())
         self.assertIn('[line withheld', hidden['body'])
+        # A finding whose subject or file names an excluded skill is dropped whole.
+        self.assertIsNone(rmod.route(model_finding(), self.root, MODELS, excluded={'DEMO'}))
 
     def test_stale_fix_or_excluded_skill_is_not_a_pr(self):
         found = model_finding()
@@ -529,6 +534,7 @@ class ClassifyTest(unittest.TestCase):
         result = cmod.classify('-| gpt-5 | deprecated |', {'y': 'Runs on gpt-5 by default.'}, state, call, '2026-11-18')
         self.assertEqual(result['affects'], ['y'])
         self.assertEqual(calls, [])
+        self.assertEqual(cmod.rules('-o4-mini-2025-04-16 retires', {'z': 'Pin o4-mini-2025-04-16.'})['affects'], ['z'])
         # gpt-5.1 in a diff does not mark a skill that uses only gpt-5.
         self.assertIsNone(cmod.rules('+| gpt-5.1 | deprecated |', {'y': 'Runs on gpt-5 by default.'}))
 

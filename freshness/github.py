@@ -217,13 +217,12 @@ class GitHub:
                 return
 
     def _trusted(self, item):
-        user = item.get('user') or {}
-        if self.bot_login is not None:
-            return user.get('login') == self.bot_login
-        return user.get('type') == 'Bot'
+        return (item.get('user') or {}).get('login') == self.bot_login
 
     def list_bot_items(self, now=None):
         """Open, and closed in the last 14 days, issues and PRs carrying a fingerprint marker."""
+        if not self.bot_login:
+            raise ValueError('list_bot_items needs bot_login, the freshness App login')
         now = _utc(now)
         since = now - CLOSED_WINDOW
         out, seen = [], set()
@@ -301,7 +300,7 @@ class GitHub:
         ref = 'refs/heads/' + action['branch']
         self._check_ref(ref)
         parent, base_tree = self._main_commit()
-        sha = self._commit_files(action['files'], action['title'], parent, base_tree)
+        sha = self._commit_files(action['files'], _message(action['title']), parent, base_tree)
         self._set_ref(ref, sha, force=True)
         _, pr = self._request('POST', '/pulls', {'title': action['title'], 'body': action['body'],
                                                  'head': action['branch'], 'base': BASE_BRANCH})
@@ -334,7 +333,7 @@ class GitHub:
         if head.get('ref') != action['branch'] or ((head.get('repo') or {}).get('full_name') != self.repo):
             raise RefusedWrite('refused: update_pr may only move the PR\'s own freshness branch')
         parent, base_tree = self._main_commit()
-        sha = self._commit_files(action['files'], action.get('title') or pr.get('title') or 'freshness update',
+        sha = self._commit_files(action['files'], _message(action.get('title') or pr.get('title') or 'freshness update'),
                                  parent, base_tree)
         self._request('PATCH', '/git/' + ref, {'sha': sha, 'force': True})
         return pr
@@ -394,7 +393,7 @@ class GitHub:
                 result['error'] = 'unexpected response: ' + err.__class__.__name__
         return results
 
-    def write_state(self, text, message='freshness: state'):
+    def write_state(self, text, message='freshness: state (FRS-24, FRS-25, FRS-27)'):
         """Commit the state file to `freshness-state` (orphan on first use).
 
         Compare-and-swap: the new commit's parent is the sha just read, and
@@ -418,6 +417,11 @@ class GitHub:
                 if status == 200:
                     return sha
         raise GitHubError('state write conflicted twice', status)
+
+
+def _message(title):
+    """Commit message of a freshness PR; cites the requirement (AGENTS.md)."""
+    return title if 'FRS-' in title else title + ' (FRS-12)'
 
 
 def _blob_text(blob):

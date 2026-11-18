@@ -255,7 +255,7 @@ def _skill_pr_item(finding, files, change):
         '## Evidence\n\n' + (finding.get('evidence') or 'none'),
         '## Change\n\nOn line %d of `%s`: %s. Also a patch bump of `catalog-version`, one '
         '`## Changelog` row and the regenerated `catalog.json`, which the catalog checks require '
-        '(CAT-11, CAT-14, DESIGN 10).' % (fix['line'], fix['file'], change),
+        '(FRS-12, CAT-11, CAT-14, DESIGN 10).' % (fix['line'], fix['file'], change),
         '## Files\n\n' + '\n'.join('- `%s`' % path for path in sorted(files)),
         '## Acceptance\n\n```\npython3 tools/lint.py\npython3 tools/catalog.py --check\n```',
     ])
@@ -317,7 +317,7 @@ def _schema_pr(finding, root):
         '## What happened\n\nThe upstream source `%s` added the optional frontmatter field(s) %s.'
         % (finding['skill'], names),
         '## Evidence\n\n' + _fenced(finding.get('evidence')),
-        '## Change\n\nAdds %s to %s of `%s`.' % (names, where, SCHEMA_PATH),
+        '## Change\n\nAdds %s to %s of `%s` (FRS-12).' % (names, where, SCHEMA_PATH),
         '## Files\n\n- `%s`' % SCHEMA_PATH,
         '## Acceptance\n\n```\npython3 tools/lint.py\n```',
     ])
@@ -376,24 +376,30 @@ def _upstream_issue(finding, classification, unclassified_reason):
             'title': _title('upstream-change: ', finding.get('skill') or '')}
 
 
-def _withhold(text, pattern):
-    if not text or pattern is None:
+def _names_excluded(text, lowered):
+    """Case-insensitive substring match, like the local exclusion check (CAT-19)."""
+    low = (text or '').lower()
+    return any(name in low for name in lowered)
+
+
+def _withhold(text, lowered):
+    if not text:
         return text
-    return '\n'.join('[line withheld: it names an excluded skill]' if pattern.search(line) else line
+    return '\n'.join('[line withheld: it names an excluded skill]' if _names_excluded(line, lowered) else line
                      for line in text.split('\n'))
 
 
-def _hide_excluded(item, excluded):
+def _hide_excluded(item, finding, excluded):
     """Withhold every line of the item that names an excluded skill (DESIGN 5.1)."""
-    if not excluded:
+    lowered = [name.lower() for name in excluded if name]
+    if not lowered:
         return item
-    pattern = re.compile(r'(?<![\w-])(?:' + '|'.join(re.escape(n) for n in sorted(excluded)) + r')(?![\w-])')
-    if pattern.search(item['title']):
-        item['title'] = _title('freshness: ', item['finding']['kind'] + ' (subject withheld)')
-    item['body'] = _withhold(item['body'], pattern)
-    found = item['finding']
-    item['finding'] = dict(found, evidence=_withhold(found.get('evidence') or '', pattern))
-    if any(pattern.search(text) for text in item['files'].values()):
+    item['title'] = _withhold(item['title'], lowered)
+    if item['title'].startswith('[line withheld'):
+        item['title'] = _title('freshness: ', finding['kind'] + ' (subject withheld)')
+    item['body'] = _withhold(item['body'], lowered)
+    item['finding'] = dict(item['finding'], evidence=_withhold(item['finding'].get('evidence') or '', lowered))
+    if any(_names_excluded(text, lowered) for text in item['files'].values()):
         item.update({'as': 'issue', 'files': {}, 'labels': [LABEL_FRESHNESS]})
     return item
 
@@ -406,16 +412,21 @@ def route(finding, root, models, classification=None, unclassified_reason=None, 
     changelog date (default: today in UTC).
     """
     excluded = set(excluded)
-    if finding.get('skill') in excluded:
+    lowered = [name.lower() for name in excluded if name]
+    fix = finding.get('fix') or {}
+    identity = [finding.get('skill'), finding.get('subject'), finding.get('file'), fix.get('file')]
+    if any(_names_excluded(text, lowered) for text in identity if isinstance(text, str)):
+        # Its subject is hashed into the fingerprint, so the finding is dropped
+        # whole: excluded skills are never named, hashed or reported (DESIGN 5.1).
         return None
     if classification is not None:
-        # Excluded skills are never named (DESIGN 5.1), even by the classifier.
         reason = classification.get('reason') or ''
-        if any(re.search(r'(?<![\w-])' + re.escape(name) + r'(?![\w-])', reason) for name in excluded):
+        if _names_excluded(reason, lowered):
             reason = 'withheld'
         classification = dict(classification, reason=reason, affects=[
-            name for name in classification.get('affects') or () if name not in excluded])
-    return _hide_excluded(_route(finding, root, models, classification, unclassified_reason, today), excluded)
+            name for name in classification.get('affects') or () if not _names_excluded(name, lowered)])
+    return _hide_excluded(_route(finding, root, models, classification, unclassified_reason, today),
+                          finding, excluded)
 
 
 def _route(finding, root, models, classification, unclassified_reason, today):
