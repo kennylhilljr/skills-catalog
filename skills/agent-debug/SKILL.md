@@ -1,5 +1,5 @@
 ---
-name: agent-debug
+name: agent-debug-x
 description: Debug a misbehaving LLM agent with an ordered diagnostic checklist covering tool schemas, context pressure, tool call pairing, loop termination, prompt conflicts, error handling, model tier and rate limits. Use when an agent loops, stalls, fails tool calls, truncates or returns unexpected output.
 metadata:
   catalog-version: "1.0.0"
