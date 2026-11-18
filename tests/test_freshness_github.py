@@ -571,7 +571,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertIsNone(cmod.classify(self.UNMATCHED, self.SKILLS, state, None, '2026-11-18'))
         self.assertIn('Mac job', cmod.unclassified_reason(state, None, '2026-11-18'))
         call, calls = self.counting()
-        cmod.classify(self.UNMATCHED, self.SKILLS, state, call, '2026-11-18', excluded={'OTHER'})
+        cmod.classify(self.UNMATCHED, self.SKILLS, {}, call, '2026-11-18', excluded={'OTHER'})
         self.assertNotIn('other', calls[0].lower().split('skills:')[1].split('diff:')[0])
         call, calls = self.counting('not json')
         self.assertIsNone(cmod.classify(self.UNMATCHED, self.SKILLS, state, call, '2026-11-18'))
