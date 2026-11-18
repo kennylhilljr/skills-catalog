@@ -355,11 +355,16 @@ class LinkTests(Base):
             'https://build' + '.corp' + '.internal/docs',
             'javascript' + ':alert(1)',
             'https://example.com/a b',
+            'https://[::1/path',
         ]
         for target in bad:
             findings, history = self.run_links({URL: (301, target)}, {}, T0)
             self.assertEqual(findings, [], target)
-            self.assertNotIn(URL, history)
+            self.assertIsNone(history[URL]['moved_to'])
+            self.assertNotIn(target, json.dumps(history))
+            findings, _h = self.run_links({URL: (308, target)}, history, T0 + timedelta(hours=21))
+            self.assertEqual([f['kind'] for f in findings], ['dead-link'], target)
+            self.assertNotIn(target, json.dumps(findings))
 
     def test_url_used_twice_fetched_once(self):
         fetch = FakeFetch({URL: (200, None)})

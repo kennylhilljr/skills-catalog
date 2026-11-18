@@ -82,9 +82,6 @@ def _rel_file(folder, path):
     return _rel_folder(folder) + '/' + rel
 
 
-MAX_READ = 2 * 1024 * 1024
-
-
 def _is_regular(path):
     """True for a regular file that is not a symlink (lstat, like tools/catalog.py)."""
     try:
@@ -101,19 +98,18 @@ def _is_real_dir(path):
 
 
 def _read_text(path):
-    """File text, or None for a binary, unreadable, oversized or non-regular file.
+    """File text, or None for a binary, unreadable or non-regular file.
 
     Symlinks and special files are never read, so a link cannot pull in a file
-    outside the skill folder or a device that never ends.
+    outside the skill folder or a device that never ends. A regular file is
+    read whole, so no text file is skipped for its size.
     """
     if not _is_regular(path):
         return None
     try:
         with open(path, 'rb') as handle:
-            data = handle.read(MAX_READ + 1)
+            data = handle.read()
     except OSError:
-        return None
-    if len(data) > MAX_READ:
         return None
     if b'\0' in data[:8000]:
         return None

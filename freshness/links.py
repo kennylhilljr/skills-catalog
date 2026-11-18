@@ -6,8 +6,8 @@ applies the soft-fail rule: the first failure of a URL is only recorded in
 yields a `dead-link` finding; a success clears the entry. A 301 or 308 to a
 safe target (`safe_location`) records `moved_to` and yields a finding with a
 `fix` that replaces the URL on that line (part 5 turns it into a "moved link"
-PR). That finding has kind
-`moved-link`, never `dead-link`. A `fix` means: on line `line` of `file`,
+PR). That finding has kind `moved-link`, never `dead-link`. A 301 or 308 to
+an unusable target counts as a failure and is never published. A `fix` means: on line `line` of `file`,
 replace the text `old` with `new`.
 
 This module does no network work itself: the caller passes `fetch(url) ->
@@ -94,8 +94,11 @@ def safe_location(url, location):
     """
     if not isinstance(location, str) or not location:
         return None
-    target = urljoin(url, location)
-    parts = urlsplit(target)
+    try:
+        target = urljoin(url, location)
+        parts = urlsplit(target)
+    except ValueError:
+        return None
     if parts.scheme not in ('http', 'https') or not parts.netloc:
         return None
     if re.search(r'[\s<>"\'`]', target) or len(target) > 2048:
@@ -133,6 +136,10 @@ def check_links(items, history, fetch, now, min_gap_hours=20):
     for url, (ok, status, location) in results.items():
         if ok and status in MOVED:
             location = safe_location(url, location)
+            if location is None:
+                # A permanent redirect to a target that cannot be published
+                # counts as a failure, so it can still become a dead link.
+                ok, status = False, '{} to an unusable target'.format(status)
             results[url] = (ok, status, location)
         if ok and status in MOVED and location:
             history[url] = {'first_fail_at': None, 'last_status': status, 'moved_to': location}
