@@ -291,7 +291,9 @@ class InstallLocalCase(unittest.TestCase):
         state = tool.read_state(self.state)
         dests = state['destinations']
         plans = {self.claude: tool.plan_destination(self.claude, wanted, dests[self.claude], set())}
-        self.assertIn(('update', 'alpha', None), plans[self.claude])
+        self.assertIn('update', [step[0] for step in plans[self.claude]])
+        with open(self.state, 'rb') as handle:
+            saved = handle.read()
         edited = os.path.join(self.claude, 'alpha', 'SKILL.md')
         with open(edited, 'w') as handle:
             handle.write('edited after the plan')
@@ -301,6 +303,34 @@ class InstallLocalCase(unittest.TestCase):
         self.assertTrue(refused)
         with open(edited) as handle:
             self.assertEqual(handle.read(), 'edited after the plan')
+        with open(self.state, 'rb') as handle:
+            self.assertEqual(handle.read(), saved)
+        # A folder that changes during its own swap is put back.
+        tree = {'SKILL.md': (b'new\n', False)}
+        with self.assertRaises(tool.Conflict):
+            tool.place(self.claude, 'alpha', tree, {'SKILL.md': sha(b'alpha v1\n')})
+        with open(edited) as handle:
+            self.assertEqual(handle.read(), 'edited after the plan')
+        with self.assertRaises(tool.Conflict):
+            tool.place(self.claude, 'beta', tree, None)
+        self.assertEqual(sorted(os.listdir(self.claude)), ['alpha', 'beta'])
+        with self.assertRaises(tool.Conflict):
+            tool.remove(self.claude, 'alpha', {'SKILL.md': sha(b'alpha v1\n')})
+        with open(edited) as handle:
+            self.assertEqual(handle.read(), 'edited after the plan')
+        # The same guarantees hold without the atomic rename calls.
+        tool._rename_calls = lambda: (None, None)
+        with self.assertRaises(tool.Conflict):
+            tool.place(self.claude, 'alpha', tree, {'SKILL.md': sha(b'alpha v1\n')})
+        with self.assertRaises(tool.Conflict):
+            tool.place(self.claude, 'beta', tree, None)
+        with open(edited) as handle:
+            self.assertEqual(handle.read(), 'edited after the plan')
+        current = tool.installed_hashes(os.path.join(self.claude, 'alpha'))
+        tool.place(self.claude, 'alpha', tree, current)
+        with open(edited, 'rb') as handle:
+            self.assertEqual(handle.read(), b'new\n')
+        self.assertEqual(sorted(os.listdir(self.claude)), ['alpha', 'beta'])
 
     def test_symlinked_skill_folder_in_the_tag_is_refused(self):
         self.commit_tag('v1')

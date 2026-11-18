@@ -326,7 +326,11 @@ def matches_record(current, entry):
 
 
 def plan_destination(dest, wanted, owned, excluded):
-    """Steps for one destination: (action, name, detail)."""
+    """Steps for one destination: (action, name, detail).
+
+    detail is the refusal reason for `refuse` and `leave`, and the folder's
+    current hashes for `update` and `remove`.
+    """
     steps = []
     for name in sorted(wanted):
         folder = os.path.join(dest, name)
@@ -344,7 +348,7 @@ def plan_destination(dest, wanted, owned, excluded):
             continue
         target = {rel: hashlib.sha256(data).hexdigest() for rel, (data, _x) in content.items()}
         if current != target or not modes_match(folder, content):
-            steps.append(('update', name, None))
+            steps.append(('update', name, current))
         else:
             steps.append(('keep', name, None))
     for name in sorted(owned):
@@ -358,11 +362,15 @@ def plan_destination(dest, wanted, owned, excluded):
         if not matches_record(current, owned[name]):
             steps.append(('leave', name, CHANGED))
         else:
-            steps.append(('remove', name, None))
+            steps.append(('remove', name, current))
     return steps
 
 
 # ---------------------------------------------------------------- apply
+
+class Conflict(Exception):
+    """A folder changed while this run was writing it; it was put back."""
+
 
 def write_tree(root, content):
     for rel in sorted(content):
@@ -374,57 +382,89 @@ def write_tree(root, content):
         os.chmod(target, file_mode(executable))
 
 
-def _exchange_function():
-    """An atomic swap of two paths from the C library, or None.
+def _rename_calls():
+    """(exchange, no_replace) from the C library; either may be None.
 
-    renamex_np(RENAME_SWAP) on macOS and renameat2(RENAME_EXCHANGE) on Linux.
+    renamex_np(RENAME_SWAP or RENAME_EXCL) on macOS, renameat2(RENAME_EXCHANGE
+    or RENAME_NOREPLACE) on Linux.
     """
     try:
         import ctypes
         libc = ctypes.CDLL(None, use_errno=True)
     except (ImportError, OSError):
-        return None
+        return None, None
     if sys.platform == 'darwin' and hasattr(libc, 'renamex_np'):
         func = libc.renamex_np
         func.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
 
-        def swap(first, second):
-            return func(os.fsencode(first), os.fsencode(second), 0x2)
+        def call(first, second, flag):
+            return func(os.fsencode(first), os.fsencode(second), flag)
+        swap_flag, excl_flag = 0x2, 0x4
     elif sys.platform.startswith('linux') and hasattr(libc, 'renameat2'):
         func = libc.renameat2
         func.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
                          ctypes.c_uint]
 
-        def swap(first, second):
-            return func(-100, os.fsencode(first), -100, os.fsencode(second), 0x2)
+        def call(first, second, flag):
+            return func(-100, os.fsencode(first), -100, os.fsencode(second), flag)
+        swap_flag, excl_flag = 0x2, 0x1
     else:
-        return None
+        return None, None
 
-    def exchange(first, second):
-        if swap(first, second) != 0:
-            err = ctypes.get_errno()
-            raise OSError(err, os.strerror(err))
-    return exchange
+    def wrap(flag):
+        def run(first, second):
+            if call(first, second, flag) != 0:
+                err = ctypes.get_errno()
+                raise OSError(err, os.strerror(err), second)
+        return run
+    return wrap(swap_flag), wrap(excl_flag)
 
 
-def swap_in(fresh, final, old):
-    """Replace the folder final with fresh; the replaced folder ends at old.
+UNSUPPORTED = (errno.EINVAL, errno.ENOTSUP, errno.ENOSYS)
 
-    Uses an atomic exchange where the platform has one. Otherwise the two
-    renames leave final missing for an instant; an interrupted run then sees
-    a missing folder and installs it again.
+
+def rename_new(fresh, final):
+    """Move fresh to final, failing if anything appeared at final."""
+    _exchange, no_replace = _rename_calls()
+    if no_replace is not None:
+        try:
+            no_replace(fresh, final)
+            return
+        except OSError as err:
+            if err.errno == errno.EEXIST:
+                raise Conflict(NOT_INSTALLED)
+            if err.errno not in UNSUPPORTED:
+                raise
+    if os.path.lexists(final):
+        raise Conflict(NOT_INSTALLED)
+    # A plain rename fails on a non-empty folder or a file at final.
+    os.rename(fresh, final)
+
+
+def swap_in(fresh, final, old, expected):
+    """Replace final with fresh; the replaced folder ends at old.
+
+    Uses an atomic exchange where the platform has one; otherwise two renames
+    leave final missing for an instant (an interrupted run then sees a
+    missing folder and installs it again). The replaced folder must still
+    hash to expected; if not, it is put back and Conflict is raised.
     """
-    exchange = _exchange_function()
+    exchange, _no_replace = _rename_calls()
     if exchange is not None:
         try:
             exchange(fresh, final)
+            if installed_hashes(fresh) != expected:
+                exchange(fresh, final)
+                raise Conflict(CHANGED)
             os.rename(fresh, old)
             return
         except OSError as err:
-            # Only a file system without the call falls back; anything else fails.
-            if err.errno not in (errno.EINVAL, errno.ENOTSUP, errno.ENOSYS):
+            if err.errno not in UNSUPPORTED:
                 raise
     os.rename(final, old)
+    if installed_hashes(old) != expected:
+        os.rename(old, final)
+        raise Conflict(CHANGED)
     try:
         os.rename(fresh, final)
     except OSError:
@@ -432,8 +472,12 @@ def swap_in(fresh, final, old):
         raise
 
 
-def place(dest, name, content):
-    """Write content to dest/name through a sibling temp folder and a swap."""
+def place(dest, name, content, expected):
+    """Write content to dest/name through a sibling temp folder.
+
+    expected is None for a new folder, else the hashes the folder being
+    replaced must still have.
+    """
     os.makedirs(dest, exist_ok=True)
     final = os.path.join(dest, name)
     staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
@@ -442,19 +486,24 @@ def place(dest, name, content):
         os.mkdir(fresh)
         os.chmod(fresh, 0o755)
         write_tree(fresh, content)
-        if os.path.lexists(final):
-            swap_in(fresh, final, os.path.join(staging, 'old'))
+        if expected is None:
+            rename_new(fresh, final)
         else:
-            os.rename(fresh, final)
+            swap_in(fresh, final, os.path.join(staging, 'old'), expected)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def remove(dest, name):
+def remove(dest, name, expected):
+    """Delete dest/name, unless it no longer hashes to expected."""
     folder = os.path.join(dest, name)
     staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
     try:
-        os.rename(folder, os.path.join(staging, 'old'))
+        old = os.path.join(staging, 'old')
+        os.rename(folder, old)
+        if installed_hashes(old) != expected:
+            os.rename(old, folder)
+            raise Conflict(CHANGED)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -530,15 +579,34 @@ def main(argv=None):
     return 0
 
 
-def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
-    """Carry out the plans.
+def recheck(plans):
+    """Refusals for folders that changed since the plan, before any write."""
+    found = []
+    for dest in plans:
+        for action, name, snapshot in plans[dest]:
+            folder = os.path.join(dest, name)
+            if action == 'install' and os.path.lexists(folder):
+                found.append((folder, NOT_INSTALLED))
+            elif action in ('update', 'remove') and installed_hashes(folder) != snapshot:
+                found.append((folder, CHANGED))
+    return found
 
-    The state is saved before each folder is written (with the old hashes
-    kept as `previous` during an update) and again after, so an interrupted
-    or failed run never leaves a folder this tool wrote looking foreign. The
-    first save also proves the state file is writable before any folder
-    changes.
+
+def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
+    """Carry out the plans. Returns (changed, refused).
+
+    Every folder is checked again first, and any change aborts the run before
+    anything is written. The state is then saved once (proving it writable),
+    before each folder is written (with the replaced hashes kept as
+    `previous` during an update) and after, so an interrupted run never
+    leaves a folder this tool wrote looking foreign. A folder that changes
+    during its own swap is put back and refused.
     """
+    late = recheck(plans)
+    if late:
+        for folder, reason in late:
+            print(folder + ': refusing to overwrite (' + reason + ')', file=sys.stderr)
+        return False, True
     changed = False
     refused = False
     if any(step[0] in ('install', 'update', 'remove', 'forget')
@@ -546,36 +614,33 @@ def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
         write_state(state_path, state)
     for dest in dests:
         owned = destinations.setdefault(dest, {})
-        for action, name, _detail in plans[dest]:
+        for action, name, snapshot in plans[dest]:
             folder = os.path.join(dest, name)
-            # Check again right before writing: the folder may have changed
-            # since the plan was made.
-            if action == 'install' and os.path.lexists(folder):
+            before = owned.get(name)
+            try:
+                if action in ('install', 'update'):
+                    pending = record(tag, commit, wanted[name])
+                    if action == 'update':
+                        pending['previous'] = snapshot
+                    owned[name] = pending
+                    write_state(state_path, state)
+                    place(dest, name, wanted[name], snapshot if action == 'update' else None)
+                    print(action + ' ' + folder)
+                elif action == 'remove':
+                    remove(dest, name, snapshot)
+                    print('remove ' + folder)
+            except Conflict as err:
                 refused = True
-                print(folder + ': refusing to overwrite (' + NOT_INSTALLED + ')', file=sys.stderr)
+                print(folder + ': refusing to overwrite (' + str(err) + ')', file=sys.stderr)
+                if before is None:
+                    owned.pop(name, None)
+                else:
+                    owned[name] = before
+                write_state(state_path, state)
                 continue
-            if action in ('update', 'remove') and not matches_record(
-                    installed_hashes(folder), owned.get(name)):
-                refused = True
-                print(folder + ': refusing to overwrite (' + CHANGED + ')', file=sys.stderr)
-                continue
-            entry = None
             if action in ('install', 'update', 'keep'):
                 entry = record(tag, commit, wanted[name])
-            if action in ('install', 'update'):
-                pending = dict(entry)
-                if action == 'update':
-                    pending['previous'] = installed_hashes(folder)
-                owned[name] = pending
-                changed = True
-                write_state(state_path, state)
-                place(dest, name, wanted[name])
-                print(action + ' ' + os.path.join(dest, name))
-            elif action == 'remove':
-                remove(dest, name)
-                print('remove ' + os.path.join(dest, name))
-            if entry is not None:
-                if owned.get(name) != entry:
+                if action != 'keep' or owned.get(name) != entry:
                     owned[name] = entry
                     changed = True
                     write_state(state_path, state)
