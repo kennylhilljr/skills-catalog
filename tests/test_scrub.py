@@ -246,6 +246,31 @@ class Exemptions(unittest.TestCase):
         nested = FENCE * 2 + 'example' + NL + FENCE + NL + ENTROPY + NL + FENCE * 2 + NL
         self.assertEqual(scrub.scan_text(nested, 'docs/x.md'), [])
 
+    def test_uv_lock_skips_only_entropy(self):
+        wheel = 'name = "pkg-1.0-cp311-cp311-' + 'macosx_10_9_universal2.whl"'
+        lock = 'server/uv.lock'
+        self.assertEqual(scrub.scan_text(ENTROPY + NL + wheel + NL, lock), [])
+        # Every other kind is still flagged in the lock file.
+        for value, kind in [(GH_TOKEN, 'github-token'), (EMAIL, 'email'), (IP, 'private-ip')]:
+            with self.subTest(kind=kind):
+                self.assertEqual(scrub.scan_text('x = "' + value + '"' + NL, lock), [(1, kind)])
+        # The exemption is for that exact path only.
+        for other in ['uv.lock', 'server/uv.lock.bak', 'server/sub/uv.lock', 'skills/x/uv.lock', 'Server/uv.lock']:
+            with self.subTest(path=other):
+                self.assertEqual(scrub.scan_text(ENTROPY + NL, other), [(1, 'high-entropy')])
+        self.assertEqual(scrub.scan_text(ENTROPY + NL, './server/uv.lock'), [])
+
+    def test_uv_lock_in_tree_still_flags_secrets(self):
+        with tempfile.TemporaryDirectory() as root:
+            git(root, 'init', '-q')
+            write(root, 'server/uv.lock', ENTROPY + NL + 'token = "' + GH_TOKEN + '"' + NL)
+            write(root, 'docs/x.md', ENTROPY + NL)
+            git(root, 'add', '-A')
+            self.assertEqual(
+                scrub.scan_tree(root),
+                [('docs/x.md', 1, 'high-entropy'), ('server/uv.lock', 2, 'github-token')],
+            )
+
     def test_private_names_only_under_skills_and_held(self):
         line = 'see ' + PRIVATE + ' here'
         names = [PRIVATE]

@@ -18,6 +18,10 @@ The private repo list has one name per line; `#` starts a comment. Without
 --private-repos, the scrub reads ~/.config/skills-catalog/private-repos.txt
 when that file exists. Exit status: 0 clean, 1 findings, 2 error.
 
+The generated lock file `server/uv.lock` (exact repo-relative path) skips
+only the high-entropy check: its PyPI wheel filename tags are long mixed
+runs, not secrets. Every other kind, including private names, still applies.
+
 Importing this module has no side effects. Python 3.9+, standard library only.
 """
 
@@ -103,6 +107,8 @@ _CATALOG_OWNER_VALUE = re.compile(
 )
 
 _PRIVATE_PREFIXES = ('skills/', '.held/')
+# Exact repo-relative paths that skip only the high-entropy heuristic.
+_ENTROPY_EXEMPT_PATHS = frozenset(('server/uv.lock',))
 _HELD_PREFIX = '.held/'
 
 
@@ -219,6 +225,7 @@ def scan_text(text, path='', private_names=()):
 
     lines = [line[:-1] if line.endswith('\r') else line for line in text.split('\n')]
     owner_limit = _frontmatter_end(lines) if held else 0
+    entropy_exempt = rel in _ENTROPY_EXEMPT_PATHS
 
     findings = set()
     fence_char = None
@@ -250,7 +257,7 @@ def scan_text(text, path='', private_names=()):
             else:
                 check_entropy = not fence_is_example
 
-        _scan_line(line, kinds, check_entropy)
+        _scan_line(line, kinds, check_entropy and not entropy_exempt)
 
         if name_patterns:
             checked = line
