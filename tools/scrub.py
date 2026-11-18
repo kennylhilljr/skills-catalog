@@ -20,7 +20,7 @@ when that file exists. Exit status: 0 clean, 1 findings, 2 error.
 
 The generated lock file `server/uv.lock` (exact repo-relative path) skips
 only the high-entropy check: its PyPI wheel filename tags are long mixed
-runs, not secrets. Every other kind, including private names, still applies.
+runs, not secrets. Every other check keeps its existing scope.
 
 Importing this module has no side effects. Python 3.9+, standard library only.
 """
