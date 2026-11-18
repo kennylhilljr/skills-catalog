@@ -72,10 +72,10 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(snap.cleanup)
         return snap
 
-    def server(self, snap, fetcher=None):
+    def server(self, snap, fetcher=None, excluded=None):
         self.fetcher = fetcher if fetcher is not None else _FakeFetcher()
         mcp = FastMCP('test')
-        tools.register(mcp, snap, findings_fetcher=self.fetcher)
+        tools.register(mcp, snap, findings_fetcher=self.fetcher, excluded=excluded)
         return mcp
 
     async def call(self, mcp, tool, **args):
@@ -221,6 +221,26 @@ class SkillStatusTests(_Base):
         self.assertEqual(status['findings'], issues)
         self.assertIsNone(status['findings_error'])
         self.assertEqual(self.fetcher.calls, ['alpha-skill'])
+
+    async def test_findings_naming_an_excluded_skill_are_dropped(self):
+        hidden = 'private-' + 'thing'
+        issues = [
+            {'url': ISSUES + '7', 'title': 're-review: alpha-skill'},
+            {'url': ISSUES + '8', 'title': 'upstream-change: alpha-skill and ' + hidden.upper()},
+        ]
+        snap = self.snapshot(['alpha-skill', hidden], exclude=[hidden])
+        mcp = self.server(snap, _FakeFetcher(issues), excluded=[hidden])
+        status = await self.status(mcp, 'alpha-skill')
+        self.assertEqual(status['findings'], issues[:1])
+        self.assertNotIn(hidden, json.dumps(status).lower())
+
+    async def test_excluded_defaults_to_the_snapshot_attribute(self):
+        hidden = 'private-' + 'thing'
+        snap = self.snapshot(['alpha-skill'])
+        snap.excluded = frozenset([hidden])
+        issues = [{'url': ISSUES + '8', 'title': 'freshness-alert: drift: alpha-skill ' + hidden}]
+        status = await self.status(self.server(snap, _FakeFetcher(issues)), 'alpha-skill')
+        self.assertEqual(status['findings'], [])
 
     async def test_fetcher_that_raises_gives_empty_findings_and_an_error(self):
         mcp = self.server(self.snapshot(['alpha-skill']), _FakeFetcher(error=OSError('boom')))

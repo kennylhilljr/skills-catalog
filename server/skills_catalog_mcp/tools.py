@@ -81,8 +81,11 @@ def _description(root, name):
 class Catalog:
     """The served skills of one snapshot and the two tool bodies."""
 
-    def __init__(self, snapshot, findings_fetcher=None):
+    def __init__(self, snapshot, findings_fetcher=None, excluded=None):
         self.snapshot = snapshot
+        if excluded is None:
+            excluded = getattr(snapshot, 'excluded', None) or ()
+        self.excluded = frozenset(str(n).lower() for n in excluded)
         self.entries = {e['name']: e for e in snapshot.catalog}
         self.descriptions = {name: _description(snapshot.root, name) for name in self.entries}
         self.fetcher = findings_fetcher if findings_fetcher is not None else findings.GitHubFindings()
@@ -115,6 +118,9 @@ class Catalog:
         if entry is None:
             raise ToolError(UNKNOWN_SKILL)
         found, error = findings.lookup(self.fetcher, entry['name'])
+        # A finding whose title also names an excluded skill is dropped, so
+        # no excluded name reaches a tool result (INV-7).
+        found = [f for f in found if not any(findings.title_names(f['title'], n) for n in self.excluded)]
         pin = version.fastmcp_version()
         return {
             'name': entry['name'],
@@ -132,13 +138,16 @@ class Catalog:
         }
 
 
-def register(mcp, snapshot, findings_fetcher=None):
+def register(mcp, snapshot, findings_fetcher=None, excluded=None):
     """Add `search_skills` and `skill_status` to `mcp`.
 
     `findings_fetcher(name)` returns `[{url, title}]` and may raise; the
     default asks the public GitHub search API (findings.GitHubFindings).
+    `excluded` is the local exclusion list (lowercased names); it defaults to
+    `snapshot.excluded` when the snapshot carries one. Findings whose title
+    names an excluded skill are dropped.
     """
-    catalog = Catalog(snapshot, findings_fetcher)
+    catalog = Catalog(snapshot, findings_fetcher, excluded)
 
     @mcp.tool
     def search_skills(query: str, scope: str = 'catalog') -> list[dict]:
