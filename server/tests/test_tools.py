@@ -194,6 +194,12 @@ class SearchSkillsTests(_Base):
         mcp = self.server(self.snapshot(_skills({'alpha-skill': 'Use when ordering at a café.'})))
         self.assertEqual(await self.search(mcp, 'caf'), [])
         self.assertEqual([f['name'] for f in await self.search(mcp, 'CAFÉ')], ['alpha-skill'])
+        self.assertEqual([f['name'] for f in await self.search(mcp, 'cafe\u0301')], ['alpha-skill'])
+
+    def test_combining_marks_stay_inside_words(self):
+        word = '\u0939\u093f\u0902\u0926\u0940'
+        self.assertEqual(tools._words('use ' + word + ' now'), {'use', word, 'now'})
+        self.assertEqual(tools._words('a_b-c'), {'a', 'b', 'c'})
 
     async def test_held_canary_and_excluded_never_match(self):
         hidden = 'hidden-' + 'secretive'

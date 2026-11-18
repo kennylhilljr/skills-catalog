@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 
 import pydantic
 from fastmcp.exceptions import ToolError, ValidationError
@@ -24,12 +25,21 @@ NO_THIRD_PARTY = 'third-party index is not available'
 UNKNOWN_SCOPE = 'unknown scope'
 INVALID_ARGUMENTS = 'invalid arguments'
 TOOL_NAMES = ('search_skills', 'skill_status')
-_WORD = re.compile(r'[^\W_]+')
 _DESCRIPTION = re.compile(r'^description:(?: (.*))?$')
 
 
 def _words(text):
-    return set(_WORD.findall(str(text).lower()))
+    """The words of text: runs of letters, digits and combining marks, NFKC and casefolded."""
+    words, word = set(), []
+    for char in unicodedata.normalize('NFKC', str(text)).casefold():
+        if unicodedata.category(char)[0] in 'LNM':
+            word.append(char)
+        elif word:
+            words.add(''.join(word))
+            word = []
+    if word:
+        words.add(''.join(word))
+    return words
 
 
 def _unquote(value):
