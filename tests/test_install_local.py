@@ -223,7 +223,8 @@ class InstallLocalCase(unittest.TestCase):
         self.commit_tag('v1')
         head = self.git('rev-parse', 'HEAD').stdout.decode().strip()
         branch = self.git('symbolic-ref', '--short', 'HEAD').stdout.decode().strip()
-        for ref in (branch, head):
+        self.commit_tag('v2')
+        for ref in (branch, head, 'v2~1', 'v2^', 'v1^{commit}'):
             run = self.run_tool(ref=ref)
             self.assertEqual(run.returncode, 2, ref)
             self.assertIn('ref is not a tag', run.stderr)
@@ -267,6 +268,45 @@ class InstallLocalCase(unittest.TestCase):
             self.assertNotIn(HIDDEN, handle.read())
         dry = self.run_tool('--dry-run')
         self.assertNotIn(HIDDEN, dry.stdout.lower() + dry.stderr.lower())
+
+    def test_excluded_skill_with_odd_path_is_never_named(self):
+        self.skills[HIDDEN] = {'SKILL.md': b'private\n', 'odd\\name.md': b'x\n'}
+        self.commit_tag('v1')
+        with open(self.exclude, 'w') as handle:
+            handle.write(HIDDEN + '\n')
+        run = self.run_tool()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertNotIn(HIDDEN, run.stdout + run.stderr)
+
+    def test_unwritable_state_changes_no_folder(self):
+        self.commit_tag('v1')
+        blocker = os.path.join(self.tmp, 'blocker')
+        with open(blocker, 'w') as handle:
+            handle.write('a file, so the state folder cannot be made')
+        self.state = os.path.join(blocker, 'installed.json')
+        run = self.run_tool()
+        self.assertEqual(run.returncode, 2)
+        self.assertFalse(os.path.exists(self.claude))
+        self.assertFalse(os.path.exists(self.agents))
+
+    def test_interrupted_update_is_resumed(self):
+        self.commit_tag('v1')
+        self.assertEqual(self.run_tool().returncode, 0)
+        self.skills['alpha']['SKILL.md'] = b'alpha v2\n'
+        self.commit_tag('v2')
+        # The state was saved for the update, then the run stopped before the swap.
+        with open(self.state) as handle:
+            state = json.load(handle)
+        entry = state['destinations'][self.claude]['alpha']
+        entry['previous'] = entry['files']
+        entry['files'] = dict(entry['files'], **{'SKILL.md': sha(b'alpha v2\n')})
+        with open(self.state, 'w') as handle:
+            json.dump(state, handle)
+        run = self.run_tool(ref='v2')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assert_installed(self.claude, self.skills)
+        with open(self.state) as handle:
+            self.assertNotIn('previous', json.load(handle)['destinations'][self.claude]['alpha'])
 
     def test_dry_run_writes_nothing(self):
         self.commit_tag('v1')

@@ -18,7 +18,8 @@ The state file records, per destination folder, each installed skill's tag,
 commit and per-file sha256. A destination folder that exists but is not in the
 state, or whose files no longer match the recorded hashes, is refused, and
 then nothing is written anywhere. There is no --force. An owned folder is
-replaced through a sibling temp folder and renames. A skill that left the
+written to a sibling temp folder and swapped in atomically (renamex_np or
+renameat2 through ctypes; two renames where neither exists). A skill that left the
 catalog is removed when unchanged and left in place (and reported) when
 changed.
 
@@ -101,8 +102,14 @@ def resolve_tag(repo, ref):
         if not tags:
             raise Failure('no v* tag in ' + repo)
         ref = tags[0]
-    run = git(repo, 'rev-parse', '--verify', '--quiet', 'refs/tags/' + ref + '^{commit}')
-    if run.returncode != 0 or not ref or ref.startswith('-'):
+    full = 'refs/tags/' + ref
+    # The exact ref must exist: no revision syntax such as `v1~1` or `v1^`.
+    if (not ref or ref.startswith('-')
+            or git(repo, 'check-ref-format', full).returncode != 0
+            or git(repo, 'show-ref', '--verify', '--quiet', full).returncode != 0):
+        raise Failure('ref is not a tag: ' + ref)
+    run = git(repo, 'rev-parse', '--verify', '--quiet', full + '^{commit}')
+    if run.returncode != 0:
         raise Failure('ref is not a tag: ' + ref)
     return ref, os.fsdecode(run.stdout).strip()
 
@@ -116,15 +123,21 @@ def safe_member(member):
     data_filter = getattr(tarfile, 'data_filter', None)
     if data_filter is not None and (member.isreg() or member.isdir()):
         try:
-            data_filter(member, '/nonexistent-extract-root')
+            data_filter(member, 'extract-root')
         except tarfile.FilterError:
             raise Refused('unsafe path in the tag: ' + name)
 
 
-def read_tag(repo, commit):
+def is_excluded_path(name, excluded):
+    parts = name.split('/')
+    return len(parts) > 1 and parts[0] == 'skills' and parts[1].lower() in excluded
+
+
+def read_tag(repo, commit, excluded):
     """{path: (bytes, executable)} for regular files, plus the set of links.
 
-    Paths are '/'-separated and relative to the repository root.
+    Paths are '/'-separated and relative to the repository root. Members of
+    an excluded skill folder are dropped unread, so no check can name them.
     """
     run = git(repo, 'archive', '--format=tar', commit, '--', 'skills', 'catalog.json')
     if run.returncode != 0:
@@ -133,6 +146,8 @@ def read_tag(repo, commit):
     others = set()
     with tarfile.open(fileobj=io.BytesIO(run.stdout), mode='r:') as archive:
         for member in archive.getmembers():
+            if is_excluded_path(member.name, excluded):
+                continue
             safe_member(member)
             name = member.name.rstrip('/')
             if member.isdir():
@@ -288,6 +303,18 @@ def modes_match(folder, content):
 
 # ---------------------------------------------------------------- plan
 
+def matches_record(current, entry):
+    """True when a folder's hashes are the recorded ones.
+
+    `previous` is set only while an update is in flight: the state is saved
+    before the folder is swapped, so after an interruption either side of
+    the swap still counts as installed by this tool.
+    """
+    if current is None or not isinstance(entry, dict):
+        return False
+    return current == entry.get('files') or current == entry.get('previous')
+
+
 def plan_destination(dest, wanted, owned, excluded):
     """Steps for one destination: (action, name, detail)."""
     steps = []
@@ -302,7 +329,7 @@ def plan_destination(dest, wanted, owned, excluded):
             steps.append(('refuse', name, NOT_INSTALLED))
             continue
         current = installed_hashes(folder)
-        if current is None or current != owned[name].get('files'):
+        if not matches_record(current, owned[name]):
             steps.append(('refuse', name, CHANGED))
             continue
         target = {rel: hashlib.sha256(data).hexdigest() for rel, (data, _x) in content.items()}
@@ -318,7 +345,7 @@ def plan_destination(dest, wanted, owned, excluded):
             steps.append(('forget', name, None))
             continue
         current = installed_hashes(folder)
-        if current is None or current != owned[name].get('files'):
+        if not matches_record(current, owned[name]):
             steps.append(('leave', name, CHANGED))
         else:
             steps.append(('remove', name, None))
@@ -337,8 +364,64 @@ def write_tree(root, content):
         os.chmod(target, file_mode(executable))
 
 
+def _exchange_function():
+    """An atomic swap of two paths from the C library, or None.
+
+    renamex_np(RENAME_SWAP) on macOS and renameat2(RENAME_EXCHANGE) on Linux.
+    """
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+    except (ImportError, OSError):
+        return None
+    if sys.platform == 'darwin' and hasattr(libc, 'renamex_np'):
+        func = libc.renamex_np
+        func.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+
+        def swap(first, second):
+            return func(os.fsencode(first), os.fsencode(second), 0x2)
+    elif sys.platform.startswith('linux') and hasattr(libc, 'renameat2'):
+        func = libc.renameat2
+        func.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+                         ctypes.c_uint]
+
+        def swap(first, second):
+            return func(-100, os.fsencode(first), -100, os.fsencode(second), 0x2)
+    else:
+        return None
+
+    def exchange(first, second):
+        if swap(first, second) != 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err))
+    return exchange
+
+
+def swap_in(fresh, final, old):
+    """Replace the folder final with fresh; the replaced folder ends at old.
+
+    Uses an atomic exchange where the platform has one. Otherwise the two
+    renames leave final missing for an instant; an interrupted run then sees
+    a missing folder and installs it again.
+    """
+    exchange = _exchange_function()
+    if exchange is not None:
+        try:
+            exchange(fresh, final)
+            os.rename(fresh, old)
+            return
+        except OSError:
+            pass
+    os.rename(final, old)
+    try:
+        os.rename(fresh, final)
+    except OSError:
+        os.rename(old, final)
+        raise
+
+
 def place(dest, name, content):
-    """Write content to dest/name through a sibling temp folder and renames."""
+    """Write content to dest/name through a sibling temp folder and a swap."""
     os.makedirs(dest, exist_ok=True)
     final = os.path.join(dest, name)
     staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
@@ -348,13 +431,7 @@ def place(dest, name, content):
         os.chmod(fresh, 0o755)
         write_tree(fresh, content)
         if os.path.lexists(final):
-            old = os.path.join(staging, 'old')
-            os.rename(final, old)
-            try:
-                os.rename(fresh, final)
-            except OSError:
-                os.rename(old, final)
-                raise
+            swap_in(fresh, final, os.path.join(staging, 'old'))
         else:
             os.rename(fresh, final)
     finally:
@@ -391,7 +468,7 @@ def main(argv=None):
     try:
         excluded = read_excluded(full_path(args.exclude_file))
         tag, commit = resolve_tag(repo, args.ref)
-        files, others = read_tag(repo, commit)
+        files, others = read_tag(repo, commit, excluded)
         skills, held = catalog_skills(files)
         wanted = build_wanted(files, others, skills, held, excluded)
         state = read_state(state_path)
@@ -438,19 +515,33 @@ def main(argv=None):
 
 
 def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
-    """Carry out the plans; the state is saved after every step."""
+    """Carry out the plans.
+
+    The state is saved before each folder is written (with the old hashes
+    kept as `previous` during an update) and again after, so an interrupted
+    or failed run never leaves a folder this tool wrote looking foreign. The
+    first save also proves the state file is writable before any folder
+    changes.
+    """
     changed = False
     for dest in dests:
         owned = destinations.setdefault(dest, {})
         for action, name, _detail in plans[dest]:
+            entry = None
+            if action in ('install', 'update', 'keep'):
+                entry = record(tag, commit, wanted[name])
             if action in ('install', 'update'):
+                pending = dict(entry)
+                if action == 'update':
+                    pending['previous'] = installed_hashes(os.path.join(dest, name))
+                owned[name] = pending
+                write_state(state_path, state)
                 place(dest, name, wanted[name])
                 print(action + ' ' + os.path.join(dest, name))
             elif action == 'remove':
                 remove(dest, name)
                 print('remove ' + os.path.join(dest, name))
-            if action in ('install', 'update', 'keep'):
-                entry = record(tag, commit, wanted[name])
+            if entry is not None:
                 if owned.get(name) != entry:
                     owned[name] = entry
                     changed = True
