@@ -232,7 +232,7 @@ Test levels: `unit` (pure function), `integration` (real git, temp folders and f
 
 | Milestone | Depends on | Gate to start the next |
 | --- | --- | --- |
-| M1 | none | CAT-1 to CAT-7, CAT-9 to CAT-11 and CAT-21 to CAT-24 pass on main |
+| M1 | none | CAT-1 to CAT-7, CAT-9 to CAT-11, CAT-21 to CAT-23 and CAT-25 pass on main |
 | M2 | M1 | 7 consecutive nightly runs with the canary reporting exactly its three findings (FRS-18) |
 | M3 | M1 (M2 recommended) | SUB-16 passes on the canary consumer |
 | M4 | M1 | MCP-1, MCP-5 to MCP-7 pass on the pinned FastMCP pre-release (DESIGN 4.4) |
