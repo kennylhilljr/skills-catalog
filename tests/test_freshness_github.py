@@ -38,6 +38,7 @@ class FakeGitHub:
         self.next_number = 1
         self.conflicts = 0      # PATCHes of the state ref to reject
         self.error_message = None
+        self.label_failures = 0
         base_tree = self._put({'type': 'tree', 'tree': [
             {'path': 'skills/demo/SKILL.md', 'mode': '100644', 'type': 'blob', 'sha': 'b' * 40},
             {'path': 'skills/demo/scripts/run.sh', 'mode': '100755', 'type': 'blob', 'sha': 'c' * 40}]})
@@ -108,6 +109,7 @@ class FakeGitHub:
             number = self.next_number
             self.next_number += 1
             item = dict(body, number=number, state='open', closed_at=None,
+                        user={'login': 'freshness[bot]', 'type': 'Bot'}, author_association='NONE',
                         html_url='https://github.com/o/r/%s/%d' % ('pull' if rel == '/pulls' else 'issues', number))
             if rel == '/pulls':
                 item['pull_request'] = {}
@@ -121,6 +123,9 @@ class FakeGitHub:
         if method == 'PATCH' and m:
             self.issues[int(m.group(1))]['state'] = body['state']
             return 200, self.issues[int(m.group(1))]
+        if method == 'POST' and re.match(r'^/issues/\d+/labels$', rel) and self.label_failures:
+            self.label_failures -= 1
+            return 502, {'message': 'Bad Gateway'}
         if method == 'POST' and re.match(r'^/issues/\d+/(comments|labels)$', rel):
             return 201, {}
         if method == 'GET' and rel == '/issues':
@@ -340,17 +345,34 @@ class Inv5Test(unittest.TestCase):
         gh, fake = make_github()
         gh.apply([{'op': 'open_issue', 'fingerprint': FP, 'title': 't',
                    'body': 'x\n' + fmod.marker(FP) + '\n', 'labels': []}])
-        fake.issues[2] = {'number': 2, 'state': 'open', 'body': 'no marker', 'closed_at': None}
+        bot = {'login': 'freshness[bot]', 'type': 'Bot'}
+        fake.issues[2] = {'number': 2, 'state': 'open', 'body': 'no marker', 'closed_at': None, 'user': bot}
+        # An outside user copying a marker does not suppress the finding.
+        fake.issues[5] = {'number': 5, 'state': 'open', 'body': fmod.marker(fmod.fingerprint('canary', 'x')),
+                          'closed_at': None, 'user': {'login': 'someone', 'type': 'User'},
+                          'author_association': 'NONE'}
         old_fp = fmod.fingerprint('dead-link', 'old')
         fake.issues[3] = {'number': 3, 'state': 'closed', 'body': fmod.marker(old_fp),
-                          'closed_at': '2026-10-01T00:00:00Z', 'pull_request': {}}
+                          'closed_at': '2026-10-01T00:00:00Z', 'pull_request': {}, 'user': bot}
         new_fp = fmod.fingerprint('dead-link', 'new')
         fake.issues[4] = {'number': 4, 'state': 'closed', 'body': fmod.marker(new_fp),
-                          'closed_at': '2026-11-17T00:00:00Z', 'pull_request': {}}
+                          'closed_at': '2026-11-17T00:00:00Z', 'pull_request': {}, 'user': bot}
         items = gh.list_bot_items(now=NOW)
         self.assertEqual([(i['number'], i['fingerprint'], i['is_pr']) for i in items],
                          [(1, FP, False), (4, new_fp, True)])
         self.assertTrue(all(r[0] == 'GET' for r in fake.requests[1:]))
+        gh.bot_login = 'other-app[bot]'
+        self.assertEqual(gh.list_bot_items(now=NOW), [])
+
+    def test_open_pr_retries_labels_once(self):
+        gh, fake = make_github()
+        action = {'op': 'open_pr', 'fingerprint': FP, 'title': 't', 'body': 'b', 'labels': ['freshness'],
+                  'files': {'a.txt': '1\n'}, 'branch': fmod.branch_name(FP)}
+        fake.label_failures = 1
+        result = gh.apply([action])[0]
+        self.assertTrue(result['ok'])
+        self.assertNotIn('label_error', result)
+        self.assertEqual(len([r for r in fake.writes() if r[1].endswith('/labels')]), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +465,10 @@ class RouteTest(RootMixin, unittest.TestCase):
                                       {'classifier': {'day': '2026-11-18', 'calls': 10}}, lambda p: '', '2026-11-18'))
         self.assertIn('Not classified', unclassified['body'])
         self.assertIn('cap of 10 calls', unclassified['body'])
+        hidden = rmod.route(found, self.root, MODELS, excluded={'sdd-demo'},
+                            classification={'affects': ['demo', 'sdd-demo'], 'reason': 'sdd-demo loads skills'})
+        self.assertNotIn('sdd-demo', hidden['body'])
+        self.assertIn('- `demo`', hidden['body'])
 
     def test_stale_fix_or_excluded_skill_is_not_a_pr(self):
         found = model_finding()
@@ -483,6 +509,8 @@ class ClassifyTest(unittest.TestCase):
         claude = 'claude-' + 'sonnet-4-5-20250929'
         result = cmod.classify('+' + claude + ' is deprecated', {'x': 'Use ' + claude + ' here.'}, state, call, '2026-11-18')
         self.assertEqual(result['affects'], ['x'])
+        result = cmod.classify('-| gpt-5 | deprecated |', {'y': 'Runs on gpt-5 by default.'}, state, call, '2026-11-18')
+        self.assertEqual(result['affects'], ['y'])
         self.assertEqual(calls, [])
 
     def test_prose_words_do_not_match(self):

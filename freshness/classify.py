@@ -24,7 +24,7 @@ CALLS_PER_DAY = 10
 DIFF_PROMPT_MAX = 8000
 REASON_MAX = 500
 
-_MODEL_ID = re.compile(r'(?<![\w.-])(?:claude-[a-z0-9][a-z0-9.-]*[a-z0-9]|gpt-[a-z0-9][a-z0-9.-]*[a-z0-9]|o[1-9](?:-[a-z]+)?)(?![\w-])')
+_MODEL_ID = re.compile(r'(?<![\w.-])(?:claude-[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|gpt-[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|o[1-9](?:-[a-z]+)?)(?![\w-])')
 _BACKTICK = re.compile(r'`([A-Za-z][A-Za-z0-9_-]{1,63})`')
 _TOOL = re.compile(r'^[A-Z][A-Za-z0-9]+$')
 _KEY_LINE = re.compile(r'^\s*([A-Za-z][A-Za-z0-9_-]*):')

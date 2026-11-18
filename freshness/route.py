@@ -383,8 +383,16 @@ def route(finding, root, models, classification=None, unclassified_reason=None, 
     and are used for non-mechanical `upstream-change` issues. `today` is the
     changelog date (default: today in UTC).
     """
-    if finding.get('skill') in set(excluded):
+    excluded = set(excluded)
+    if finding.get('skill') in excluded:
         return None
+    if classification is not None:
+        # Excluded skills are never named (DESIGN 5.1), even by the classifier.
+        reason = classification.get('reason') or ''
+        if any(re.search(r'(?<![\w-])' + re.escape(name) + r'(?![\w-])', reason) for name in excluded):
+            reason = 'withheld'
+        classification = dict(classification, reason=reason, affects=[
+            name for name in classification.get('affects') or () if name not in excluded])
     if finding['kind'] == 'upstream-change':
         item = _schema_pr(finding, root)
         return item or _upstream_issue(finding, classification, unclassified_reason)

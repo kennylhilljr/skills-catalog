@@ -52,6 +52,7 @@ CLOSED_WINDOW = datetime.timedelta(days=14)
 PER_PAGE = 100
 MAX_PAGES = 50
 ISSUE_URL_PLACEHOLDER = '{issue_url}'
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 
 _PR_REF = re.compile(r'^refs/heads/freshness/[0-9a-f]{12}$')
 
@@ -125,13 +126,19 @@ def _parse_time(text):
 class GitHub:
     """Writer for one repository. No merge method, by design (INV-5)."""
 
-    def __init__(self, repo, token, transport=None):
+    def __init__(self, repo, token, transport=None, bot_login=None):
+        """`bot_login`: the App's bot user (`<app-slug>[bot]`). Only items it
+        opened count in `list_bot_items`; when None, only items opened by a bot
+        account or by the owner, a member or a collaborator count, so an
+        outside user cannot suppress a finding with a copied marker.
+        """
         if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo or ''):
             raise ValueError('repo must be owner/name')
         self.repo = repo
         self._token = token or ''
         self._transport = transport if transport is not None else _urllib_transport(self._token)
         self._default_branch = None
+        self.bot_login = bot_login
 
     def __repr__(self):
         return 'GitHub(%r)' % self.repo
@@ -210,6 +217,12 @@ class GitHub:
             if len(data) < PER_PAGE:
                 return
 
+    def _trusted(self, item):
+        user = item.get('user') or {}
+        if self.bot_login is not None:
+            return user.get('login') == self.bot_login
+        return user.get('type') == 'Bot' or item.get('author_association') in TRUSTED_ASSOCIATIONS
+
     def list_bot_items(self, now=None):
         """Open, and closed in the last 14 days, issues and PRs carrying a fingerprint marker."""
         now = _utc(now)
@@ -221,7 +234,7 @@ class GitHub:
             for item in self._pages(query):
                 number = item.get('number')
                 fp = fmod.parse_marker(item.get('body') or '')
-                if fp is None or number in seen:
+                if fp is None or number in seen or not self._trusted(item):
                     continue
                 state = item.get('state')
                 closed_at = item.get('closed_at')
@@ -294,7 +307,20 @@ class GitHub:
         _, pr = self._request('POST', '/pulls', {'title': action['title'], 'body': action['body'],
                                                  'head': action['branch'], 'base': BASE_BRANCH})
         if action.get('labels'):
-            self._request('POST', '/issues/%d/labels' % pr['number'], {'labels': action['labels']})
+            # The pulls API takes no labels, so they are a second call. Retry
+            # it once: the next run deduplicates on the marker and would not
+            # label the PR again.
+            try:
+                self._request('POST', '/issues/%d/labels' % pr['number'], {'labels': action['labels']})
+            except RefusedWrite:
+                raise
+            except GitHubError:
+                try:
+                    self._request('POST', '/issues/%d/labels' % pr['number'], {'labels': action['labels']})
+                except RefusedWrite:
+                    raise
+                except GitHubError as err:
+                    pr = dict(pr, label_error=self._clean(err))
         return pr
 
     def _update_pr(self, action):
@@ -345,6 +371,8 @@ class GitHub:
                 elif op == 'open_pr':
                     pr = self._open_pr(action)
                     result.update(number=pr['number'], url=pr.get('html_url'))
+                    if pr.get('label_error'):
+                        result['label_error'] = pr['label_error']
                 elif op == 'update_pr':
                     self._update_pr(action)
                     result['number'] = action['number']
