@@ -1,0 +1,9 @@
+[
+  {"tag_name": "v2.1.327", "published_at": "2026-11-17T23:17:45Z", "draft": false, "prerelease": false,
+   "body": "## What's changed\r\n- Added the `--skills-dir` flag\r\n- Fixed a crash on startup\r\n- Plugin installs now verify the manifest\r\n- Faster session restore"},
+  {"tag_name": "v2.1.328-alpha.1", "published_at": "2026-11-18T01:00:00Z", "draft": false, "prerelease": true,
+   "body": "Alpha build"},
+  {"tag_name": "v2.1.326", "published_at": "2026-11-16T22:11:05Z", "draft": false, "prerelease": false,
+   "body": "- New slash command /recap\n- The Read tool reads notebooks\n- Docs typo"},
+  {"tag_name": "v2.1.999", "published_at": null, "draft": true, "prerelease": false, "body": "Draft skill notes"}
+]

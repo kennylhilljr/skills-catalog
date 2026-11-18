@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "claude-code-skills-frontmatter",
+      "url": "https://code.claude.com/docs/en/skills.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Frontmatter reference"]}
+    },
+    {
+      "id": "claude-code-skills-locations",
+      "url": "https://code.claude.com/docs/en/skills.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Choose where skills load"]}
+    },
+    {
+      "id": "claude-code-releases-npm",
+      "url": "https://registry.npmjs.org/@anthropic-ai/claude-code/latest",
+      "extract": "npm-version"
+    },
+    {
+      "id": "claude-code-releases-github",
+      "url": "https://api.github.com/repos/anthropics/claude-code/releases?per_page=10",
+      "extract": "github-releases",
+      "params": {"limit": 10}
+    },
+    {
+      "id": "claude-code-tools",
+      "url": "https://code.claude.com/docs/en/tools-reference.md",
+      "extract": "table-column",
+      "params": {"heading": "# Tools reference", "column": "Tool"}
+    },
+    {
+      "id": "claude-code-plugins-manifest",
+      "url": "https://code.claude.com/docs/en/plugins-reference.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Manifest file", "Fields", "Path rules"]}
+    },
+    {
+      "id": "claude-code-plugins-marketplace",
+      "url": "https://code.claude.com/docs/en/plugin-marketplaces.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["## Create a marketplace", "Add plugin entries", "Rules for plugin entries", "Choose a plugin source"]}
+    },
+    {
+      "id": "codex-skills",
+      "url": "https://developers.openai.com/codex/skills.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["# Build skills"]}
+    },
+    {
+      "id": "codex-skills-agents-md",
+      "url": "https://developers.openai.com/codex/guides/agents-md.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["# Custom instructions with AGENTS.md"]}
+    },
+    {
+      "id": "codex-releases-github",
+      "url": "https://api.github.com/repos/openai/codex/releases?per_page=40",
+      "extract": "github-releases",
+      "params": {"limit": 10, "include_prereleases": false}
+    },
+    {
+      "id": "codex-releases-npm",
+      "url": "https://registry.npmjs.org/@openai/codex/latest",
+      "extract": "npm-version"
+    },
+    {
+      "id": "agent-skills-spec",
+      "url": "https://agentskills.io/specification.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Directory structure", "SKILL.md format", "Optional directories", "File references"]}
+    },
+    {
+      "id": "fastmcp-docs",
+      "url": "https://gofastmcp.com/servers/skills.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Where skills come from", "Read skills from a client", "Current limits"]}
+    },
+    {
+      "id": "fastmcp-pypi",
+      "url": "https://pypi.org/pypi/fastmcp/json",
+      "extract": "pypi-version"
+    },
+    {
+      "id": "anthropic-models-overview",
+      "url": "https://platform.claude.com/docs/en/about-claude/models/overview.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Latest models", "All models"]}
+    },
+    {
+      "id": "anthropic-models-deprecations",
+      "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
+      "extract": "table-column",
+      "params": {"heading": "Model status", "column": ["API model name", "Current state", "Deprecated", "Tentative retirement date"]}
+    },
+    {
+      "id": "anthropic-models-replacements",
+      "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Deprecation history"]}
+    },
+    {
+      "id": "openai-models",
+      "url": "https://developers.openai.com/api/docs/models/all.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["# All models"]}
+    },
+    {
+      "id": "openai-models-deprecations",
+      "url": "https://developers.openai.com/api/docs/deprecations.md",
+      "extract": "markdown-sections",
+      "params": {"headings": ["Upcoming deprecations", "Past deprecations"]}
+    }
+  ]
+}
