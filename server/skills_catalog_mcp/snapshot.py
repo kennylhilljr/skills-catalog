@@ -125,9 +125,9 @@ def _resolve_tag(repo, ref):
 def _inside(tmp, name):
     """True if archive member `name` is a plain relative path that stays inside tmp.
 
-    Refuses `\\`, `:` and NUL, which some platforms read as separators or
-    drive letters, absolute paths and `..` parts, then checks the resolved
-    target too.
+    Refuses `\\`, `:` and NUL on every platform (some read them as separators
+    or drive letters), absolute paths and `.` or `..` parts, then checks the
+    resolved target too.
     """
     if not name or any(c in name for c in '\\:\x00') or name.startswith('/'):
         return False

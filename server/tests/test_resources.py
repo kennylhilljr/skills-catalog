@@ -223,19 +223,44 @@ class OnlyDeliveredSkillsTests(_Temp):
         with self.assertRaisesRegex(SnapshotError, '^unsafe path in archive$'):
             materialize(repo, exclude_file=self.exclude)
 
-    def test_extraction_without_the_data_filter(self):
-        # Python 3.11.0 to 3.11.3 have no tarfile.data_filter.
+    def test_unsafe_paths_are_refused(self):
+        from skills_catalog_mcp.snapshot import _inside
+        sep = chr(92)
+        for name in ('skills/../x', '/etc/x', 'skills/a' + sep + '..' + sep + 'x', 'C:/x',
+                     'skills/a/b:c', 'skills/a/./b', 'skills/a/' + chr(0), '', '..'):
+            self.assertFalse(_inside(self.tmp, name), repr(name))
+        for name in ('catalog.json', 'skills', 'skills/', 'skills/a/b.md'):
+            self.assertTrue(_inside(self.tmp, name), repr(name))
+
+    def _without_data_filter(self):
+        """Run as Python 3.11.0 to 3.11.3 would, which have no tarfile.data_filter."""
         import tarfile
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        if hasattr(tarfile, 'data_filter'):
+            saved = tarfile.data_filter
+            del tarfile.data_filter
+            stack.callback(setattr, tarfile, 'data_filter', saved)
+            # 3.12+ warns when no filter is given; keep the default explicit.
+            stack.enter_context(unittest.mock.patch.object(
+                tarfile.TarFile, 'extraction_filter',
+                staticmethod(tarfile.fully_trusted_filter), create=True))
+        return stack
+
+    def test_extraction_without_the_data_filter(self):
         repo = make_catalog_repo(self.tmp, skills=SKILLS)
-        saved = tarfile.data_filter
-        del tarfile.data_filter
-        try:
-            with unittest.mock.patch.object(tarfile.TarFile, 'extraction_filter',
-                                            staticmethod(tarfile.fully_trusted_filter), create=True):
-                snap = self.snap(repo)
-        finally:
-            tarfile.data_filter = saved
+        with self._without_data_filter():
+            snap = self.snap(repo)
         self.assertEqual(sorted(os.listdir(snap.root)), ['alpha-skill', 'beta-skill'])
+
+    def test_unsafe_name_refused_without_the_data_filter(self):
+        odd = 'a' + chr(92) + '..' + chr(92) + 'b.md'
+        repo = make_catalog_repo(self.tmp, skills={'alpha-skill': {odd: 'x\n'}})
+        before = sorted(os.listdir(self.tmp))
+        with self._without_data_filter():
+            with self.assertRaisesRegex(SnapshotError, '^unsafe path in archive$'):
+                materialize(repo, exclude_file=self.exclude)
+        self.assertEqual(sorted(os.listdir(self.tmp)), before)
 
     def test_symlink_refuses_to_start(self):
         repo = make_catalog_repo(self.tmp, skills=['alpha-skill'])
