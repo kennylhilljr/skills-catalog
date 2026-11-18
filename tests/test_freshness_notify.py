@@ -229,6 +229,31 @@ class AnnounceTest(unittest.TestCase):
         self.assertEqual([c[:2] for c in att.calls], [('dwell', url(7))])
         self.assertTrue(new['alerts'][sends[0]['fingerprint']]['announced'])
 
+    def test_planner_digest_alerts_get_attention_too(self):
+        # plan_alerts -> apply -> announce: 3 alerts the Actions half opened
+        # plus 5 new ones give 6 messages and one digest of 2.
+        old = [alert('o' + str(i)) for i in range(3)]
+        state = actions_half(old, [], S.empty_state(), NOW - DAY)
+        open_issues = [issue(90 + i, subject='o' + str(i)) for i in range(3)]
+        alerts = old + [alert('p' + str(i)) for i in range(5)]
+        actions, state = A.plan_alerts(alerts, open_issues, [], state, 'run-m', NOW)
+        results, opened = [], {i['fingerprint']: i['url'] for i in open_issues}
+        for i, action in enumerate(a for a in actions if a['op'] == 'open_issue'):
+            opened[action['fingerprint']] = url(100 + i)
+            results.append({'op': 'open_issue', 'fingerprint': action['fingerprint'], 'ok': True,
+                            'number': 100 + i, 'url': url(100 + i)})
+        for action in actions:
+            if action['op'] == 'send_ops':
+                text = action['text'].replace(A.ISSUE_URL_PLACEHOLDER, opened.get(action['fingerprint'], ''))
+                results.append({'op': 'send_ops', 'fingerprint': action['fingerprint'], 'ok': True, 'text': text})
+        run, att = FakeRun(), FakeAttention()
+        mac(open_issues, state, run, att, ops_results=results)
+        texts = run.texts()
+        self.assertEqual(len(opened), 8)
+        self.assertEqual(len(texts), 7)
+        self.assertTrue(texts[6].startswith(A.DIGEST_PREFIX))
+        self.assertEqual(sorted(c[1] for c in att.calls), sorted(opened.values()))
+
     def test_planned_result_that_failed_in_apply_is_not_sent_and_is_due_again(self):
         actions, state = A.plan_alerts([alert()], [], [], S.empty_state(), 'run-m', NOW)
         send_op = [a for a in actions if a['op'] == 'send_ops'][0]

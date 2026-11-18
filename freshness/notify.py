@@ -202,9 +202,11 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
 
     `open_alert_issues`: open `freshness-alert` issues, `{"number",
     "fingerprint", "title"?, "url"?}` parsed from the fingerprint marker.
-    `ops_results`: part 1's `send_ops` actions after part 5's `apply`
-    (`{"op": "send_ops", "fingerprint", "text", "ok"}`); one with `ok`
-    False or an unfilled `{issue_url}` is recorded as failed without sending.
+    `ops_results`: the results of part 5's `apply` for part 1's actions.
+    Its `send_ops` items (`{"op": "send_ops", "fingerprint", "text", "ok"}`)
+    are delivered; one with `ok` False or an unfilled `{issue_url}` is
+    recorded as failed without sending. Its `open_issue` items give the URLs
+    of issues opened this run.
     `attention_fn(kind, url, title, problem)` is called once per alert
     announcement that is sent or folded into the digest; its errors are
     ignored. None means `attention` with the config's `prbot_path`. `run`
@@ -222,7 +224,11 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     table = new.setdefault('alerts', {})
     ops = new['ops']
 
-    planned = [r for r in ops_results or () if isinstance(r, dict) and r.get('op', 'send_ops') == 'send_ops']
+    results = [r for r in ops_results or () if isinstance(r, dict)]
+    planned = [r for r in results if r.get('op', 'send_ops') == 'send_ops']
+    opened_urls = {r.get('fingerprint'): r['url'] for r in results
+                   if r.get('op') == 'open_issue' and r.get('ok') and r.get('url')}
+    open_urls = {i.get('fingerprint'): _issue_url(i) for i in open_alert_issues or () if i.get('fingerprint')}
     planned_fps = set(r.get('fingerprint') for r in planned)
     attended = set()
     if attention_fn is None:
@@ -296,7 +302,22 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
             folded.append(fp)
         # After the digest, nothing more is sent today; the alert stays due.
 
-    # 3. One digest for everything past the cap.
+    # 3. One digest for everything past the cap. The planner's lines in it
+    # are announcements it folded this run (the digest goes out once a day),
+    # so their alerts get their attention call now.
+    if incoming_digest:
+        for line in list(ops['pending']):
+            head = line.rsplit(': ', 1)[0]
+            for fp in sorted(table):
+                entry = table[fp]
+                if fp in attended or not any(head == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
+                    continue
+                link = opened_urls.get(fp) or open_urls.get(fp) or (
+                    amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None
+                    else amod.ISSUE_URL_BASE.rstrip('/'))
+                call_attention(entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
+                               'freshness alert ' + entry['kind'] + ' is open for ' + entry['subject'])
+                attended.add(fp)
     if ops['pending'] and (incoming_digest or not ops['digest_sent']):
         digest = _digest(ops['pending'])
         ops['digest_sent'] = True
