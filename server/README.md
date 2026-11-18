@@ -79,7 +79,11 @@ It refuses to start when a folder under `skills/` is not in the manifest, a file
 
 ## FastMCP version
 
-The server pins `fastmcp==4.2.1` exactly in `pyproject.toml` and `uv.lock`. It is a stable release, not a pre-release. The skills API used here is `fastmcp.skills.provider.SkillsDirectoryProvider` on the server and `Client.list_skill_resources()` and `Client.read_skill()` in the tests. The tests run with `-W error::DeprecationWarning`, so a deprecated name fails them.
+The server pins `fastmcp==4.2.1` exactly in `pyproject.toml` and `uv.lock`. It is a stable release, not a pre-release, so `skill_status` returns `fastmcp_prerelease: false` and `notice: null` (SPEC MCP-8).
+
+Upgrade rule (DESIGN 4.4): the pin is always one exact version, never a range. It moves only in its own PR, which changes `pyproject.toml` and `uv.lock` together and re-runs MCP-1 to MCP-7. The upstream watch opens an `upstream-change` issue when a newer FastMCP release appears; a pre-release is taken only if it fixes something the server needs. While the pin is a pre-release, this section carries a sentence stating that the pin is a FastMCP pre-release, and `skill_status` sets `fastmcp_prerelease` and returns the notice `FastMCP <version> is a pre-release; the skills API may change`; the PR that moves back to a stable release removes both.
+
+The skills API used here is `fastmcp.skills.provider.SkillsDirectoryProvider` on the server and `Client.list_skill_resources()` and `Client.read_skill()` in the tests. The tests run with `-W error::DeprecationWarning`, so a deprecated name fails them.
 
 ## Tests
 
