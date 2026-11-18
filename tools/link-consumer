@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Write or check a consumer's Claude Code links to shared skills (SUB-3, INV-8).
+
+Run from the root of a consumer repository that holds the catalog as a
+submodule at `.agents/skills/shared`:
+
+    python3 .agents/skills/shared/tools/link-consumer [--root DIR] [--check]
+
+The tool reads `<root>/.agents/skills/shared/catalog.json` as data and uses
+only its `skills` array. It never uses the `held` array, and it skips any
+`skills` entry whose `path` does not start with `skills/`, whose `name` fails
+the CAT-2 pattern, or whose `name` is `zz-canary`. Every remaining name is a
+delivered skill, and its link is
+
+    .claude/skills/<name> -> ../../.agents/skills/shared/skills/<name>
+
+so a held skill (DESIGN 3.2) is never linked (INV-8).
+
+Write mode (no flag) creates the missing links, fixes links into the
+submodule that point at the wrong place, and removes links into the
+submodule whose name is not delivered. A real folder or a link pointing
+anywhere else under a delivered name is a `shadow`: the tool prints it and
+exits 1 without writing anything.
+
+`--check` changes nothing. It prints one line per finding,
+`link-consumer: <kind>: .claude/skills/<name>`, with kind `missing`,
+`dangling`, `extra`, `wrong-target` or `shadow`, then a last line
+`link-consumer: <n> links, <m> findings`.
+
+The tool never writes outside `<root>/.claude/skills`, never writes through
+a link, and never reads skill content. Exit status: 0 clean or written,
+1 findings (in write mode: a shadow, nothing written, or a link that
+still dangles after writing), 2 error, including a missing
+`catalog.json` (`link-consumer: shared skills missing`).
+Python 3.9+, standard library only.
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+
+PROG = 'link-consumer'
+SHARED = os.path.join('.agents', 'skills', 'shared')
+TARGET_PREFIX = '../../.agents/skills/shared/'
+NAME_RE = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
+CANARY = 'zz-canary'
+
+
+class LinkError(Exception):
+    """An error that stops the tool with exit status 2."""
+
+
+def say(message, stream=None):
+    print(PROG + ': ' + message, file=stream or sys.stdout)
+
+
+def delivered_names(root):
+    """Sorted names of the delivered skills in the pinned catalog.json."""
+    path = os.path.join(root, SHARED, 'catalog.json')
+    if not os.path.isfile(path):
+        raise LinkError('shared skills missing')
+    try:
+        with open(path, encoding='utf-8') as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        raise LinkError('error: cannot read ' + SHARED + '/catalog.json')
+    skills = data.get('skills') if isinstance(data, dict) else None
+    if not isinstance(skills, list):
+        raise LinkError('error: catalog.json has no skills array')
+    names = set()
+    for entry in skills:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get('name')
+        entry_path = entry.get('path')
+        if not isinstance(name, str) or not isinstance(entry_path, str):
+            continue
+        if not entry_path.startswith('skills/'):
+            continue
+        if len(name) > 64 or not NAME_RE.fullmatch(name) or name == CANARY:
+            continue
+        names.add(name)
+    return sorted(names)
+
+
+def expected_target(name):
+    return TARGET_PREFIX + 'skills/' + name
+
+
+def links_dir(root):
+    """Absolute `.claude/skills`, refusing a path that runs through a link."""
+    current = root
+    for part in ('.claude', 'skills'):
+        current = os.path.join(current, part)
+        if os.path.islink(current):
+            raise LinkError('error: ' + os.path.relpath(current, root)
+                            + ' is a symlink')
+        if os.path.lexists(current) and not os.path.isdir(current):
+            raise LinkError('error: ' + os.path.relpath(current, root)
+                            + ' is not a folder')
+    return current
+
+
+def _under(path, base):
+    return path == base or path.startswith(base + os.sep)
+
+
+def points_into_shared(root, path):
+    """True when the link at path resolves into the submodule.
+
+    The link is resolved through every existing link on the way, so aliases
+    and absolute targets count, and a path that leaves the submodule through
+    an inner link does not, even when its tail is missing. A dangling link
+    into the submodule still counts: the shared folder exists (catalog.json
+    was read), so only the missing tail is taken as written. Only link
+    targets are read, never skill content.
+    """
+    shared = os.path.realpath(os.path.join(root, SHARED))
+    return _under(os.path.realpath(path), shared)
+
+
+def survey(root, names):
+    """Findings as sorted (name, kind) pairs; reads link targets only."""
+    directory = links_dir(root)
+    delivered = set(names)
+    findings = []
+    for name in names:
+        path = os.path.join(directory, name)
+        if not os.path.lexists(path):
+            findings.append((name, 'missing'))
+        elif not os.path.islink(path):
+            findings.append((name, 'shadow'))
+        else:
+            target = os.readlink(path)
+            if target == expected_target(name):
+                if not os.path.isdir(path):
+                    findings.append((name, 'dangling'))
+            elif points_into_shared(root, path):
+                findings.append((name, 'wrong-target'))
+            else:
+                findings.append((name, 'shadow'))
+    if os.path.isdir(directory):
+        for entry in sorted(os.listdir(directory)):
+            if entry in delivered:
+                continue
+            path = os.path.join(directory, entry)
+            if os.path.islink(path) and points_into_shared(root, path):
+                findings.append((entry, 'extra'))
+    findings.sort()
+    return findings
+
+
+def finding_line(name, kind):
+    return kind + ': .claude/skills/' + name
+
+
+def check(root):
+    names = delivered_names(root)
+    findings = survey(root, names)
+    for name, kind in findings:
+        say(finding_line(name, kind))
+    say('%d links, %d findings' % (len(names), len(findings)))
+    return 1 if findings else 0
+
+
+def write(root):
+    names = delivered_names(root)
+    findings = survey(root, names)
+    shadows = [(n, k) for n, k in findings if k == 'shadow']
+    if shadows:
+        for name, kind in shadows:
+            say(finding_line(name, kind))
+        say('%d shadows, nothing written' % len(shadows))
+        return 1
+    directory = links_dir(root)
+    changes = 0
+    for name, kind in findings:
+        path = os.path.join(directory, name)
+        if kind == 'missing':
+            os.makedirs(directory, exist_ok=True)
+            os.symlink(expected_target(name), path)
+            say('linked: .claude/skills/' + name)
+            changes += 1
+        elif kind == 'wrong-target':
+            temp = make_temp_link(directory, name)
+            # rename replaces the link itself and never follows it.
+            os.replace(temp, path)
+            say('relinked: .claude/skills/' + name)
+            changes += 1
+        elif kind == 'extra':
+            os.unlink(path)
+            say('removed: .claude/skills/' + name)
+            changes += 1
+    say('%d links, %d changes' % (len(names), changes))
+    # A link the tool wrote can still dangle when the submodule lacks the
+    # skill folder; report it so a bump never passes with a broken link.
+    dangling = [n for n, k in survey(root, names) if k == 'dangling']
+    for name in dangling:
+        say(finding_line(name, 'dangling'))
+    return 1 if dangling else 0
+
+
+def make_temp_link(directory, name):
+    """Create a correct link under a fresh name that no other entry uses."""
+    for _ in range(100):
+        temp = os.path.join(directory, '.%s.link-consumer-%s'
+                            % (name, os.urandom(4).hex()))
+        try:
+            os.symlink(expected_target(name), temp)
+        except FileExistsError:
+            continue
+        return temp
+    raise LinkError('error: cannot create a temporary link')
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description='Write or check .claude/skills links to shared skills.')
+    parser.add_argument('--root', default='.',
+                        help='consumer repository root (default: .)')
+    parser.add_argument('--check', action='store_true',
+                        help='report findings and change nothing')
+    args = parser.parse_args(argv)
+    root = os.path.abspath(args.root)
+    try:
+        return check(root) if args.check else write(root)
+    except LinkError as error:
+        say(str(error), sys.stderr)
+        return 2
+    except OSError as error:
+        say('error: ' + (error.strerror or 'filesystem error'), sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())
