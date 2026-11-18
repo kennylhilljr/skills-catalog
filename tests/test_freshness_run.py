@@ -57,6 +57,7 @@ class FakeGitHub:
         self.number = 500
         self.state_sha = 'a' * 40
         self.concurrent = []  # states the other half writes, one per conflicting ref move
+        self.moves_before_conflict = 0  # ref moves that succeed first (the lease commit)
 
     def writes(self):
         return [(m, p, b) for m, p, b in self.requests if m != 'GET']
@@ -68,6 +69,15 @@ class FakeGitHub:
 
     def _last_blob(self):
         return self.blobs[-1] if self.blobs else self.state_text
+
+    def _conflict(self):
+        if not self.concurrent:
+            return False
+        if self.moves_before_conflict:
+            self.moves_before_conflict -= 1
+            return False
+        self._other_half_writes()
+        return True
 
     def _other_half_writes(self):
         self.state_text = smod.dump(self.concurrent.pop(0))
@@ -107,15 +117,13 @@ class FakeGitHub:
         if rel in ('/git/trees', '/git/commits'):
             return 201, {'sha': 'f' * 40}
         if rel == '/git/refs':
-            if self.concurrent:
-                self._other_half_writes()
+            if self._conflict():
                 return 422, {'message': 'Reference already exists'}
             self.state_text = self._last_blob()
             return 201, {}
         if rel.startswith('/git/refs/'):
             if rel == '/git/refs/heads/freshness-state':
-                if self.concurrent:
-                    self._other_half_writes()
+                if self._conflict():
                     return 422, {'message': 'Update is not a fast forward'}
                 self.state_text = self._last_blob()
             return 200, {}
@@ -151,6 +159,10 @@ def _no_cli(argv, timeout=10):
     raise AssertionError('the Actions half must never run a CLI: %r' % (argv,))
 
 
+def _no_sleep(seconds):
+    raise AssertionError('no wait expected')
+
+
 def _no_call(prompt):
     raise AssertionError('no classifier call expected')
 
@@ -182,7 +194,7 @@ def _deps(fake, half, out=None, **kw):
         attention_fn=lambda *a: None,
         local_config={'slack_channel_id': 'C' + '0123', 'prbot_path': 'prbot', 'held_sources': {}},
         excluded=(), out=out if out is not None else io.StringIO(),
-        run_id='%s-1' % half)
+        run_id='%s-1' % half, sleep=_no_sleep)
     params.update(kw)
     return runmod.Deps(**params)
 
@@ -454,11 +466,12 @@ class RobustnessTests(unittest.TestCase):
         base['heartbeats'] = {'mac': _beat('2026-11-17T11:30:00+00:00')}
         fake = FakeGitHub(base)
         fake.concurrent.append(self._other_half(base, '2026-11-18T11:00:40+00:00'))
+        fake.moves_before_conflict = 1  # the lease commit lands; the heartbeat commit races
         ok, job, _ = _execute('actions', fake)
         self.assertTrue(ok, job.errors)
         self._check_merged(fake, '2026-11-18T11:00:40+00:00')
         moves = [b for m, p, b in fake.requests if m == 'PATCH' and p.endswith('/git/refs/heads/freshness-state')]
-        self.assertEqual([b['force'] for b in moves], [False, False])
+        self.assertEqual([b['force'] for b in moves], [False, False, False])
 
     def test_the_first_write_races_too(self):
         fake = FakeGitHub()
@@ -471,16 +484,66 @@ class RobustnessTests(unittest.TestCase):
         fake = FakeGitHub(smod.empty_state())
         fake.concurrent.extend(self._other_half(smod.empty_state(), '2026-11-18T11:0%d:00+00:00' % i)
                                for i in range(runmod.STATE_WRITE_ATTEMPTS))
+        fake.moves_before_conflict = 1
         ok, job, _ = _execute('actions', fake)
         self.assertFalse(ok)
         self.assertTrue(any(e.startswith('state write') for e in job.errors))
 
     def test_merge_state_rules(self):
-        base = {'a': 1, 'b': {'x': 1, 'y': 1}, 'gone': 1, 'kept': {'k': 1}}
+        base = {'a': 1, 'b': {'x': 1, 'y': 1}, 'gone': 1, 'kept': {'k': 1}, 'parked': {'e': 1}}
         ours = {'a': 2, 'b': {'x': 2, 'y': 1}, 'kept': {'k': 1}}
-        fresh = {'a': 3, 'b': {'x': 1, 'y': 3}, 'gone': 1, 'kept': {'k': 1}, 'new': 4}
+        fresh = {'a': 3, 'b': {'x': 1, 'y': 3}, 'gone': 1, 'kept': {'k': 1}, 'new': 4, 'parked': {'e': 2}}
         self.assertEqual(runmod.merge_state(base, ours, fresh),
-                         {'a': 2, 'b': {'x': 2, 'y': 3}, 'kept': {'k': 1}, 'new': 4})
+                         {'a': 2, 'b': {'x': 2, 'y': 3}, 'kept': {'k': 1}, 'new': 4, 'parked': {'e': 2}})
+
+    def test_a_reparked_upstream_finding_survives_the_mac_clearing_it(self):
+        base = {'upstream_pending': {'fp': {'evidence': 'old'}}}
+        mac = {'upstream_pending': {}}
+        actions = {'upstream_pending': {'fp': {'evidence': 'new'}}}
+        self.assertEqual(runmod.merge_state(base, mac, actions), actions)
+
+    def test_a_live_run_holds_and_releases_the_lease(self):
+        fake = FakeGitHub(smod.empty_state())
+        ok, job, _ = _execute('actions', fake)
+        self.assertTrue(ok, job.errors)
+        states = [json.loads(b) for b in fake.blobs if b.lstrip().startswith('{')]
+        self.assertEqual(states[0]['lease']['half'], 'actions')
+        self.assertEqual(states[0]['lease']['until'], smod.iso(NOW + runmod.LEASE_TTL))
+        self.assertNotIn('lease', json.loads(fake.state_text))
+
+    def test_waits_for_the_other_halfs_lease(self):
+        state = smod.empty_state()
+        state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW + datetime.timedelta(minutes=5))}
+        fake = FakeGitHub(state)
+        waits = []
+
+        def sleep(seconds):
+            waits.append(seconds)
+            released = json.loads(fake.state_text)
+            released.pop('lease')
+            fake.state_text = smod.dump(released)
+            fake.state_sha = 'b' * 40
+        ok, job, _ = _execute('actions', fake, sleep=sleep)
+        self.assertTrue(ok, job.errors)
+        self.assertEqual(waits, [runmod.LEASE_POLL_SECONDS])
+
+    def test_a_held_lease_fails_the_run_without_writing(self):
+        state = smod.empty_state()
+        state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW + datetime.timedelta(minutes=5))}
+        fake = FakeGitHub(state)
+        waits = []
+        deps = _deps(fake, 'actions', sleep=waits.append)
+        code = runmod.main(['--half', 'actions'], deps=deps)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(waits), runmod.LEASE_POLLS)
+        self.assertEqual(fake.writes(), [])
+
+    def test_an_expired_lease_is_taken_over(self):
+        state = smod.empty_state()
+        state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW - datetime.timedelta(minutes=1))}
+        fake = FakeGitHub(state)
+        ok, job, _ = _execute('actions', fake)
+        self.assertTrue(ok, job.errors)
 
     def test_notify_runner_uses_the_configured_path(self):
         run = runmod.make_notify_run('/opt/tools/bin' + os.pathsep + '/usr/bin')

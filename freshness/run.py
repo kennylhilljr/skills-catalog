@@ -406,7 +406,7 @@ class Deps:
 
     def __init__(self, github, clock, fetch_link=None, fetch_text=None, fetch_npm=None, cli_run=None,
                  classifier=None, notify_run=None, attention_fn=None, local_config=None, excluded=(),
-                 private_names=(), out=None, run_id=None):
+                 private_names=(), out=None, run_id=None, sleep=time.sleep):
         self.github = github
         self.clock = clock
         self.fetch_link = fetch_link
@@ -421,6 +421,7 @@ class Deps:
         self.private_names = tuple(private_names or ())
         self.out = out if out is not None else sys.stdout
         self.run_id = run_id
+        self.sleep = sleep
 
 
 def _utcnow():
@@ -468,8 +469,8 @@ def merge_state(base, ours, fresh):
 
     `base` is the state this run read, `ours` what it wants to write and
     `fresh` what is on `freshness-state` now. A value only one side changed
-    keeps that change; where both changed, dicts merge key by key and any
-    other value keeps this run's. So the other half's heartbeat, results
+    keeps that change; where both changed, dicts merge key by key, a change
+    beats a delete, and any other value keeps this run's. So the other half's heartbeat, results
     fields, link or source history and alert entries survive this write.
     """
     if ours == base:
@@ -477,7 +478,9 @@ def merge_state(base, ours, fresh):
     if fresh is _MISSING or fresh == base or fresh == ours:
         return ours if ours is _MISSING else copy.deepcopy(ours)
     if ours is _MISSING:
-        return _MISSING  # this run deleted it and the other half changed it: the delete wins
+        # This run deleted it and the other half changed it: the change wins,
+        # so a newer entry (say an upstream finding parked again) is not lost.
+        return copy.deepcopy(fresh)
     if not (isinstance(base, dict) and isinstance(ours, dict) and isinstance(fresh, dict)):
         if isinstance(ours, dict) and isinstance(fresh, dict):
             base = {}
@@ -492,6 +495,9 @@ def merge_state(base, ours, fresh):
 
 
 STATE_WRITE_ATTEMPTS = 3
+LEASE_TTL = datetime.timedelta(minutes=40)
+LEASE_POLL_SECONDS = 60
+LEASE_POLLS = 20
 
 
 def cas_write_state(gh, text, parent, message):
@@ -561,6 +567,35 @@ class Run:
         return checks.iter_skills(self.root, self.excluded)
 
     # -- state and GitHub items -----------------------------------------
+
+    def acquire_lease(self):
+        """Hold `state.lease` while this run plans and applies (FRS-24, FRS-25).
+
+        The daily caps and alert entries live in the state, and GitHub
+        actions cannot be undone by a merge, so two halves that overlap
+        would both plan against the same counters. A live run therefore
+        takes the lease with a compare-and-swap commit and releases it with
+        its heartbeat; a run that finds the other half's lease waits for it
+        (up to 20 minutes) and then fails without writing. A lease older
+        than its 40-minute expiry (a crashed run) is taken over.
+        """
+        other = OTHER[self.half]
+        for attempt in range(LEASE_POLLS + 1):
+            text, sha = self.gh.read_state()
+            state = smod.load(text)
+            lease = state.get('lease') or {}
+            now = smod.require_utc(self.deps.clock())
+            until = smod.parse_iso(lease.get('until')) if isinstance(lease, dict) else None
+            if lease.get('half') == other and until is not None and until > now:
+                if attempt == LEASE_POLLS:
+                    raise RunError('the %s half still holds the state lease' % other)
+                self.deps.sleep(LEASE_POLL_SECONDS)
+                continue
+            state['lease'] = {'half': self.half, 'run_id': self.deps.run_id, 'until': smod.iso(now + LEASE_TTL)}
+            if cas_write_state(self.gh, smod.dump(state), sha,
+                               'freshness: %s lease, run %s (FRS-16)' % (self.half, self.deps.run_id)):
+                return
+        raise RunError('the state lease could not be taken')
 
     def load_state(self):
         text, self.state_sha = self.gh.read_state()
@@ -876,6 +911,8 @@ class Run:
         self.age_skills = []
         self.rereview = []
         self.skip_writes = False
+        if not self.dry_run:
+            self.acquire_lease()
         self.load_state()
         if not self.gh.bot_login and not self.dry_run:
             raise RunError('the App bot login is not known (FRESHNESS_BOT_LOGIN)')
@@ -903,6 +940,7 @@ class Run:
             if self.half == 'mac':
                 self._step('announce', self.announce)
         beat = self.heartbeat(smod.require_utc(self.deps.clock()))
+        self.state.pop('lease', None)
         if self.dry_run:
             self._print('dry run: heartbeat not written: ' + json.dumps(beat, sort_keys=True))
         else:
