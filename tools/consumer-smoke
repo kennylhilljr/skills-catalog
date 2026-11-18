@@ -217,9 +217,20 @@ def frontmatter_name(path):
         if line.strip() == '---':
             break
         if line.startswith('name:'):
-            value = line[len('name:'):].strip().strip('"').strip("'").strip()
-            return value or None
+            return yaml_scalar(line[len('name:'):]) or None
     return None
+
+
+def yaml_scalar(text):
+    """A one-line YAML scalar: quoted, or plain with an optional ` #` comment."""
+    text = text.strip()
+    if text[:1] in ('"', "'"):
+        end = text.find(text[0], 1)
+        return text[1:end] if end > 0 else text[1:]
+    match = re.search(r'\s#', text)
+    if match:
+        text = text[:match.start()]
+    return text.strip()
 
 
 def _skill_names(root, depth):

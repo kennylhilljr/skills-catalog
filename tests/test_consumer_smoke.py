@@ -216,6 +216,22 @@ class ConsumerSmokeTest(unittest.TestCase):
         self.assertIn('--ignore-user-config', codex)
         self.assertEqual(codex[-1], smoke.LIST_PROMPT)
 
+    def test_yaml_scalar_unit(self):
+        self.assertEqual(smoke.yaml_scalar(' "cross-review" # local copy'), 'cross-review')
+        self.assertEqual(smoke.yaml_scalar(" 'cross-review'"), 'cross-review')
+        self.assertEqual(smoke.yaml_scalar(' cross-review   # note'), 'cross-review')
+        self.assertEqual(smoke.yaml_scalar(' a#b'), 'a#b')
+
+    def test_commented_frontmatter_name_shadows(self):
+        self.both_ok()
+        folder = os.path.join(self.tmp.name, '.agents', 'skills', 'my-copy')
+        os.makedirs(folder)
+        with open(os.path.join(folder, 'SKILL.md'), 'w', encoding='utf-8') as handle:
+            handle.write('---\nname: cross-review # local copy\n---\n')
+        rc, lines, _ = self.run_tool('--expect', 'cross-review', '--cli', 'codex')
+        self.assertEqual(rc, 1)
+        self.assertEqual(lines, ['consumer-smoke: codex 9.8.7: expected shadowed cross-review; held none'])
+
     def test_claude_init_wins_over_reply(self):
         out = claude_init(['a-skill']).replace('"ignored"', '"other-skill"')
         self.assertEqual(smoke.parse_claude(out), ['a-skill'])
