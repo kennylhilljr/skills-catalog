@@ -398,6 +398,12 @@ class WatchTest(unittest.TestCase):
         self.assertIn('[line withheld by scrub: high-entropy]', extract)
         self.assertIn('Done.', extract)
 
+        # A lowercase opaque run is not a slug either.
+        lower = ''.join(c + str(i % 10) for i, c in enumerate('abcdefghijklmnopqrst'))
+        fetch.pages[src['url']] = (200, '# Setup\n\nUse %s here.\nDone.' % lower)
+        _, _, state = self.run_watch([src], {}, fetch, 'r2')
+        self.assertNotIn(lower, state['x-docs']['extract'])
+
 
 class ParsedListsTest(unittest.TestCase):
 
@@ -415,6 +421,19 @@ class ParsedListsTest(unittest.TestCase):
         fetch = FakeFetch({TOOLS_URL: (200, page)})
         _, _, state = upstream.watch([TOOLS], {}, fetch, NOW, 'r1')
         self.assertEqual(upstream.tool_names(state), ['Agent', 'Bash', 'Edit', 'Read', 'Skill', 'WebFetch'])
+
+        two = dict(TOOLS, params={'heading': '# Tools reference', 'column': ['Tool', 'Permission required']})
+        out = upstream.normalize(two, page).split('\n')
+        self.assertIn('Bash | Yes', out)
+
+    def test_longer_fences_hide_headings(self):
+        page = '# Doc\n\n## Keep\n\n````md\n```\n## Not a heading\n```\n````\n\nAfter.\n\n## Next\n'
+        src = {'id': 'x-docs', 'url': 'https://example.com/d', 'extract': 'markdown-sections',
+               'params': {'headings': ['Keep']}}
+        out = upstream.normalize(src, page)
+        self.assertIn('## Not a heading', out)
+        self.assertIn('After.', out)
+        self.assertNotIn('## Next', out)
 
     def test_field_table_parses_the_frontmatter_table(self):
         fetch = FakeFetch({SKILLS_URL: (200, fixture('skills.md'))})

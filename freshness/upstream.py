@@ -276,17 +276,22 @@ def _plain(text):
 
 
 def _headings(lines):
-    """(index, level, plain text) for each heading line outside code fences."""
+    """(index, level, plain text) for each heading line outside code fences.
+
+    A fence closes only on a bare marker of the same character that is at
+    least as long as the opening one (CommonMark).
+    """
     found = []
     fence = None
     for index, line in enumerate(lines):
         m = _FENCE.match(line)
         if fence is None:
             if m:
-                fence = m.group(1)[0]
+                fence = m.group(1)
                 continue
         else:
-            if m and m.group(1)[0] == fence:
+            if (m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence)
+                    and not line[m.end():].strip()):
                 fence = None
             continue
         h = _HEADING.match(line)
@@ -362,19 +367,20 @@ def _tables(lines):
             header = _split_row(line)
             sep = _split_row(lines[i + 1])
             is_md = lines[i + 1].lstrip().startswith('|') and all(_SEPARATOR_CELL.match(c) for c in sep if c)
-            rows = []
+            raw_rows = []
             j = i + (2 if is_md else 1)
             while j < len(lines):
                 nxt = lines[j]
                 if nxt.lstrip().startswith('|'):
-                    rows.append(_split_row(nxt))
-                elif rows and nxt.strip() and not _HEADING.match(nxt) and not _FENCE.match(nxt):
-                    # A row wrapped onto the next line: join it to the last cell.
-                    rows[-1][-1] = (rows[-1][-1] + ' ' + nxt.strip()).strip()
+                    raw_rows.append(nxt.strip())
+                elif raw_rows and nxt.strip() and not _HEADING.match(nxt) and not _FENCE.match(nxt):
+                    # A row wrapped onto the next line: rejoin the physical
+                    # lines before splitting, so later cells stay in place.
+                    raw_rows[-1] = raw_rows[-1] + ' ' + nxt.strip()
                 else:
                     break
                 j += 1
-            yield header, rows
+            yield header, [_split_row(r) for r in raw_rows]
             i = j
             continue
         i += 1
@@ -553,7 +559,9 @@ def _scrub():
     return _scrub_module
 
 
-_SLUG = re.compile(r'[a-z0-9]+(?:[.-][a-z0-9]+)*')
+# At least two segments, none longer than 16 characters: `gpt-4o-2024-08-06`,
+# `2026-04-22-legacy-models`. A single long run is not a slug.
+_SLUG = re.compile(r'[a-z0-9]{1,16}(?:[.-][a-z0-9]{1,16})+')
 
 
 def _only_slug_entropy(line):
