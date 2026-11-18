@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 import re
 
-import yaml
 from fastmcp.exceptions import ToolError
 
 from skills_catalog_mcp import findings, version
@@ -22,25 +21,61 @@ EMPTY_QUERY = 'query is empty'
 NO_THIRD_PARTY = 'third-party index is not available'
 UNKNOWN_SCOPE = 'unknown scope'
 _WORD = re.compile(r'[a-z0-9]+')
+_DESCRIPTION = re.compile(r'^description:(?: (.*))?$')
 
 
 def _words(text):
     return set(_WORD.findall(str(text).lower()))
 
 
+def _unquote(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def parse_description(text):
+    """The top-level `description` of SKILL.md text, in the grammar of tools/lint.py.
+
+    That grammar is a subset of YAML that also accepts plain scalars YAML
+    rejects (such as a `: ` inside the value), so the server reads it the
+    same way instead of with a YAML parser. Missing or unreadable gives ''.
+    """
+    lines = text.split('\n')
+    if not lines or lines[0].rstrip('\r') != '---':
+        return ''
+    lines = [line.rstrip('\r') for line in lines[1:]]
+    if '---' not in lines:
+        return ''
+    lines = lines[:lines.index('---')]
+    for i, line in enumerate(lines):
+        match = _DESCRIPTION.match(line)
+        if not match:
+            continue
+        value = (match.group(1) or '').strip()
+        if value in ('>', '>-', '|', '|-'):
+            block = []
+            for more in lines[i + 1:]:
+                if more and not more.startswith('  '):
+                    break
+                block.append(more[2:])
+            value = ' '.join(block)
+        else:
+            value = _unquote(value)
+        return ' '.join(value.split())
+    return ''
+
+
 def _description(root, name):
     """The `description` from a served SKILL.md's frontmatter, or ''."""
     try:
         with open(os.path.join(root, name, 'SKILL.md'), encoding='utf-8') as handle:
-            text = handle.read()
-        if not text.startswith('---'):
-            return ''
-        end = text.find('\n---', 3)
-        meta = yaml.safe_load(text[3:end]) if end != -1 else None
-    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            return parse_description(handle.read())
+    except (OSError, UnicodeDecodeError):
         return ''
-    value = meta.get('description') if isinstance(meta, dict) else None
-    return ' '.join(value.split()) if isinstance(value, str) else ''
 
 
 class Catalog:

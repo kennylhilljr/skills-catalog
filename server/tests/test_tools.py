@@ -153,6 +153,24 @@ class SearchSkillsTests(_Base):
             result = await self.call(mcp, 'search_skills', query='debug', scope=scope)
             self.assertEqual(self.error_of(result), 'unknown scope')
 
+    def test_description_follows_the_lint_grammar(self):
+        cases = {
+            '---\nname: x\ndescription: Use when debugging: follow logs\n---\n': 'Use when debugging: follow logs',
+            '---\nname: x\ndescription: "Use when \\"quoted\\" text"\n---\n': 'Use when "quoted" text',
+            "---\ndescription: 'It''s for logs'\nname: x\n---\n": "It's for logs",
+            '---\nname: x\ndescription: >-\n  Use when folding\n  long lines\nmetadata:\n  a: "b"\n---\n': 'Use when folding long lines',
+            '---\nname: x\nmetadata:\n  description: "nested"\n---\n': '',
+            'no frontmatter\ndescription: x\n': '',
+            '---\ndescription: unterminated\n': '',
+        }
+        for text, expected in cases.items():
+            self.assertEqual(tools.parse_description(text), expected, text)
+
+    async def test_description_with_a_colon_is_searchable(self):
+        mcp = self.server(self.snapshot(_skills({'alpha-skill': 'Use when debugging: follow logs'})))
+        found = await self.search(mcp, 'logs')
+        self.assertEqual(found[0]['description'], 'Use when debugging: follow logs')
+
     async def test_held_canary_and_excluded_never_match(self):
         hidden = 'hidden-' + 'secretive'
         skills = _skills({'alpha-debug': 'Use when debugging.', hidden: 'Use when debugging privately.'})
