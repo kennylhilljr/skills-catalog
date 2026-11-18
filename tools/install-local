@@ -1,0 +1,678 @@
+#!/usr/bin/env python3
+"""Install a tagged catalog into the personal skill folders (MCP-9, INV-8, CAT-20).
+
+    python3 tools/install-local [--repo DIR] [--ref TAG] [--claude-dir DIR]
+                                [--agents-dir DIR] [--state FILE]
+                                [--exclude-file FILE] [--dry-run]
+
+Reads the tag straight from git (`git archive`), so it needs neither the MCP
+server nor a working tree checkout. It installs exactly the `skills` array of
+that tag's `catalog.json` into both destination folders, as copies: files are
+written as bytes with mode 0644 (0755 when executable in the tag), and a
+symlink in a skill folder of the tag is refused. Held skills and `zz-canary`
+are never installed (INV-8). Names on the exclusion list are skipped and never
+printed (CAT-20, INV-7). Every file's sha256 must match the manifest; on any
+mismatch nothing is installed.
+
+The state file records, per destination folder, each installed skill's tag,
+commit and per-file sha256. A destination folder that exists but is not in the
+state, or whose files no longer match the recorded hashes, is refused, and
+then nothing is written anywhere. There is no --force. An owned folder is
+written to a sibling temp folder and swapped in atomically (renamex_np or
+renameat2 through ctypes). Where those calls are missing, the run stops
+with exit 2 instead of replacing a folder non-atomically. A skill that left the
+catalog is removed when unchanged and left in place (and reported) when
+changed.
+
+Exit status: 0 done (or nothing to do), 1 refused or the tag failed
+verification, 2 usage or git error. Python 3.9+, standard library only.
+"""
+
+import argparse
+import errno
+import hashlib
+import io
+import json
+import os
+import posixpath
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+PROG = 'install-local'
+CANARY = 'zz-canary'
+STATE_VERSION = 1
+IGNORED_FILES = ('.DS_Store',)
+NOT_INSTALLED = 'not installed by install-local'
+CHANGED = 'changed since install'
+
+
+class Refused(Exception):
+    """The tag failed verification: exit 1, nothing installed."""
+
+
+class Failure(Exception):
+    """A usage or git error: exit 2."""
+
+
+def default_repo():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description='Install a tagged catalog into the personal skill folders as copies.',
+    )
+    parser.add_argument('--repo', default=default_repo(),
+                        help='catalog repository (default: the one holding this script)')
+    parser.add_argument('--ref', help='tag to install (default: the newest v* tag)')
+    parser.add_argument('--claude-dir', default='~/.claude/skills')
+    parser.add_argument('--agents-dir', default='~/.agents/skills')
+    parser.add_argument('--state', default='~/.config/skills-catalog/installed.json')
+    parser.add_argument('--exclude-file', default='~/.config/skills-catalog/exclude.txt')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='print the plan and write nothing')
+    return parser.parse_args(argv)
+
+
+def full_path(path):
+    return os.path.abspath(os.path.expanduser(path))
+
+
+# ---------------------------------------------------------------- git source
+
+def git(repo, *args):
+    try:
+        run = subprocess.run(['git', '-C', repo] + list(args),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        raise Failure('git is not installed')
+    return run
+
+
+def resolve_tag(repo, ref):
+    """(tag, commit) for ref, which must name a tag."""
+    if ref is None:
+        run = git(repo, 'tag', '--list', 'v*', '--sort=-v:refname')
+        if run.returncode != 0:
+            raise Failure('not a git repository: ' + repo)
+        tags = os.fsdecode(run.stdout).split()
+        if not tags:
+            raise Failure('no v* tag in ' + repo)
+        ref = tags[0]
+    full = 'refs/tags/' + ref
+    # The exact ref must exist: no revision syntax such as `v1~1` or `v1^`.
+    if (not ref or ref.startswith('-')
+            or git(repo, 'check-ref-format', full).returncode != 0
+            or git(repo, 'show-ref', '--verify', '--quiet', full).returncode != 0):
+        raise Failure('ref is not a tag: ' + ref)
+    run = git(repo, 'rev-parse', '--verify', '--quiet', full + '^{commit}')
+    if run.returncode != 0:
+        raise Failure('ref is not a tag: ' + ref)
+    return ref, os.fsdecode(run.stdout).strip()
+
+
+def safe_member(member):
+    """Check one archive member the way extraction with filter='data' would."""
+    name = member.name
+    parts = name.split('/')
+    if name.startswith('/') or '..' in parts or '\\' in name:
+        raise Refused('unsafe path in the tag: ' + name)
+    data_filter = getattr(tarfile, 'data_filter', None)
+    if data_filter is not None and (member.isreg() or member.isdir()):
+        try:
+            data_filter(member, 'extract-root')
+        except tarfile.FilterError:
+            raise Refused('unsafe path in the tag: ' + name)
+
+
+def is_excluded_path(name, excluded):
+    parts = name.split('/')
+    return len(parts) > 1 and parts[0] == 'skills' and parts[1].lower() in excluded
+
+
+def read_tag(repo, commit, excluded):
+    """{path: (bytes, executable)} for the regular files of the tag.
+
+    Paths are '/'-separated and relative to the repository root. Members of
+    an excluded skill folder are dropped unread, so no check can name them.
+    Any other member that is not a regular file or a folder (a symlink, a
+    hard link, a device) is refused, on every Python version.
+    """
+    run = git(repo, 'archive', '--format=tar', commit, '--', 'skills', 'catalog.json')
+    if run.returncode != 0:
+        raise Failure('git archive failed: ' + os.fsdecode(run.stderr).strip())
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(run.stdout), mode='r:') as archive:
+        for member in archive.getmembers():
+            if is_excluded_path(member.name, excluded):
+                continue
+            safe_member(member)
+            name = member.name.rstrip('/')
+            if member.isdir():
+                continue
+            if member.isreg():
+                handle = archive.extractfile(member)
+                files[name] = (handle.read(), bool(member.mode & 0o111))
+            else:
+                raise Refused('refusing a symlink or special file in the tag: ' + name)
+    return files
+
+
+def entry_name(entry):
+    if isinstance(entry, dict) and isinstance(entry.get('name'), str):
+        return entry['name']
+    return None
+
+
+def catalog_skills(files, excluded):
+    """The `skills` entries (excluded ones dropped first) and the held names."""
+    if 'catalog.json' not in files:
+        raise Refused('the tag has no catalog.json')
+    try:
+        catalog = json.loads(files['catalog.json'][0].decode('utf-8'))
+        skills = catalog['skills']
+        held = {entry_name(entry) for entry in catalog.get('held', [])}
+        if not isinstance(skills, list):
+            raise TypeError('skills is not a list')
+        kept = []
+        for entry in skills:
+            name = entry_name(entry)
+            if name is not None and name.lower() in excluded:
+                continue
+            if name is None or not isinstance(entry.get('files'), dict):
+                raise TypeError('bad entry')
+            kept.append(entry)
+    except (ValueError, KeyError, TypeError, AttributeError, UnicodeDecodeError):
+        raise Refused('the tag has an unreadable catalog.json')
+    return kept, held
+
+
+def valid_name(name):
+    return bool(name) and '/' not in name and '\\' not in name and name not in ('.', '..') \
+        and not name.startswith('.')
+
+
+def build_wanted(files, skills, held, excluded):
+    """{name: {rel: (bytes, executable)}} for every skill to install.
+
+    Raises Refused on any manifest mismatch. Error text never names an
+    excluded skill: excluded entries are dropped before anything is checked.
+    """
+    wanted = {}
+    for entry in skills:
+        name = entry['name']
+        if name.lower() in excluded:
+            continue
+        if name in held or name == CANARY:
+            continue
+        if not valid_name(name) or entry.get('path') != 'skills/' + name:
+            raise Refused('bad catalog entry: ' + name)
+        prefix = 'skills/' + name + '/'
+        content = {}
+        for path, value in files.items():
+            if path.startswith(prefix) and posixpath.basename(path) not in IGNORED_FILES:
+                content[path[len(prefix):]] = value
+        manifest = entry['files']
+        if sorted(content) != sorted(manifest):
+            raise Refused(name + ': files in the tag do not match catalog.json')
+        for rel, (data, _executable) in content.items():
+            if hashlib.sha256(data).hexdigest() != manifest[rel]:
+                raise Refused(name + '/' + rel + ': sha256 does not match catalog.json')
+        if name in wanted:
+            raise Refused('duplicate catalog entry: ' + name)
+        wanted[name] = content
+    return wanted
+
+
+# ---------------------------------------------------------------- exclusions
+
+def read_excluded(path):
+    """Lowercased names from the exclusion list; empty when it is missing."""
+    if not os.path.exists(path):
+        return set()
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        raise Failure('cannot read the exclusion list')
+    names = set()
+    for raw in lines:
+        name = raw.split('#', 1)[0].strip()
+        if name:
+            names.add(name.lower())
+    return names
+
+
+# ---------------------------------------------------------------- state
+
+def read_state(path):
+    if not os.path.exists(path):
+        return {'version': STATE_VERSION, 'destinations': {}}
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            state = json.load(handle)
+        if not isinstance(state.get('destinations'), dict):
+            raise ValueError('no destinations')
+        for owned in state['destinations'].values():
+            # A name joins a destination path: never allow one that leaves it.
+            if not isinstance(owned, dict) or not all(
+                    valid_name(name) and isinstance(entry, dict)
+                    for name, entry in owned.items()):
+                raise ValueError('bad entry')
+    except (OSError, ValueError, AttributeError):
+        raise Failure('cannot read the state file: ' + path)
+    return state
+
+
+def write_state(path, state):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.installed-', suffix='.json', dir=folder)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+            handle.write('\n')
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def installed_hashes(folder):
+    """{rel: sha256} of a folder, or None when it holds a link or special file."""
+    if os.path.islink(folder) or not os.path.isdir(folder):
+        return None
+    found = {}
+    for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
+        for name in dirnames:
+            if os.path.islink(os.path.join(dirpath, name)):
+                return None
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            mode = os.lstat(full).st_mode
+            if name in IGNORED_FILES and stat.S_ISREG(mode):
+                continue
+            if not stat.S_ISREG(mode):
+                return None
+            rel = os.path.relpath(full, folder).replace(os.sep, '/')
+            with open(full, 'rb') as handle:
+                found[rel] = hashlib.sha256(handle.read()).hexdigest()
+    return found
+
+
+def file_mode(executable):
+    return 0o755 if executable else 0o644
+
+
+def modes_match(folder, content):
+    for rel, (_data, executable) in content.items():
+        mode = stat.S_IMODE(os.lstat(os.path.join(folder, *rel.split('/'))).st_mode)
+        if mode != file_mode(executable):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------- plan
+
+def matches_record(current, entry):
+    """True when a folder's hashes are the recorded ones.
+
+    `previous` is set only while an update is in flight: the state is saved
+    before the folder is swapped, so after an interruption either side of
+    the swap still counts as installed by this tool.
+    """
+    if current is None or not isinstance(entry, dict):
+        return False
+    return current == entry.get('files') or current == entry.get('previous')
+
+
+def plan_destination(dest, wanted, owned, excluded):
+    """Steps for one destination: (action, name, detail).
+
+    detail is the refusal reason for `refuse` and `leave`, and the folder's
+    current hashes for `update`, `keep` and `remove`.
+    """
+    steps = []
+    for name in sorted(wanted):
+        folder = os.path.join(dest, name)
+        content = wanted[name]
+        exists = os.path.lexists(folder)
+        if not exists:
+            steps.append(('install', name, None))
+            continue
+        if name not in owned:
+            steps.append(('refuse', name, NOT_INSTALLED))
+            continue
+        current = installed_hashes(folder)
+        if not matches_record(current, owned[name]):
+            steps.append(('refuse', name, CHANGED))
+            continue
+        target = {rel: hashlib.sha256(data).hexdigest() for rel, (data, _x) in content.items()}
+        if current != target or not modes_match(folder, content):
+            steps.append(('update', name, current))
+        else:
+            steps.append(('keep', name, current))
+    for name in sorted(owned):
+        if name in wanted or name.lower() in excluded:
+            continue
+        folder = os.path.join(dest, name)
+        if not os.path.lexists(folder):
+            steps.append(('forget', name, None))
+            continue
+        current = installed_hashes(folder)
+        if not matches_record(current, owned[name]):
+            steps.append(('leave', name, CHANGED))
+        else:
+            steps.append(('remove', name, current))
+    return steps
+
+
+# ---------------------------------------------------------------- apply
+
+class Conflict(Exception):
+    """A folder changed while this run was writing it; it was put back."""
+
+
+def write_tree(root, content):
+    for rel in sorted(content):
+        data, executable = content[rel]
+        target = os.path.join(root, *rel.split('/'))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, 'wb') as handle:
+            handle.write(data)
+        os.chmod(target, file_mode(executable))
+
+
+def _rename_calls():
+    """(exchange, no_replace) from the C library; either may be None.
+
+    renamex_np(RENAME_SWAP or RENAME_EXCL) on macOS, renameat2(RENAME_EXCHANGE
+    or RENAME_NOREPLACE) on Linux.
+    """
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+    except (ImportError, OSError):
+        return None, None
+    if sys.platform == 'darwin' and hasattr(libc, 'renamex_np'):
+        func = libc.renamex_np
+        func.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+
+        def call(first, second, flag):
+            return func(os.fsencode(first), os.fsencode(second), flag)
+        swap_flag, excl_flag = 0x2, 0x4
+    elif sys.platform.startswith('linux') and hasattr(libc, 'renameat2'):
+        func = libc.renameat2
+        func.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+                         ctypes.c_uint]
+
+        def call(first, second, flag):
+            return func(-100, os.fsencode(first), -100, os.fsencode(second), flag)
+        swap_flag, excl_flag = 0x2, 0x1
+    else:
+        return None, None
+
+    def wrap(flag):
+        def run(first, second):
+            if call(first, second, flag) != 0:
+                err = ctypes.get_errno()
+                raise OSError(err, os.strerror(err), second)
+        return run
+    return wrap(swap_flag), wrap(excl_flag)
+
+
+class NoAtomicRename(OSError):
+    """The platform or file system lacks the atomic rename calls."""
+
+
+def _required_calls():
+    exchange, no_replace = _rename_calls()
+    if exchange is None or no_replace is None:
+        raise NoAtomicRename(errno.ENOTSUP, 'no atomic rename on this platform')
+    return exchange, no_replace
+
+
+def _atomic(call, first, second):
+    try:
+        call(first, second)
+    except OSError as err:
+        if err.errno in (errno.EINVAL, errno.ENOTSUP, errno.ENOSYS):
+            raise NoAtomicRename(err.errno, 'no atomic rename on this file system')
+        raise
+
+
+def rename_new(fresh, final):
+    """Move fresh to final, failing if anything appeared at final."""
+    _exchange, no_replace = _required_calls()
+    try:
+        _atomic(no_replace, fresh, final)
+    except FileExistsError:
+        raise Conflict(NOT_INSTALLED)
+
+
+class Stranded(OSError):
+    """A folder could not be put back; it was kept in the staging folder."""
+
+
+def swap_in(fresh, final, expected):
+    """Atomically replace final with fresh; the replaced folder ends at fresh.
+
+    The replaced folder must still hash to expected; if not, it is swapped
+    back and Conflict is raised. Fails closed (NoAtomicRename) where the
+    atomic exchange is missing, so the folder is never briefly absent.
+    """
+    exchange, _no_replace = _required_calls()
+    _atomic(exchange, fresh, final)
+    if installed_hashes(fresh) != expected:
+        try:
+            exchange(fresh, final)
+        except OSError:
+            raise Stranded(errno.EIO, 'could not put a changed folder back; it is at', fresh)
+        raise Conflict(CHANGED)
+
+
+def place(dest, name, content, expected):
+    """Write content to dest/name through a sibling temp folder.
+
+    expected is None for a new folder, else the hashes the folder being
+    replaced must still have. The staging folder is deleted unless a folder
+    could not be put back, in which case it is kept and reported.
+    """
+    _required_calls()
+    os.makedirs(dest, exist_ok=True)
+    final = os.path.join(dest, name)
+    staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
+    keep = False
+    try:
+        fresh = os.path.join(staging, 'new')
+        os.mkdir(fresh)
+        os.chmod(fresh, 0o755)
+        write_tree(fresh, content)
+        if expected is None:
+            rename_new(fresh, final)
+        else:
+            swap_in(fresh, final, expected)
+    except Stranded:
+        keep = True
+        raise
+    finally:
+        if not keep:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def remove(dest, name, expected):
+    """Delete dest/name, unless it no longer hashes to expected."""
+    folder = os.path.join(dest, name)
+    staging = tempfile.mkdtemp(prefix='.install-local-', dir=dest)
+    keep = False
+    try:
+        old = os.path.join(staging, 'old')
+        os.rename(folder, old)
+        if installed_hashes(old) != expected:
+            try:
+                os.rename(old, folder)
+            except OSError:
+                keep = True
+                raise Stranded(errno.EIO, 'could not put a changed folder back; it is at', old)
+            raise Conflict(CHANGED)
+    finally:
+        if not keep:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def record(tag, commit, content):
+    return {
+        'tag': tag,
+        'commit': commit,
+        'files': {rel: hashlib.sha256(data).hexdigest()
+                  for rel, (data, _x) in sorted(content.items())},
+    }
+
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    repo = full_path(args.repo)
+    dests = []
+    for raw in (args.claude_dir, args.agents_dir):
+        path = full_path(raw)
+        if path not in dests:
+            dests.append(path)
+    state_path = full_path(args.state)
+    try:
+        excluded = read_excluded(full_path(args.exclude_file))
+        tag, commit = resolve_tag(repo, args.ref)
+        files = read_tag(repo, commit, excluded)
+        skills, held = catalog_skills(files, excluded)
+        wanted = build_wanted(files, skills, held, excluded)
+        state = read_state(state_path)
+    except Failure as err:
+        print(PROG + ': error: ' + str(err), file=sys.stderr)
+        return 2
+    except Refused as err:
+        print(PROG + ': ' + str(err) + '; nothing installed', file=sys.stderr)
+        return 1
+
+    destinations = state.setdefault('destinations', {})
+    plans = {dest: plan_destination(dest, wanted, destinations.get(dest, {}), excluded)
+             for dest in dests}
+    refused = False
+    for dest in dests:
+        for action, name, detail in plans[dest]:
+            where = os.path.join(dest, name)
+            if action == 'refuse':
+                refused = True
+                print(where + ': refusing to overwrite (' + detail + ')', file=sys.stderr)
+            elif action == 'leave':
+                print(where + ': left in place (' + detail + ', no longer in the catalog)',
+                      file=sys.stderr)
+            elif args.dry_run and action in ('install', 'update', 'remove'):
+                print(action + ' ' + where)
+    if refused:
+        print(PROG + ': refused; nothing written', file=sys.stderr)
+        return 1
+    if args.dry_run:
+        print(PROG + ': dry run of ' + tag + '; nothing written')
+        return 0
+
+    try:
+        changed, refused = apply(dests, plans, destinations, wanted, tag, commit, state,
+                                 state_path)
+    except OSError as err:
+        where = ' ' + str(err.filename) if err.filename else ''
+        print(PROG + ': error while writing: ' + str(err.strerror or err) + where,
+              file=sys.stderr)
+        return 2
+    if refused:
+        print(PROG + ': refused some folders that changed during the run', file=sys.stderr)
+        return 1
+    if not changed:
+        print(PROG + ': ' + tag + ' is already installed')
+    else:
+        print(PROG + ': installed ' + tag)
+    return 0
+
+
+def recheck(plans):
+    """Refusals for folders that changed since the plan, before any write."""
+    found = []
+    for dest in plans:
+        for action, name, snapshot in plans[dest]:
+            folder = os.path.join(dest, name)
+            if action == 'install' and os.path.lexists(folder):
+                found.append((folder, NOT_INSTALLED))
+            elif action in ('update', 'remove', 'keep') and installed_hashes(folder) != snapshot:
+                found.append((folder, CHANGED))
+            elif action == 'forget' and os.path.lexists(folder):
+                found.append((folder, NOT_INSTALLED))
+    return found
+
+
+def apply(dests, plans, destinations, wanted, tag, commit, state, state_path):
+    """Carry out the plans. Returns (changed, refused).
+
+    Every folder is checked again first, and any change aborts the run before
+    anything is written. The state is then saved once (proving it writable),
+    before each folder is written (with the replaced hashes kept as
+    `previous` during an update) and after, so an interrupted run never
+    leaves a folder this tool wrote looking foreign. A folder that changes
+    during its own swap is put back and refused.
+    """
+    late = recheck(plans)
+    if late:
+        for folder, reason in late:
+            print(folder + ': refusing to overwrite (' + reason + ')', file=sys.stderr)
+        return False, True
+    changed = False
+    refused = False
+    if any(step[0] in ('install', 'update') for steps in plans.values() for step in steps):
+        _required_calls()
+    if any(step[0] in ('install', 'update', 'remove', 'forget')
+           for steps in plans.values() for step in steps):
+        write_state(state_path, state)
+    for dest in dests:
+        owned = destinations.setdefault(dest, {})
+        for action, name, snapshot in plans[dest]:
+            folder = os.path.join(dest, name)
+            before = owned.get(name)
+            try:
+                if action in ('install', 'update'):
+                    pending = record(tag, commit, wanted[name])
+                    if action == 'update':
+                        pending['previous'] = snapshot
+                    owned[name] = pending
+                    write_state(state_path, state)
+                    place(dest, name, wanted[name], snapshot if action == 'update' else None)
+                    print(action + ' ' + folder)
+                elif action == 'remove':
+                    remove(dest, name, snapshot)
+                    print('remove ' + folder)
+            except Conflict as err:
+                refused = True
+                print(folder + ': refusing to overwrite (' + str(err) + ')', file=sys.stderr)
+                if before is None:
+                    owned.pop(name, None)
+                else:
+                    owned[name] = before
+                write_state(state_path, state)
+                continue
+            if action in ('install', 'update', 'keep'):
+                entry = record(tag, commit, wanted[name])
+                if action != 'keep' or owned.get(name) != entry:
+                    owned[name] = entry
+                    changed = True
+                    write_state(state_path, state)
+            elif action in ('remove', 'forget'):
+                owned.pop(name, None)
+                changed = True
+                write_state(state_path, state)
+    return changed, refused
+
+
+if __name__ == '__main__':
+    sys.exit(main())
