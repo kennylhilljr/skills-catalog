@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Public-content scrub for the skills catalog (CAT-24, CAT-9).
+"""Public-content scrub for the skills catalog (CAT-25, CAT-9).
 
 Finds secrets, personal data, internal hosts, home paths and private repo
 names in catalog files. It reports the file, line and kind of each finding
@@ -375,7 +375,7 @@ def read_private_list(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Scan the catalog for secrets, personal data and private names (CAT-24). '
+        description='Scan the catalog for secrets, personal data and private names (CAT-25). '
         'Prints file, line and kind only (CAT-9).'
     )
     parser.add_argument('root', nargs='?', default='.', help='directory to scan (default: .)')
