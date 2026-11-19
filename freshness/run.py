@@ -54,7 +54,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -406,7 +405,7 @@ class Deps:
 
     def __init__(self, github, clock, fetch_link=None, fetch_text=None, fetch_npm=None, cli_run=None,
                  classifier=None, notify_run=None, attention_fn=None, local_config=None, excluded=(),
-                 private_names=(), out=None, run_id=None, sleep=time.sleep):
+                 private_names=(), out=None, run_id=None):
         self.github = github
         self.clock = clock
         self.fetch_link = fetch_link
@@ -421,7 +420,6 @@ class Deps:
         self.private_names = tuple(private_names or ())
         self.out = out if out is not None else sys.stdout
         self.run_id = run_id
-        self.sleep = sleep
 
 
 def _utcnow():
@@ -495,9 +493,6 @@ def merge_state(base, ours, fresh):
 
 
 STATE_WRITE_ATTEMPTS = 3
-LEASE_TTL = datetime.timedelta(minutes=40)
-LEASE_POLL_SECONDS = 60
-LEASE_POLLS = 20
 
 
 def cas_write_state(gh, text, parent, message):
@@ -567,49 +562,6 @@ class Run:
         return checks.iter_skills(self.root, self.excluded)
 
     # -- state and GitHub items -----------------------------------------
-
-    def acquire_lease(self):
-        """Hold `state.lease` while this run plans and applies (FRS-24, FRS-25).
-
-        The daily caps and alert entries live in the state, and GitHub
-        actions cannot be undone by a merge, so two halves that overlap
-        would both plan against the same counters. A live run therefore
-        takes the lease with a compare-and-swap commit and releases it with
-        its heartbeat; a run that finds another run's unexpired lease (either
-        half, a manual run included) waits for it (up to 20 minutes) and then
-        fails without writing. A lease past its 40-minute expiry (a crashed
-        run) is taken over, so a run whose own lease expired plans and
-        applies nothing (`lease_held`).
-        """
-        for attempt in range(LEASE_POLLS + 1):
-            text, sha = self.gh.read_state()
-            state = smod.load(text)
-            lease = state.get('lease')
-            lease = lease if isinstance(lease, dict) else {}
-            now = smod.require_utc(self.deps.clock())
-            until = smod.parse_iso(lease.get('until'))
-            if lease.get('run_id') not in (None, self.deps.run_id) and until is not None and until > now:
-                if attempt == LEASE_POLLS:
-                    raise RunError('run %s of the %s half still holds the state lease'
-                                   % (lease.get('run_id'), lease.get('half')))
-                self.deps.sleep(LEASE_POLL_SECONDS)
-                continue
-            self.lease_until = now + LEASE_TTL
-            state['lease'] = {'half': self.half, 'run_id': self.deps.run_id, 'until': smod.iso(self.lease_until)}
-            if cas_write_state(self.gh, smod.dump(state), sha,
-                               'freshness: %s lease, run %s (FRS-16)' % (self.half, self.deps.run_id)):
-                return
-        raise RunError('the state lease could not be taken')
-
-    def lease_held(self):
-        """False once this run's lease expired: another run may hold it, so plan and apply nothing."""
-        if self.dry_run:
-            return True
-        if smod.require_utc(self.deps.clock()) < self.lease_until:
-            return True
-        self._fail('lease', 'the state lease expired before this run applied its actions')
-        self.skip_writes = True
-        return False
 
     def load_state(self):
         text, self.state_sha = self.gh.read_state()
@@ -807,16 +759,22 @@ class Run:
 
     # -- age lifecycle (FRS-8, FRS-9) ----------------------------------------
 
-    def record_results(self):
-        """Per-skill pass/fail of this half, for `age.advance_actions`."""
+    def record_results(self, results=None):
+        """Per-skill pass/fail of this half into `results` (default: the state), for `age.advance_actions`.
+
+        `execute` records into the state only after routing, alert planning
+        and apply ran, so a step that fails late still leaves `*_ok: false`.
+        `age_actions` reads a copy recorded the same way before then.
+        """
+        if results is None:
+            results = self.state['results']
         if not self.checked_skills:
             # The checks did not finish: no skill counts as passing for this half.
             prefix = 'actions_' if self.half == 'actions' else 'mac_'
-            for entry in self.state['results'].values():
+            for entry in results.values():
                 entry[prefix + 'ok'] = False
             return
         failing = {f['skill'] for f in self.findings if f['kind'] != 'past-max-age'}
-        results = self.state['results']
         names = set(self.checked_skills)
         for name in list(results):
             if name not in names:
@@ -836,7 +794,9 @@ class Run:
         self.actions += age.stale_actions(self.rereview, stale, self.now, root=self.root, aged=aged,
                                           open_items=self._open(), excluded=self.excluded)
         self.calls.append('advance_actions')
-        self.actions += age.advance_actions(self.state['results'], self.now.date(), self.config['advance_policy'],
+        results = copy.deepcopy(self.state['results'])
+        self.record_results(results)  # this run's results, not yet in the state
+        self.actions += age.advance_actions(results, self.now.date(), self.config['advance_policy'],
                                             now=self.now, root=self.root, skills=self.age_skills,
                                             open_items=self._open(), excluded=self.excluded)
 
@@ -847,6 +807,10 @@ class Run:
             self.alerts, self._open(prs=False), self._closed_issues(), self.state, self.deps.run_id, self.now,
             scope=SCOPE[self.half], announce=(self.half == 'mac'))
         self.actions += planned
+
+    def _plan_alerts_ok(self):
+        self.plan_alerts()
+        return True
 
     def apply(self):
         if self.skip_writes:
@@ -929,9 +893,9 @@ class Run:
         self.age_skills = []
         self.rereview = []
         self.skip_writes = False
-        self.lease_until = None
-        if not self.dry_run:
-            self.acquire_lease()
+        # No lease: the halves run on separate schedules and every state write
+        # is a compare-and-swap three-way merge (FRS-16). A rare overlap can
+        # plan against the same daily caps; that is accepted (issue #72).
         self.load_state()
         if not self.gh.bot_login and not self.dry_run:
             raise RunError('the App bot login is not known (FRESHNESS_BOT_LOGIN)')
@@ -949,19 +913,21 @@ class Run:
         else:
             self._step('cli checks', self.mac_checks)
         self._step('heartbeat watch', self.watch_other_half)
-        self.record_results()
-        if not self.skip_writes and self.lease_held():
+        if not self.skip_writes:
             self._step('route', self.route_findings)
             if self.half == 'actions' and not self.failed:
                 # FRS-9: a run that failed (a broken check, the canary) advances nothing.
                 self._step('age actions', self.age_actions)
-            self._step('alerts', self.plan_alerts)
-            if self.lease_held():
+            planned = self._step('alerts', self._plan_alerts_ok)
+            if planned:
                 self._step('apply', self.apply)
-            if self.half == 'mac':
-                self._step('announce', self.announce)
+                if self.half == 'mac':
+                    self._step('announce', self.announce)
+            else:
+                self._fail('apply', 'skipped: alert planning failed, so the planned actions were not applied')
+        # Recorded last, so any failure above leaves this half's results failing.
+        self.record_results()
         beat = self.heartbeat(smod.require_utc(self.deps.clock()))
-        self.state.pop('lease', None)
         if self.dry_run:
             self._print('dry run: heartbeat not written: ' + json.dumps(beat, sort_keys=True))
         else:

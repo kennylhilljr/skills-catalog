@@ -57,7 +57,6 @@ class FakeGitHub:
         self.number = 500
         self.state_sha = 'a' * 40
         self.concurrent = []  # states the other half writes, one per conflicting ref move
-        self.moves_before_conflict = 0  # ref moves that succeed first (the lease commit)
 
     def writes(self):
         return [(m, p, b) for m, p, b in self.requests if m != 'GET']
@@ -72,9 +71,6 @@ class FakeGitHub:
 
     def _conflict(self):
         if not self.concurrent:
-            return False
-        if self.moves_before_conflict:
-            self.moves_before_conflict -= 1
             return False
         self._other_half_writes()
         return True
@@ -159,10 +155,6 @@ def _no_cli(argv, timeout=10):
     raise AssertionError('the Actions half must never run a CLI: %r' % (argv,))
 
 
-def _no_sleep(seconds):
-    raise AssertionError('no wait expected')
-
-
 def _no_call(prompt):
     raise AssertionError('no classifier call expected')
 
@@ -194,7 +186,7 @@ def _deps(fake, half, out=None, **kw):
         attention_fn=lambda *a: None,
         local_config={'slack_channel_id': 'C' + '0123', 'prbot_path': 'prbot', 'held_sources': {}},
         excluded=(), out=out if out is not None else io.StringIO(),
-        run_id='%s-1' % half, sleep=_no_sleep)
+        run_id='%s-1' % half)
     params.update(kw)
     return runmod.Deps(**params)
 
@@ -417,6 +409,39 @@ class RobustnessTests(unittest.TestCase):
         self.assertEqual(beat['last_success'], '2026-11-17T11:00:00+00:00')
         self.assertTrue(any(e.startswith('apply: RefusedWrite') for e in job.errors))
 
+    def test_a_late_failure_records_every_result_as_failing(self):
+        """Results are recorded after routing, alert planning and apply, so a late failure is never `ok`."""
+        fake = FakeGitHub(smod.empty_state())
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        with mock.patch.object(deps.github, 'apply', side_effect=ghmod.GitHubError('boom')):
+            self.assertFalse(job.execute())
+        results = fake.written_state()['results']
+        self.assertEqual(sorted(results), sorted(_skill_folders()))
+        self.assertEqual({e['actions_ok'] for e in results.values()}, {False})
+
+    def test_an_alert_planning_failure_applies_nothing(self):
+        fake = FakeGitHub(smod.empty_state())
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        with mock.patch.object(amod, 'plan_alerts', side_effect=RuntimeError('planner bug')), \
+                mock.patch.object(deps.github, 'apply', wraps=deps.github.apply) as apply:
+            self.assertFalse(job.execute())
+        self.assertFalse(apply.called)
+        self.assertEqual(_opened_titles(fake), [])
+        self.assertEqual({e['actions_ok'] for e in fake.written_state()['results'].values()}, {False})
+        self.assertEqual(fake.written_state()['heartbeats']['actions']['result'], 'failed')
+        self.assertTrue(any(e.startswith('alerts: RuntimeError') for e in job.errors))
+
+    def test_a_mac_alert_planning_failure_announces_nothing(self):
+        fake = FakeGitHub(smod.empty_state())
+        deps = _deps(fake, 'mac', cli_run=FakeCli())
+        job = runmod.Run('mac', deps)
+        with mock.patch.object(amod, 'plan_alerts', side_effect=RuntimeError('planner bug')):
+            self.assertFalse(job.execute())
+        self.assertNotIn('announce', job.calls)
+        self.assertEqual({e['mac_ok'] for e in fake.written_state()['results'].values()}, {False})
+
     def test_listing_failure_plans_nothing_and_records_a_failed_run(self):
         fake = FakeGitHub()
         deps = _deps(fake, 'actions')
@@ -466,12 +491,11 @@ class RobustnessTests(unittest.TestCase):
         base['heartbeats'] = {'mac': _beat('2026-11-17T11:30:00+00:00')}
         fake = FakeGitHub(base)
         fake.concurrent.append(self._other_half(base, '2026-11-18T11:00:40+00:00'))
-        fake.moves_before_conflict = 1  # the lease commit lands; the heartbeat commit races
         ok, job, _ = _execute('actions', fake)
         self.assertTrue(ok, job.errors)
         self._check_merged(fake, '2026-11-18T11:00:40+00:00')
         moves = [b for m, p, b in fake.requests if m == 'PATCH' and p.endswith('/git/refs/heads/freshness-state')]
-        self.assertEqual([b['force'] for b in moves], [False, False, False])
+        self.assertEqual([b['force'] for b in moves], [False, False])
 
     def test_the_first_write_races_too(self):
         fake = FakeGitHub()
@@ -484,7 +508,6 @@ class RobustnessTests(unittest.TestCase):
         fake = FakeGitHub(smod.empty_state())
         fake.concurrent.extend(self._other_half(smod.empty_state(), '2026-11-18T11:0%d:00+00:00' % i)
                                for i in range(runmod.STATE_WRITE_ATTEMPTS))
-        fake.moves_before_conflict = 1
         ok, job, _ = _execute('actions', fake)
         self.assertFalse(ok)
         self.assertTrue(any(e.startswith('state write') for e in job.errors))
@@ -502,60 +525,6 @@ class RobustnessTests(unittest.TestCase):
         actions = {'upstream_pending': {'fp': {'evidence': 'new'}}}
         self.assertEqual(runmod.merge_state(base, mac, actions), actions)
 
-    def test_a_live_run_holds_and_releases_the_lease(self):
-        fake = FakeGitHub(smod.empty_state())
-        ok, job, _ = _execute('actions', fake)
-        self.assertTrue(ok, job.errors)
-        states = [json.loads(b) for b in fake.blobs if b.lstrip().startswith('{')]
-        self.assertEqual(states[0]['lease']['half'], 'actions')
-        self.assertEqual(states[0]['lease']['until'], smod.iso(NOW + runmod.LEASE_TTL))
-        self.assertNotIn('lease', json.loads(fake.state_text))
-
-    def test_waits_for_the_other_halfs_lease(self):
-        state = smod.empty_state()
-        state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW + datetime.timedelta(minutes=5))}
-        fake = FakeGitHub(state)
-        waits = []
-
-        def sleep(seconds):
-            waits.append(seconds)
-            released = json.loads(fake.state_text)
-            released.pop('lease')
-            fake.state_text = smod.dump(released)
-            fake.state_sha = 'b' * 40
-        ok, job, _ = _execute('actions', fake, sleep=sleep)
-        self.assertTrue(ok, job.errors)
-        self.assertEqual(waits, [runmod.LEASE_POLL_SECONDS])
-
-    def test_a_held_lease_fails_the_run_without_writing(self):
-        state = smod.empty_state()
-        state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW + datetime.timedelta(minutes=5))}
-        fake = FakeGitHub(state)
-        waits = []
-        deps = _deps(fake, 'actions', sleep=waits.append)
-        code = runmod.main(['--half', 'actions'], deps=deps)
-        self.assertEqual(code, 1)
-        self.assertEqual(len(waits), runmod.LEASE_POLLS)
-        self.assertEqual(fake.writes(), [])
-
-    def test_a_lease_of_another_run_of_the_same_half_blocks(self):
-        state = smod.empty_state()
-        state['lease'] = {'half': 'actions', 'run_id': 'actions-0',
-                          'until': smod.iso(NOW + datetime.timedelta(minutes=5))}
-        fake = FakeGitHub(state)
-        waits = []
-        code = runmod.main(['--half', 'actions'], deps=_deps(fake, 'actions', sleep=waits.append))
-        self.assertEqual(code, 1)
-        self.assertEqual(fake.writes(), [])
-
-    def test_a_run_whose_lease_expired_applies_nothing(self):
-        times = iter([NOW] * 2 + [NOW + runmod.LEASE_TTL] * 50)
-        fake = FakeGitHub(smod.empty_state())
-        ok, job, _ = _execute('actions', fake, clock=lambda: next(times))
-        self.assertFalse(ok)
-        self.assertEqual(_opened_titles(fake), [])
-        self.assertTrue(any(e.startswith('lease') for e in job.errors))
-
     def test_a_failed_check_advances_nothing(self):
         state = smod.empty_state()
         state['results'] = {'zz-canary': {'actions_run': 'old', 'actions_ok': True}}
@@ -566,13 +535,6 @@ class RobustnessTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertFalse(advance.called)
         self.assertIs(fake.written_state()['results']['zz-canary']['actions_ok'], False)
-
-    def test_an_expired_lease_is_taken_over(self):
-        state = smod.empty_state()
-        state['lease'] = {'half': 'mac', 'run_id': 'mac-0', 'until': smod.iso(NOW - datetime.timedelta(minutes=1))}
-        fake = FakeGitHub(state)
-        ok, job, _ = _execute('actions', fake)
-        self.assertTrue(ok, job.errors)
 
     def test_notify_runner_uses_the_configured_path(self):
         run = runmod.make_notify_run('/opt/tools/bin' + os.pathsep + '/usr/bin')
