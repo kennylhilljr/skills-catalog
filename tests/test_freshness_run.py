@@ -477,22 +477,32 @@ class RobustnessTests(unittest.TestCase):
         finding = {'kind': 'upstream-change', 'skill': 'claude-code-releases-github', 'subject': 'x',
                    'file': None, 'line': None, 'evidence': '+ nothing that names a skill', 'fix': None}
         base = smod.empty_state()
-        base['sources'] = {'src': {'sha': 'old'}}
+        old = {'sha256': 'old', 'extract': 'a', 'fetched_at': 't0', 'failures': 0, 'last_error': None, 'errors': []}
+        base['sources'] = {'src': old, 'failing': dict(old, failures=1)}
+        new = {'src': dict(old, sha256='new', extract='b', fetched_at='t1'),
+               'failing': dict(old, failures=2, last_error='HTTP 500'),
+               'first': dict(old, sha256='first')}
         fake = FakeGitHub(base)
         deps = _deps(fake, 'actions')
         job = runmod.Run('actions', deps)
-        with mock.patch.object(runmod.upstream, 'watch', return_value=([], [], {'src': {'sha': 'new'}})), \
+        with mock.patch.object(runmod.upstream, 'watch', return_value=([], [], new)), \
                 mock.patch.object(deps.github, 'apply', side_effect=ghmod.GitHubError('boom')):
             self.assertFalse(job.execute())
-        self.assertEqual(fake.written_state()['sources'], {'src': {'sha': 'old'}})
+        sources = fake.written_state()['sources']
+        self.assertEqual(sources['src'], old)
+        self.assertEqual(sources['failing']['failures'], 2)  # failure counters keep counting
+        self.assertEqual(sources['first']['sha256'], 'first')
 
         parked = smod.empty_state()
         parked['upstream_pending'] = {fmod.finding_fingerprint(finding): finding}
         fake = FakeGitHub(parked)
         deps = _deps(fake, 'mac', cli_run=FakeCli(), classifier=lambda prompt: '{"affects": [], "reason": "r"}')
         job = runmod.Run('mac', deps)
-        with mock.patch.object(deps.github, 'apply', side_effect=ghmod.GitHubError('boom')):
+        failed = [{'op': 'open_issue', 'ok': False, 'error': 'boom'}]
+        with mock.patch.object(deps.github, 'apply', return_value=failed) as apply:
             self.assertFalse(job.execute())
+        self.assertTrue(apply.called)
+        self.assertIn('classify', job.calls)  # the entry was classified, then kept
         self.assertEqual(list(fake.written_state()['upstream_pending']), [fmod.finding_fingerprint(finding)])
 
     def test_a_delivered_upstream_change_moves_the_source_on(self):

@@ -859,7 +859,15 @@ class Run:
         change whose issue or PR was never opened. The next run sees it again;
         open items dedupe it if part of it did land.
         """
-        self.state['sources'] = copy.deepcopy(self.base_state['sources'])
+        base = self.base_state['sources']
+        for sid, entry in self.state['sources'].items():
+            old = base.get(sid)
+            if not (isinstance(entry, dict) and isinstance(old, dict) and old.get('sha256')):
+                continue  # a first baseline raised nothing to deliver
+            # Only the content baseline goes back; fetch-failure counters keep
+            # counting toward `source-failing` (FRS-14).
+            for key in ('sha256', 'extract', 'fetched_at'):
+                entry[key] = copy.deepcopy(old.get(key))
         pending = self.state['upstream_pending']
         for fp, found in self.base_state['upstream_pending'].items():
             pending.setdefault(fp, copy.deepcopy(found))
