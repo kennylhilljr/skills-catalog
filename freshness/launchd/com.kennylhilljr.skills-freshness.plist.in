@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Mac half of the freshness bot (FRS-16, DESIGN 7.6). Rendered by tools/install-freshness-agent. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kennylhilljr.skills-freshness</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PYTHON@</string>
+    <string>-B</string>
+    <string>-m</string>
+    <string>freshness.run</string>
+    <string>--half</string>
+    <string>mac</string>
+    <string>--root</string>
+    <string>@ROOT@</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@ROOT@</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>@LOGS@/freshness.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGS@/freshness.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

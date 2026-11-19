@@ -88,7 +88,7 @@ Top-level fields are limited to the six that the Agent Skills spec defines: `nam
 Check the catalog before committing:
 
 ```sh
-python3 tools/lint.py                   # lint: 22 skills, 0 findings
+python3 tools/lint.py                   # lint: 23 skills, 0 findings
 python3 -m unittest discover -s tests   # Ran 44 tests ... OK
 ```
 
@@ -101,6 +101,24 @@ python3 tools/inventory.py --help
 The script needs Python 3.9+ and `gh` for repository visibility. Skills named in the owner's untracked local exclusion list, `~/.config/skills-catalog/exclude.txt`, are skipped entirely (DESIGN 5.1). `--offline --visibility file.json` skips `gh`. Judgment calls go in `inventory/decisions.json` and `inventory/provenance-overrides.json`, not in the generated files.
 
 This repository is public, so everything committed here is published. Read [AGENTS.md](AGENTS.md) before contributing. It covers what must never be committed, how held skills move, and the scrub check to run first.
+
+## Freshness bot (M2)
+
+The freshness bot keeps the skills current (DESIGN 7). It runs in two halves, both through `python3 -B -m freshness.run --half actions|mac`:
+
+- **Actions half** (`.github/workflows/freshness.yml`, daily at 11:00 UTC): the upstream watch and every check that needs no local CLI, over every skill under `skills/` and `.held/` including the `zz-canary` held skill, plus the age, stale and dwell rules and the canary check. It only opens issues and PRs.
+- **Mac half** (launchd job `com.kennylhilljr.skills-freshness`, daily at 06:30 local time): the checks that need the installed `claude` and `codex` CLIs, held skill drift, the upstream classifier, and every ops message to Slack and OpenClaw.
+
+Both halves keep their state and a heartbeat in `freshness/state.json` on the `freshness-state` branch, which never gets a PR and is never merged. Each half raises a `freshness-alert` when the other has not succeeded for 26 hours. `--dry-run` prints the planned actions and writes nothing. Tracked defaults (caps, thresholds, dwell limits) are in `freshness/config.json`.
+
+The Mac half reads an untracked local config, `~/.config/skills-catalog/freshness.json`, with these keys: `slack_channel_id`, `prbot_path`, `path`, `held_sources`, `keychain_service`, `app_id` and `installation_id`.
+
+Setup (owner steps, see the M2 tracker):
+
+1. Create the freshness GitHub App, installed only on this repository with contents, issues and pull requests write. Create the `freshness` environment (deployment branch `main` only) with the variable `FRESHNESS_APP_CLIENT_ID` and the secret `FRESHNESS_APP_PRIVATE_KEY`. Until the environment exists, the nightly workflow skips its run.
+2. Store the same private key in the Mac Keychain under the service named by `keychain_service`.
+3. Write the local config above.
+4. Run `python3 tools/install-freshness-agent` to see the job, then `python3 tools/install-freshness-agent --write`, then the `launchctl bootstrap` command it prints.
 
 ## Documents
 

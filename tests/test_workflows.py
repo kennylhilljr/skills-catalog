@@ -11,6 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / '.github' / 'workflows'
 GATE = WORKFLOWS / 'gate.yml'
 CATALOG = WORKFLOWS / 'catalog.yml'
+FRESHNESS = WORKFLOWS / 'freshness.yml'
 
 _USES = re.compile(r'^\s*(?:-\s+)?uses:\s*(\S+)', re.MULTILINE)
 _PINNED = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$')
@@ -53,10 +54,9 @@ class WorkflowTests(unittest.TestCase):
             for ref in _USES.findall(path.read_text()):
                 self.assertRegex(ref, _PINNED, '%s: %s' % (path.name, ref))
 
-    def test_only_gate_yml_reads_secrets(self):
-        for path in _workflow_files():
-            if path != GATE:
-                self.assertNotIn('${{ secrets.', path.read_text(), path.name)
+    def test_only_gate_yml_and_freshness_yml_read_secrets(self):
+        readers = [p.name for p in _workflow_files() if '${{ secrets.' in p.read_text()]
+        self.assertEqual(sorted(readers), ['freshness.yml', 'gate.yml'])
 
     def test_secret_workflow_has_no_pr_trigger(self):
         text = GATE.read_text()
@@ -149,6 +149,86 @@ class WorkflowTests(unittest.TestCase):
         line = [l for l in scrub.splitlines() if '--private-repos "${list}"' in l]
         self.assertEqual(len(line), 1)
         self.assertIn('> /dev/null 2>&1', line[0])
+
+
+def _permissions(job):
+    """The lines of a job's `permissions:` block, stripped."""
+    block = job.split('\n    permissions:', 1)[1]
+    first, rest = block.split('\n', 1)
+    if first.strip():
+        return [first.strip()]
+    lines = []
+    for line in rest.split('\n'):
+        if not line.startswith('      '):
+            break
+        lines.append(line.strip())
+    return lines
+
+
+class FreshnessWorkflowTests(unittest.TestCase):
+    """The nightly Actions half of the freshness bot (FRS-20, FRS-26; DESIGN 4.1, 5)."""
+
+    def setUp(self):
+        self.text = FRESHNESS.read_text()
+        self.jobs = _job_texts(self.text)
+
+    def test_every_action_is_pinned_with_a_version_comment(self):
+        lines = [l for l in self.text.splitlines() if re.match(r'^\s*(?:-\s+)?uses:', l)]
+        self.assertEqual(len(lines), 3)
+        for line in lines:
+            self.assertRegex(line, r'uses: [A-Za-z0-9_./-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$')
+
+    def test_schedule_and_dispatch_only(self):
+        on_block = self.text.split('\non:\n', 1)[1].split('\n\n', 1)[0]
+        self.assertEqual(_PR_EVENTS.findall(on_block), [])
+        self.assertNotIn('push', on_block)
+        self.assertIn('- cron: "0 11 * * *"', on_block)
+        self.assertIn('workflow_dispatch:', on_block)
+        self.assertEqual(re.findall(r'^  ([a-z_]+):', on_block, re.MULTILINE), ['schedule', 'workflow_dispatch'])
+
+    def test_least_permissions(self):
+        self.assertIn('\npermissions: {}\n', self.text)
+        self.assertEqual(sorted(self.jobs), ['nightly', 'preflight'])
+        self.assertEqual(_permissions(self.jobs['nightly']), ['contents: read'])
+        self.assertEqual(_permissions(self.jobs['preflight']), ['actions: read'])
+        self.assertIn('\n    timeout-minutes: 30\n', self.jobs['nightly'])
+
+    def test_secret_only_in_the_freshness_environment_job(self):
+        self.assertEqual(self.text.count('${{ secrets.'), 1)
+        self.assertEqual(self.text.count('${{ secrets.FRESHNESS_APP_PRIVATE_KEY }}'), 1)
+        self.assertNotIn('secrets.', self.jobs['preflight'])
+        self.assertNotIn('environment:', self.jobs['preflight'])
+        self.assertIn('\n    environment: freshness\n', self.jobs['nightly'])
+        self.assertIn("needs.preflight.outputs.ready == 'true'", self.jobs['nightly'])
+        self.assertIn("github.ref == 'refs/heads/main'", self.jobs['nightly'])
+        steps = _steps(self.text)
+        mint = [s for s in steps.values() if 'secrets.FRESHNESS_APP_PRIVATE_KEY' in s]
+        self.assertEqual(len(mint), 1)
+        self.assertIn('uses: actions/create-github-app-token@', mint[0])
+        self.assertIn('client-id: ${{ vars.FRESHNESS_APP_CLIENT_ID }}', mint[0])
+        self.assertIn('repositories: skills-catalog', mint[0])
+        perms = sorted(re.findall(r'permission-([a-z-]+): (\w+)', mint[0]))
+        self.assertEqual(perms, [('contents', 'write'), ('issues', 'write'), ('pull-requests', 'write')])
+
+    def test_runs_the_actions_half_without_pushing(self):
+        steps = _steps(self.text)
+        run = steps['nightly/Run the Actions half']
+        self.assertIn('run: python3 -B -m freshness.run --half actions\n', run + '\n')
+        self.assertIn('FRESHNESS_TOKEN: ${{ steps.app.outputs.token }}', run)
+        checkout = steps['nightly/Check out main']
+        self.assertIn('persist-credentials: false', checkout)
+        self.assertNotIn('git push', self.text)
+        self.assertNotIn('--dry-run', self.text)
+        self.assertNotIn('pull_request', self.text.split('\njobs:\n', 1)[1])
+
+    def test_no_job_named_gate(self):
+        self.assertNotIn('gate', _jobs(self.text))
+        self.assertNotIn('name=gate', self.text)
+
+    def test_no_event_values_in_run_scripts(self):
+        for name, step in _steps(self.text).items():
+            for part in re.split(r'\n        run: ', step)[1:]:
+                self.assertNotIn('${{', part.split('\n      - name:', 1)[0], name)
 
 
 if __name__ == '__main__':
