@@ -183,6 +183,19 @@ def read_excluded(path=EXCLUDE_PATH):
     return set(names or ())
 
 
+def read_private_names(path=None):
+    """The private repo list the scrub checks bot PR files against; empty when absent (Actions)."""
+    amod._scan('')  # loads tools/scrub.py once
+    scrub = amod._scrub_module
+    path = os.path.expanduser(path or scrub.DEFAULT_PRIVATE_LIST)
+    if not os.path.exists(path):
+        return ()
+    try:
+        return tuple(scrub.read_private_list(path))
+    except (OSError, UnicodeDecodeError):
+        raise RunError('the private repo list cannot be read')
+
+
 def load_local_config(path=LOCAL_CONFIG_PATH):
     """The Mac's untracked config, through part 7's loader (errors name keys only)."""
     config = notify.load_config(path)
@@ -453,7 +466,7 @@ def default_deps(half, dry_run, environ=None, clock=_utcnow):
         fetch_npm=fetch_npm, cli_run=cli_checks.make_run(path) if half == 'mac' else None,
         classifier=None if (dry_run or half != 'mac') else make_classifier(path),
         notify_run=make_notify_run(path), attention_fn=None, local_config=local, excluded=read_excluded(),
-        run_id=run_id)
+        private_names=read_private_names(), run_id=run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -796,7 +809,8 @@ class Run:
         self.calls.append('advance_actions')
         results = copy.deepcopy(self.state['results'])
         self.record_results(results)  # this run's results, not yet in the state
-        self.actions += age.advance_actions(results, self.now.date(), self.config['advance_policy'],
+        # Applied only after every other action landed (FRS-9: a failed run advances nothing).
+        self.advance = age.advance_actions(results, self.now.date(), self.config['advance_policy'],
                                             now=self.now, root=self.root, skills=self.age_skills,
                                             open_items=self._open(), excluded=self.excluded)
 
@@ -816,7 +830,7 @@ class Run:
         if self.skip_writes:
             return
         if self.dry_run:
-            for action in self.actions:
+            for action in self.actions + self.advance:
                 shown = {'op': action.get('op'), 'fingerprint': (action.get('fingerprint') or '')[:12]}
                 for key in ('number', 'title', 'branch', 'labels', 'text'):
                     if action.get(key) not in (None, ''):
@@ -824,12 +838,31 @@ class Run:
                 if action.get('files'):
                     shown['files'] = sorted(action['files'])
                 self._print('planned: ' + json.dumps(shown, sort_keys=True))
-            self._print('planned actions: %d' % len(self.actions))
+            self._print('planned actions: %d' % len(self.actions + self.advance))
             return
-        self.results = self.gh.apply(self.actions)
-        for result in self.results:
+        self.results = self._apply(self.actions)
+        if self.advance and not self.failed:
+            self.results += self._apply(self.advance)
+
+    def _apply(self, actions):
+        results = self.gh.apply(actions)
+        for result in results:
             if not result.get('ok') and result.get('op') != 'send_ops':
                 self._fail('apply', '%s %s' % (result.get('op'), result.get('error') or 'failed'))
+        return results
+
+    def keep_upstream_edges(self):
+        """Undo this run's upstream bookkeeping when its findings were not delivered.
+
+        The upstream watch is edge-triggered: the new source hashes and the
+        Mac's cleared `upstream_pending` entries would otherwise consume a
+        change whose issue or PR was never opened. The next run sees it again;
+        open items dedupe it if part of it did land.
+        """
+        self.state['sources'] = copy.deepcopy(self.base_state['sources'])
+        pending = self.state['upstream_pending']
+        for fp, found in self.base_state['upstream_pending'].items():
+            pending.setdefault(fp, copy.deepcopy(found))
 
     def announce(self):
         if self.dry_run:
@@ -893,6 +926,7 @@ class Run:
         self.age_skills = []
         self.rereview = []
         self.skip_writes = False
+        self.advance = []
         # No lease: the halves run on separate schedules and every state write
         # is a compare-and-swap three-way merge (FRS-16). A rare overlap can
         # plan against the same daily caps; that is accepted (issue #72).
@@ -913,6 +947,7 @@ class Run:
         else:
             self._step('cli checks', self.mac_checks)
         self._step('heartbeat watch', self.watch_other_half)
+        before = len(self.errors)
         if not self.skip_writes:
             self._step('route', self.route_findings)
             if self.half == 'actions' and not self.failed:
@@ -925,6 +960,10 @@ class Run:
                     self._step('announce', self.announce)
             else:
                 self._fail('apply', 'skipped: alert planning failed, so the planned actions were not applied')
+        undelivered = self.skip_writes or any(
+            e.split(':', 1)[0] in ('route', 'age actions', 'alerts', 'apply') for e in self.errors[before:])
+        if undelivered and not self.dry_run:
+            self.keep_upstream_edges()
         # Recorded last, so any failure above leaves this half's results failing.
         self.record_results()
         beat = self.heartbeat(smod.require_utc(self.deps.clock()))

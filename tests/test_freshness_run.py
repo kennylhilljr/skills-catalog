@@ -442,6 +442,75 @@ class RobustnessTests(unittest.TestCase):
         self.assertNotIn('announce', job.calls)
         self.assertEqual({e['mac_ok'] for e in fake.written_state()['results'].values()}, {False})
 
+    def _advance_run(self, apply_results):
+        """Run the Actions half with one planned advance PR; `apply_results(actions)` fakes each apply call."""
+        fake = FakeGitHub(smod.empty_state())
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        advance = [{'op': 'open_pr', 'fingerprint': 'f' * 64, 'title': 'advance', 'branch': 'b', 'files': {}}]
+        calls = []
+
+        def apply(actions):
+            calls.append(list(actions))
+            return apply_results(actions)
+        with mock.patch.object(age, 'advance_actions', return_value=advance), \
+                mock.patch.object(deps.github, 'apply', side_effect=apply):
+            ok = job.execute()
+        return ok, job, calls, advance
+
+    def test_an_advance_waits_for_every_other_action(self):
+        ok, job, calls, advance = self._advance_run(lambda actions: [{'op': a['op'], 'ok': True} for a in actions])
+        self.assertTrue(ok, job.errors)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn(advance[0], calls[0])
+        self.assertEqual(calls[1], advance)
+
+    def test_a_partial_apply_failure_advances_nothing(self):
+        def apply(actions):
+            return [{'op': 'open_issue', 'ok': False, 'error': 'boom'}]
+        ok, job, calls, advance = self._advance_run(apply)
+        self.assertFalse(ok)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn(advance[0], calls[0])
+
+    def test_an_undelivered_upstream_change_is_not_consumed(self):
+        finding = {'kind': 'upstream-change', 'skill': 'claude-code-releases-github', 'subject': 'x',
+                   'file': None, 'line': None, 'evidence': '+ nothing that names a skill', 'fix': None}
+        base = smod.empty_state()
+        base['sources'] = {'src': {'sha': 'old'}}
+        fake = FakeGitHub(base)
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        with mock.patch.object(runmod.upstream, 'watch', return_value=([], [], {'src': {'sha': 'new'}})), \
+                mock.patch.object(deps.github, 'apply', side_effect=ghmod.GitHubError('boom')):
+            self.assertFalse(job.execute())
+        self.assertEqual(fake.written_state()['sources'], {'src': {'sha': 'old'}})
+
+        parked = smod.empty_state()
+        parked['upstream_pending'] = {fmod.finding_fingerprint(finding): finding}
+        fake = FakeGitHub(parked)
+        deps = _deps(fake, 'mac', cli_run=FakeCli(), classifier=lambda prompt: '{"affects": [], "reason": "r"}')
+        job = runmod.Run('mac', deps)
+        with mock.patch.object(deps.github, 'apply', side_effect=ghmod.GitHubError('boom')):
+            self.assertFalse(job.execute())
+        self.assertEqual(list(fake.written_state()['upstream_pending']), [fmod.finding_fingerprint(finding)])
+
+    def test_a_delivered_upstream_change_moves_the_source_on(self):
+        fake = FakeGitHub(smod.empty_state())
+        with mock.patch.object(runmod.upstream, 'watch', return_value=([], [], {'src': {'sha': 'new'}})):
+            ok, job, _ = _execute('actions', fake)
+        self.assertTrue(ok, job.errors)
+        self.assertEqual(fake.written_state()['sources'], {'src': {'sha': 'new'}})
+
+    def test_private_names_come_from_the_private_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'private.txt')
+            self.assertEqual(runmod.read_private_names(path), ())
+            name = 'secret' + '-repo'
+            with open(path, 'w', encoding='utf-8') as handle:
+                handle.write('# private\n' + name + '\n')
+            self.assertEqual(runmod.read_private_names(path), (name,))
+
     def test_listing_failure_plans_nothing_and_records_a_failed_run(self):
         fake = FakeGitHub()
         deps = _deps(fake, 'actions')
