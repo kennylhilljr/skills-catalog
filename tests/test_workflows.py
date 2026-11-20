@@ -194,8 +194,9 @@ class FreshnessWorkflowTests(unittest.TestCase):
         self.assertIn('\n    timeout-minutes: 30\n', self.jobs['nightly'])
 
     def test_secret_only_in_the_freshness_environment_job(self):
-        self.assertEqual(self.text.count('${{ secrets.'), 1)
+        self.assertEqual(self.text.count('${{ secrets.'), 2)
         self.assertEqual(self.text.count('${{ secrets.FRESHNESS_APP_PRIVATE_KEY }}'), 1)
+        self.assertEqual(self.text.count('${{ secrets.FRESHNESS_PRIVATE_REPOS }}'), 1)
         self.assertNotIn('secrets.', self.jobs['preflight'])
         self.assertNotIn('environment:', self.jobs['preflight'])
         self.assertIn('\n    environment: freshness\n', self.jobs['nightly'])
@@ -209,6 +210,13 @@ class FreshnessWorkflowTests(unittest.TestCase):
         self.assertIn('repositories: skills-catalog', mint[0])
         perms = sorted(re.findall(r'permission-([a-z-]+): (\w+)', mint[0]))
         self.assertEqual(perms, [('contents', 'write'), ('issues', 'write'), ('pull-requests', 'write')])
+        self.assertNotIn('FRESHNESS_PRIVATE_REPOS', mint[0])
+        listed = [n for n, s in steps.items() if 'secrets.FRESHNESS_PRIVATE_REPOS' in s]
+        self.assertEqual(listed, ['nightly/Run the Actions half'])
+        run = steps['nightly/Run the Actions half']
+        env, script = run.split('\n        run: ', 1)
+        self.assertIn('\n          FRESHNESS_PRIVATE_REPOS: ${{ secrets.FRESHNESS_PRIVATE_REPOS }}', env)
+        self.assertNotIn('FRESHNESS_PRIVATE_REPOS', script)
 
     def test_runs_the_actions_half_without_pushing(self):
         steps = _steps(self.text)
