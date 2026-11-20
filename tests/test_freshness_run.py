@@ -445,7 +445,7 @@ class RobustnessTests(unittest.TestCase):
     def _advance_run(self, apply_results):
         """Run the Actions half with one planned advance PR; `apply_results(actions)` fakes each apply call."""
         fake = FakeGitHub(smod.empty_state())
-        deps = _deps(fake, 'actions')
+        deps = _deps(fake, 'actions', private_names=[PRIVATE])
         job = runmod.Run('actions', deps)
         advance = [{'op': 'open_pr', 'fingerprint': 'f' * 64, 'title': 'advance', 'branch': 'b', 'files': {}}]
         calls = []
@@ -620,6 +620,218 @@ class RobustnessTests(unittest.TestCase):
         path = run.keywords['env']['PATH'].split(os.pathsep)
         self.assertEqual(path[1:], ['/opt/tools/bin', '/usr/bin'])
         self.assertTrue(path[0].endswith(os.path.join('.local', 'bin')))
+
+
+PRIVATE = 'zz-' + 'hidden-' + 'repo'
+OTHER_PRIVATE = 'zz-' + 'second-' + 'repo'
+
+
+def _finding(subject):
+    return {'kind': 'model-retired', 'skill': 'zz-canary', 'subject': subject, 'file': 'skills/x/SKILL.md',
+            'line': 1, 'evidence': 'synthetic evidence', 'fix': None}
+
+
+def _pr_item(found, text):
+    return {'finding': found, 'as': 'pr', 'labels': ['freshness'], 'title': 'fix ' + found['subject'],
+            'body': 'Generated fix.', 'files': {'skills/x/SKILL.md': text}}
+
+
+def _age_pr(text, fp='a' * 64):
+    return {'op': 'open_pr', 'fingerprint': fp, 'title': 'freshness: advance', 'body': 'b\n' + fmod.marker(fp),
+            'labels': ['freshness'], 'files': {'skills/x/SKILL.md': text}, 'branch': fmod.branch_name(fp)}
+
+
+class PrivateListTests(unittest.TestCase):
+    """FRS-29, FRS-30: a bot PR is published only with the private repo list (issue #99)."""
+
+    def _route(self, half, deps_kw, texts):
+        out = io.StringIO()
+        fake = FakeGitHub(smod.empty_state())
+        deps = _deps(fake, half, out=out, cli_run=FakeCli(), **deps_kw)
+        job = runmod.Run(half, deps)
+        job.now = NOW
+        job.load_state()
+        job.items = []
+        job.findings = [_finding('s%d' % i) for i in range(len(texts))]
+        by_subject = {f['subject']: t for f, t in zip(job.findings, texts)}
+
+        def route(found, *a, **k):
+            return _pr_item(found, by_subject[found['subject']])
+        with mock.patch.object(runmod.rmod, 'route', side_effect=route):
+            job.route_findings()
+        return job, out.getvalue(), fake
+
+    def _assert_no_names(self, *texts):
+        for text in texts:
+            self.assertNotIn(PRIVATE, text)
+            self.assertNotIn(OTHER_PRIVATE, text)
+
+    def test_list_text_is_parsed_like_the_scrub(self):
+        text = '# private repos\n%s\n\n  %s  # trailing\r\n%s\n#only a comment\n' % (
+            PRIVATE, OTHER_PRIVATE, PRIVATE)
+        self.assertEqual(runmod.parse_private_names(text), (PRIVATE, OTHER_PRIVATE))
+
+    def test_missing_empty_or_comment_only_secret_is_unavailable(self):
+        for environ in ({}, {'FRESHNESS_PRIVATE_REPOS': ''}, {'FRESHNESS_PRIVATE_REPOS': ' \n'},
+                        {'FRESHNESS_PRIVATE_REPOS': '# none yet\n  # still none\n'}):
+            self.assertEqual(runmod.private_names_from_env(environ), ())
+        self.assertEqual(runmod.private_names_from_env({'FRESHNESS_PRIVATE_REPOS': PRIVATE + '\n' + OTHER_PRIVATE}),
+                         (PRIVATE, OTHER_PRIVATE))
+
+    def test_omitted_or_empty_names_fail_closed(self):
+        fake = FakeGitHub(smod.empty_state())
+        self.assertFalse(_deps(fake, 'actions').private_list_ok)
+        self.assertFalse(_deps(fake, 'actions', private_names=()).private_list_ok)
+        self.assertFalse(_deps(fake, 'actions', private_names=['', '  ']).private_list_ok)
+        self.assertTrue(_deps(fake, 'actions', private_names=[PRIVATE]).private_list_ok)
+
+    def _default_deps(self, half, environ):
+        with mock.patch.object(runmod, 'read_excluded', return_value=set()), \
+                mock.patch.object(runmod, 'load_local_config', return_value={}):
+            return runmod.default_deps(half, dry_run=True, environ=environ, clock=lambda: NOW)
+
+    def test_actions_half_reads_only_the_injected_environment(self):
+        environ = {'FRESHNESS_PRIVATE_REPOS': '# list\n' + PRIVATE + '\n' + OTHER_PRIVATE + '\n'}
+        with mock.patch.object(runmod, 'read_private_names', side_effect=AssertionError('no Mac file')), \
+                mock.patch.dict(os.environ, {'FRESHNESS_PRIVATE_REPOS': 'zz-not-this-one'}):
+            deps = self._default_deps('actions', environ)
+            self.assertEqual(deps.private_names, (PRIVATE, OTHER_PRIVATE))
+            self.assertTrue(deps.private_list_ok)
+            deps = self._default_deps('actions', {})
+            self.assertEqual(deps.private_names, ())
+            self.assertFalse(deps.private_list_ok)
+
+    def test_mac_half_reads_the_private_list_file(self):
+        with mock.patch.object(runmod, 'read_private_names', return_value=(PRIVATE,)) as read:
+            deps = self._default_deps('mac', {'FRESHNESS_PRIVATE_REPOS': OTHER_PRIVATE})
+        read.assert_called_once_with()
+        self.assertEqual(deps.private_names, (PRIVATE,))
+        with mock.patch.object(runmod, 'read_private_names', return_value=()):
+            self.assertFalse(self._default_deps('mac', {}).private_list_ok)
+
+    def test_missing_and_unreadable_mac_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'private.txt')
+            self.assertEqual(runmod.read_private_names(path), ())
+            with open(path, 'wb') as handle:
+                handle.write(b'\xff\xfe' + PRIVATE.encode() + b'\n')
+            with self.assertRaises(runmod.RunError) as caught:
+                runmod.read_private_names(path)
+        self._assert_no_names(str(caught.exception))
+
+    def test_actions_generated_file_with_a_private_name_plans_no_open_pr(self):
+        """Issue #99 acceptance: the Actions half, given a private name in a PR file, plans no open_pr."""
+        job, out, _ = self._route('actions', {'private_names': [PRIVATE]},
+                                  ['clean text\n', 'see ' + PRIVATE + ' for details\n'])
+        ops = sorted(a['op'] for a in job.actions)
+        self.assertEqual(ops, ['open_issue', 'open_pr'])
+        issue = [a for a in job.actions if a['op'] == 'open_issue'][0]
+        self.assertNotIn('files', issue)
+        self._assert_no_names(out, json.dumps(job.actions), json.dumps(job.state))
+
+    def test_configured_clean_files_keep_open_pr(self):
+        for half in runmod.HALVES:
+            job, out, _ = self._route(half, {'private_names': [PRIVATE]}, ['clean text\n'])
+            self.assertEqual([a['op'] for a in job.actions], ['open_pr'], half)
+            self.assertNotIn('notice', out)
+
+    def test_unavailable_list_routes_prs_to_issues_on_both_halves(self):
+        for half in runmod.HALVES:
+            job, out, _ = self._route(half, {}, ['clean text\n', 'more clean text\n'])
+            self.assertEqual([a['op'] for a in job.actions], ['open_issue', 'open_issue'], half)
+            for action in job.actions:
+                self.assertNotIn('files', action)
+                self.assertNotIn('branch', action)
+
+    def test_routed_fallback_dedupes_against_open_items(self):
+        found = _finding('s0')
+        out = io.StringIO()
+        fake = FakeGitHub(smod.empty_state())
+        job = runmod.Run('actions', _deps(fake, 'actions', out=out))
+        job.now = NOW
+        job.load_state()
+        job.items = [{'number': 7, 'state': 'open', 'is_pr': False,
+                      'fingerprint': fmod.finding_fingerprint(found)}]
+        job.findings = [found, dict(found)]
+        with mock.patch.object(runmod.rmod, 'route', side_effect=lambda f, *a, **k: _pr_item(f, 'x\n')):
+            job.route_findings()
+        self.assertEqual(job.actions, [])
+
+    def _age_job(self, deps_kw, items=()):
+        out = io.StringIO()
+        fake = FakeGitHub(smod.empty_state())
+        job = runmod.Run('actions', _deps(fake, 'actions', out=out, **deps_kw))
+        job.now = NOW
+        job.load_state()
+        job.items = list(items)
+        job.rereview, job.age_skills, job.checked_skills = [], [], []
+        return job, out
+
+    def _age_actions(self, job, stale, advance):
+        with mock.patch.object(age, 'stale_actions', return_value=stale), \
+                mock.patch.object(age, 'advance_actions', return_value=advance):
+            job.age_actions()
+
+    def test_age_prs_follow_the_same_policy(self):
+        clean, leaky = _age_pr('clean\n', 'a' * 64), _age_pr('see ' + PRIVATE + '\n', 'b' * 64)
+        close = {'op': 'close', 'fingerprint': 'c' * 64, 'number': 3}
+
+        job, out = self._age_job({'private_names': [PRIVATE]})
+        self._age_actions(job, [close, dict(clean)], [dict(leaky)])
+        self.assertEqual([a['op'] for a in job.actions], ['close', 'open_pr'])
+        self.assertEqual([a['op'] for a in job.advance], ['open_issue'])
+        self.assertNotIn('files', job.advance[0])
+        self.assertNotIn('branch', job.advance[0])
+        self.assertEqual(job.advance[0]['fingerprint'], 'b' * 64)
+        self._assert_no_names(out, json.dumps(job.advance))
+
+        job, out = self._age_job({})
+        self._age_actions(job, [dict(clean)], [dict(clean, fingerprint='d' * 64)])
+        self.assertEqual([a['op'] for a in job.actions + job.advance], ['open_issue', 'open_issue'])
+
+    def test_age_fallback_dedupes_against_open_items(self):
+        job, _ = self._age_job({}, items=[{'number': 9, 'state': 'open', 'is_pr': False, 'fingerprint': 'a' * 64}])
+        self._age_actions(job, [_age_pr('clean\n', 'a' * 64)], [])
+        self.assertEqual(job.actions, [])
+
+    def test_list_added_later_opens_no_pr_beside_the_fallback_issue(self):
+        fallback = {'number': 9, 'state': 'open', 'is_pr': False, 'fingerprint': 'a' * 64}
+        job, _ = self._age_job({'private_names': [PRIVATE]}, items=[fallback])
+        self._age_actions(job, [_age_pr('clean\n', 'a' * 64)], [_age_pr('clean\n', 'b' * 64)])
+        self.assertEqual(job.actions, [])
+        self.assertEqual([a['op'] for a in job.advance], ['open_pr'])
+
+    def test_unconfigured_dry_run_prints_no_open_pr(self):
+        fake = FakeGitHub(smod.empty_state())
+        out = io.StringIO()
+        with mock.patch.object(runmod.rmod, 'route', side_effect=lambda f, *a, **k: _pr_item(f, 'x\n')):
+            ok, job, _ = _execute('actions', fake, dry_run=True, out=out)
+        planned = [json.loads(line[len('planned: '):]) for line in out.getvalue().splitlines()
+                   if line.startswith('planned: {')]
+        self.assertTrue(planned)
+        self.assertNotIn('open_pr', {p['op'] for p in planned})
+        self.assertEqual(out.getvalue().count(runmod.PRIVATE_LIST_NOTICE['actions']), 1)
+        self.assertEqual(fake.writes(), [])
+
+    def test_notice_once_per_unconfigured_run_even_without_prs(self):
+        for half, kw in (('actions', {}), ('mac', {'cli_run': FakeCli()})):
+            out = io.StringIO()
+            with mock.patch.object(runmod.Run, 'route_findings', lambda self: None):
+                _execute(half, FakeGitHub(smod.empty_state()), out=out, **kw)
+            self.assertEqual(out.getvalue().count(runmod.PRIVATE_LIST_NOTICE[half]), 1, half)
+            out = io.StringIO()
+            _execute(half, FakeGitHub(smod.empty_state()), out=out, private_names=[PRIVATE], **kw)
+            self.assertNotIn(runmod.PRIVATE_LIST_NOTICE[half], out.getvalue())
+
+    def test_configured_run_never_prints_or_persists_the_list(self):
+        fake = FakeGitHub(smod.empty_state())
+        out = io.StringIO()
+        with mock.patch.object(runmod.rmod, 'route',
+                               side_effect=lambda f, *a, **k: _pr_item(f, 'see %s\n' % PRIVATE)):
+            _execute('actions', fake, out=out, private_names=[PRIVATE, OTHER_PRIVATE])
+        self._assert_no_names(out.getvalue(), json.dumps(fake.written_state()),
+                              json.dumps([b for _m, _p, b in fake.requests]))
+        self.assertFalse([p for m, p, b in fake.requests if m == 'POST' and p.endswith('/pulls')])
 
 
 class MacHalfTests(unittest.TestCase):

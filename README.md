@@ -115,9 +115,9 @@ The Mac half reads an untracked local config, `~/.config/skills-catalog/freshnes
 
 Setup (owner steps, see the M2 tracker):
 
-1. Create the freshness GitHub App, installed only on this repository with contents, issues and pull requests write. Create the `freshness` environment (deployment branch `main` only) with the variable `FRESHNESS_APP_CLIENT_ID` and the secret `FRESHNESS_APP_PRIVATE_KEY`. Until the environment exists, the nightly workflow skips its run.
+1. Create the freshness GitHub App, installed only on this repository with contents, issues and pull requests write. Create the `freshness` environment (deployment branch `main` only) with the variable `FRESHNESS_APP_CLIENT_ID` and the secrets `FRESHNESS_APP_PRIVATE_KEY` and `FRESHNESS_PRIVATE_REPOS` (the private repo names, one per line, like `gate`'s `PRIVATE_REPOS`). Without `FRESHNESS_PRIVATE_REPOS` the bot opens issues instead of PRs (DESIGN 7.6). Until the environment exists, the nightly workflow skips its run.
 2. Store the same private key in the Mac Keychain under the service named by `keychain_service`.
-3. Write the local config above.
+3. Write the local config above, and the Mac's private repo list `~/.config/skills-catalog/private-repos.txt` (the same names as `FRESHNESS_PRIVATE_REPOS`, one per line). Without it the Mac half opens issues instead of PRs.
 4. Run `python3 tools/install-freshness-agent` to see the job, then `python3 tools/install-freshness-agent --write`, then the `launchctl bootstrap` command it prints.
 
 ## Documents

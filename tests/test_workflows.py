@@ -231,5 +231,37 @@ class FreshnessWorkflowTests(unittest.TestCase):
                 self.assertNotIn('${{', part.split('\n      - name:', 1)[0], name)
 
 
+class FreshnessPrivateListDocTests(unittest.TestCase):
+    """FRS-29, FRS-30: the private repo list setup and its fail-closed rule are documented."""
+
+    def setUp(self):
+        self.design = (ROOT / 'docs' / 'DESIGN.md').read_text()
+        self.spec = (ROOT / 'docs' / 'SPEC.md').read_text()
+
+    def _row(self, rid):
+        rows = [line for line in self.spec.splitlines() if line.startswith('| %s |' % rid)]
+        self.assertEqual(len(rows), 1, rid)
+        return rows[0]
+
+    def test_design_documents_the_secret_and_the_fallback(self):
+        setup = self.design.split('**Setup of the nightly job (FRS-30).**', 1)[1].split('\n\n', 1)[0]
+        for needle in ('`freshness` environment', 'FRESHNESS_APP_CLIENT_ID', 'FRESHNESS_APP_PRIVATE_KEY',
+                       'FRESHNESS_PRIVATE_REPOS', 'one per line', "`gate`'s `PRIVATE_REPOS`",
+                       'private-repos.txt', '`main` only'):
+            self.assertIn(needle, setup)
+        fallback = self.design.split('**No list, no PR.**', 1)[1].split('\n\n', 1)[0]
+        for needle in ('fails closed', 'issue without files', 'dry run', 'one fixed notice'):
+            self.assertIn(needle, fallback)
+
+    def test_spec_rows_state_the_policy(self):
+        self.assertIn('*Superseded by FRS-29.*', self._row('FRS-12'))
+        self.assertIn('*Superseded by FRS-30.*', self._row('FRS-20'))
+        frs20 = self._row('FRS-30')
+        self.assertIn('no other authentication credentials', frs20)
+        self.assertIn('FRESHNESS_PRIVATE_REPOS', frs20)
+        self.assertIn('as an issue without files', frs20)
+        self.assertIn('private repo list', self._row('FRS-29'))
+
+
 if __name__ == '__main__':
     unittest.main()
