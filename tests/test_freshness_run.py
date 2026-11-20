@@ -794,6 +794,13 @@ class PrivateListTests(unittest.TestCase):
         self._age_actions(job, [_age_pr('clean\n', 'a' * 64)], [])
         self.assertEqual(job.actions, [])
 
+    def test_list_added_later_opens_no_pr_beside_the_fallback_issue(self):
+        fallback = {'number': 9, 'state': 'open', 'is_pr': False, 'fingerprint': 'a' * 64}
+        job, _ = self._age_job({'private_names': [PRIVATE]}, items=[fallback])
+        self._age_actions(job, [_age_pr('clean\n', 'a' * 64)], [_age_pr('clean\n', 'b' * 64)])
+        self.assertEqual(job.actions, [])
+        self.assertEqual([a['op'] for a in job.advance], ['open_pr'])
+
     def test_unconfigured_dry_run_prints_no_open_pr(self):
         fake = FakeGitHub(smod.empty_state())
         out = io.StringIO()

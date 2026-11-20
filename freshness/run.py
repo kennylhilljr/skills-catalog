@@ -814,12 +814,12 @@ class Run:
             if action.get('op') != 'open_pr':
                 out.append(action)
                 continue
+            if action.get('fingerprint') in open_fps:
+                continue  # an open item (say an earlier fallback issue) already covers it (FRS-13)
             if self.deps.private_list_ok and not any(
                     amod._scan_file(path, text, self.deps.private_names)
                     for path, text in (action.get('files') or {}).items()):
                 out.append(action)
-                continue
-            if action.get('fingerprint') in open_fps:
                 continue
             issue = {k: v for k, v in action.items() if k not in ('files', 'branch')}
             issue['op'] = 'open_issue'
