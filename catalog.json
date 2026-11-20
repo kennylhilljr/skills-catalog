@@ -19,7 +19,7 @@
     {
       "name": "cross-review",
       "path": "skills/cross-review",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "owner": "pr-review-bots",
       "targets": [
         "claude",
@@ -28,7 +28,7 @@
       "consumers": "all",
       "last_verified": "2026-11-11",
       "files": {
-        "SKILL.md": "888142a1c009946891f74e79ff51cbdd30e1da87ae9e28341a7aa2e09dcd055e"
+        "SKILL.md": "3a65738db1e41764b35f789fb39d7951ee809f33c108b15ce9f5ca28b21c70ec"
       }
     },
     {

@@ -2,7 +2,7 @@
 name: cross-review
 description: Review a pull request in Kenny's (kennylhilljr) GitHub repos and post feedback as the right bot. Use when asked to review a PR, reply to review comments, post any comment on a PR or issue, or open a PR of your own. Codex reviews what Claude wrote and Claude reviews what Codex wrote; feedback is posted as claude-pr-gh[bot] or codex-pr-gh[bot], never under Kenny's account.
 metadata:
-  catalog-version: "1.0.1"
+  catalog-version: "1.0.2"
   catalog-owner: "pr-review-bots"
   catalog-provenance: "own"
   catalog-targets: "claude,codex"
@@ -57,8 +57,8 @@ Reading is fine with plain `gh`: `gh pr view`, `gh pr diff`, `gh api` GET calls.
 
 Exceptions that stay on Kenny's account:
 
-- Comments that start with `@codex` (they trigger Codex Cloud, which may ignore other bots).
-- Approvals, merges and anything Kenny asks to post as himself.
+- Plain `gh pr comment` or `gh issue comment` triggers, and `gh pr close -c` or `gh issue close -c` comments, whose body starts with `@codex` and is `@codex` alone or followed by whitespace (they trigger Codex Cloud, which may ignore other bots). Never `gh pr review`: an approval or change request with an `@codex` body still goes through your bot.
+- Merges, and approvals or posts Kenny makes himself.
 
 ## Open a PR of your own
 
@@ -93,3 +93,4 @@ New commits on open, non-draft PRs are picked up by `prbot watch` every 5 minute
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0.1 | 2026-11-11 | Imported into skills-catalog from pr-review-bots `skills/cross-review` at `a79c80f`; the Anthropic co-author address is described instead of quoted |
+| 1.0.2 | 2026-11-19 | Synced the `@codex` exception from pr-review-bots: only a bare `@codex` trigger (alone or followed by whitespace) in a plain comment or close comment stays on Kenny's account; `gh pr review` always goes through the bot |
