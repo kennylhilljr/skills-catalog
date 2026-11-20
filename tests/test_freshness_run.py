@@ -642,7 +642,7 @@ def _age_pr(text, fp='a' * 64):
 
 
 class PrivateListTests(unittest.TestCase):
-    """FRS-12, FRS-20: a bot PR is published only with the private repo list (issue #99)."""
+    """FRS-29, FRS-30: a bot PR is published only with the private repo list (issue #99)."""
 
     def _route(self, half, deps_kw, texts):
         out = io.StringIO()
@@ -650,7 +650,6 @@ class PrivateListTests(unittest.TestCase):
         deps = _deps(fake, half, out=out, cli_run=FakeCli(), **deps_kw)
         job = runmod.Run(half, deps)
         job.now = NOW
-        job.private_notice_shown = False
         job.load_state()
         job.items = []
         job.findings = [_finding('s%d' % i) for i in range(len(texts))]
@@ -743,14 +742,13 @@ class PrivateListTests(unittest.TestCase):
             for action in job.actions:
                 self.assertNotIn('files', action)
                 self.assertNotIn('branch', action)
-            self.assertEqual(out.count(runmod.PRIVATE_LIST_NOTICE[half]), 1, half)
 
     def test_routed_fallback_dedupes_against_open_items(self):
         found = _finding('s0')
         out = io.StringIO()
         fake = FakeGitHub(smod.empty_state())
         job = runmod.Run('actions', _deps(fake, 'actions', out=out))
-        job.now, job.private_notice_shown = NOW, False
+        job.now = NOW
         job.load_state()
         job.items = [{'number': 7, 'state': 'open', 'is_pr': False,
                       'fingerprint': fmod.finding_fingerprint(found)}]
@@ -763,7 +761,7 @@ class PrivateListTests(unittest.TestCase):
         out = io.StringIO()
         fake = FakeGitHub(smod.empty_state())
         job = runmod.Run('actions', _deps(fake, 'actions', out=out, **deps_kw))
-        job.now, job.private_notice_shown = NOW, False
+        job.now = NOW
         job.load_state()
         job.items = list(items)
         job.rereview, job.age_skills, job.checked_skills = [], [], []
@@ -790,7 +788,6 @@ class PrivateListTests(unittest.TestCase):
         job, out = self._age_job({})
         self._age_actions(job, [dict(clean)], [dict(clean, fingerprint='d' * 64)])
         self.assertEqual([a['op'] for a in job.actions + job.advance], ['open_issue', 'open_issue'])
-        self.assertEqual(out.getvalue().count(runmod.PRIVATE_LIST_NOTICE['actions']), 1)
 
     def test_age_fallback_dedupes_against_open_items(self):
         job, _ = self._age_job({}, items=[{'number': 9, 'state': 'open', 'is_pr': False, 'fingerprint': 'a' * 64}])
@@ -808,6 +805,16 @@ class PrivateListTests(unittest.TestCase):
         self.assertNotIn('open_pr', {p['op'] for p in planned})
         self.assertEqual(out.getvalue().count(runmod.PRIVATE_LIST_NOTICE['actions']), 1)
         self.assertEqual(fake.writes(), [])
+
+    def test_notice_once_per_unconfigured_run_even_without_prs(self):
+        for half, kw in (('actions', {}), ('mac', {'cli_run': FakeCli()})):
+            out = io.StringIO()
+            with mock.patch.object(runmod.Run, 'route_findings', lambda self: None):
+                _execute(half, FakeGitHub(smod.empty_state()), out=out, **kw)
+            self.assertEqual(out.getvalue().count(runmod.PRIVATE_LIST_NOTICE[half]), 1, half)
+            out = io.StringIO()
+            _execute(half, FakeGitHub(smod.empty_state()), out=out, private_names=[PRIVATE], **kw)
+            self.assertNotIn(runmod.PRIVATE_LIST_NOTICE[half], out.getvalue())
 
     def test_configured_run_never_prints_or_persists_the_list(self):
         fake = FakeGitHub(smod.empty_state())

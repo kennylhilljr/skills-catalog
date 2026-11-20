@@ -32,7 +32,7 @@ App id and the private key in the macOS Keychain, signing the JWT with
 openssl through a pipe, and neither the key nor the token is written to
 disk, logged or printed.
 
-Private repo list (FRS-12, FRS-20; DESIGN 7.6): the Actions half reads it
+Private repo list (FRS-29, FRS-30; DESIGN 7.6): the Actions half reads it
 from the newline-separated `FRESHNESS_PRIVATE_REPOS` variable, the Mac half
 from `~/.config/skills-catalog/private-repos.txt`. It stays in memory and
 is never printed. A bot PR is opened only when the list is available and its
@@ -192,13 +192,13 @@ def read_excluded(path=EXCLUDE_PATH):
 
 
 PRIVATE_ENV = 'FRESHNESS_PRIVATE_REPOS'
-# One fixed notice per half when its private repo list is unavailable (FRS-20).
+# One fixed notice per half when its private repo list is unavailable (FRS-30).
 # It never holds a name, the list or any file text.
 PRIVATE_LIST_NOTICE = {
     'actions': '::notice::FRESHNESS_PRIVATE_REPOS is not set or lists no names, so bot PRs are '
-               'planned as issues without their files (FRS-20).',
+               'planned as issues without their files (FRS-30).',
     'mac': 'notice: ~/.config/skills-catalog/private-repos.txt is missing or lists no names, so bot PRs '
-           'are planned as issues without their files (FRS-20).',
+           'are planned as issues without their files (FRS-30).',
 }
 
 
@@ -470,7 +470,7 @@ class Deps:
         self.excluded = set(excluded or ())
         self.private_names = tuple(n for n in (private_names or ()) if str(n or '').strip())
         # No names (omitted, missing, empty or comment-only) means the list is
-        # unavailable: every bot PR is planned as an issue (fail closed, FRS-20).
+        # unavailable: every bot PR is planned as an issue (fail closed, FRS-30).
         self.private_list_ok = bool(self.private_names)
         self.out = out if out is not None else sys.stdout
         self.run_id = run_id
@@ -795,16 +795,10 @@ class Run:
         if not self.deps.private_list_ok:
             for item in routed:
                 if item.get('as') == 'pr':
-                    self._private_list_notice()
                     item.update({'as': 'issue', 'files': {}})
         self.actions += amod.plan_findings(routed, self._open(), self.state, self.deps.private_names)
 
-    # -- publication policy for bot PRs (FRS-12, FRS-20) ------------------
-
-    def _private_list_notice(self):
-        if not self.private_notice_shown:
-            self.private_notice_shown = True
-            self._print(PRIVATE_LIST_NOTICE[self.half])
+    # -- publication policy for bot PRs (FRS-29, FRS-30) ------------------
 
     def guard_prs(self, actions):
         """`actions` with every `open_pr` the publication checks reject planned as an issue.
@@ -825,8 +819,6 @@ class Run:
                     for path, text in (action.get('files') or {}).items()):
                 out.append(action)
                 continue
-            if not self.deps.private_list_ok:
-                self._private_list_notice()
             if action.get('fingerprint') in open_fps:
                 continue
             issue = {k: v for k, v in action.items() if k not in ('files', 'branch')}
@@ -1018,7 +1010,9 @@ class Run:
         self.rereview = []
         self.skip_writes = False
         self.advance = []
-        self.private_notice_shown = False
+        if not self.deps.private_list_ok:
+            # Once per run, PR or not, so a missing list is visible (FRS-30).
+            self._print(PRIVATE_LIST_NOTICE[self.half])
         # No lease: the halves run on separate schedules and every state write
         # is a compare-and-swap three-way merge (FRS-16). A rare overlap can
         # plan against the same daily caps; that is accepted (issue #72).
