@@ -264,6 +264,7 @@ iwb's policy (`path_rules`) and the orchestrator's unit scopes must treat the su
 | Repointing the submodule | URL allowlist in the submodule check (4.2); `.gitmodules` is a protected path. |
 | Drift mid-run | Gitlink pin; bots never read the catalog live. |
 | The freshness bot's credentials | A GitHub App with `contents:write`, `pull_requests:write` and `issues:write` on `skills-catalog` only. CLI credentials for evals stay in the Mac's Keychain and are never in Actions. |
+| Private repo names in a bot PR | The bot opens a PR only when it has the private repo list and the PR's files pass the scrub against it. The Actions half reads the list from the `FRESHNESS_PRIVATE_REPOS` secret of the `freshness` environment and the Mac half from `~/.config/skills-catalog/private-repos.txt`. Without a list, every PR is planned as an issue without files (7.6). |
 | Eval runs touching real repos | Evals run in throwaway temp repos with fixtures, network-limited, with an explicit permission mode (the agent-skills pattern). |
 | Unreviewed third-party content | Kept out. Promotion needs provenance, an SPDX license compatible with publishing, and a pinned source sha (section 9). |
 | Skills the owner keeps private, by name | Local exclusion list (5.1). Excluded skills never reach the catalog, and the local scrub fails if any excluded name appears in a tracked file. |
@@ -367,6 +368,10 @@ iwb's analyze, plan, cross-review, code and auto-merge pipeline picks up the iss
 | CLI-dependent checks (commands exist, `--help` flags, host CLI lag) and behavioral evals | launchd on the Mac (`com.kennylhilljr.skills-freshness`), like iwb | needs the installed `claude` and `codex` CLIs and their logged-in credentials, which must not be copied into Actions |
 
 The Mac job writes its results to a `freshness/state.json` and opens PRs and issues through the same GitHub App as Actions. Each half also reports the other's last heartbeat.
+
+**Setup of the nightly job (FRS-20).** The `freshness` environment allows deployments from `main` only. It holds the variable `FRESHNESS_APP_CLIENT_ID`, the secret `FRESHNESS_APP_PRIVATE_KEY` and the secret `FRESHNESS_PRIVATE_REPOS`: the account's private repo names, one per line, the format `tools/scrub.py --private-repos` reads (`#` comments and blank lines are ignored). It is separate from `gate`'s `PRIVATE_REPOS` secret (4.1) because each environment holds its own secrets; keep the two lists the same. The workflow passes `FRESHNESS_PRIVATE_REPOS` only to the step that runs the Actions half, as an environment variable. `freshness/run.py` keeps it in memory and never prints it, writes it to disk or puts it in the state. The Mac half reads `~/.config/skills-catalog/private-repos.txt` instead; a file that exists but cannot be read stops the run with an error that names no repository.
+
+**No list, no PR.** A half with no private repo list (the secret or file is missing, empty or holds only comments) fails closed: every PR it would open, routed findings and the age PRs of FRS-8 and FRS-9 alike, is planned as an issue without files or branch, deduplicated against open items by fingerprint, and the same holds in a dry run. The run prints one fixed notice that says which list is missing; on Actions it is a workflow notice. With the list, a PR whose files fail the scrub against it also becomes an issue. Issues, alerts and heartbeats work either way.
 
 **Dwell limits, alerts and the canary.** Every state has a maximum dwell time and an alert:
 

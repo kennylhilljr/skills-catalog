@@ -32,6 +32,14 @@ App id and the private key in the macOS Keychain, signing the JWT with
 openssl through a pipe, and neither the key nor the token is written to
 disk, logged or printed.
 
+Private repo list (FRS-12, FRS-20; DESIGN 7.6): the Actions half reads it
+from the newline-separated `FRESHNESS_PRIVATE_REPOS` variable, the Mac half
+from `~/.config/skills-catalog/private-repos.txt`. It stays in memory and
+is never printed. A bot PR is opened only when the list is available and its
+files pass the scrub against it; with no list (missing, empty or only
+comments), every PR is planned as an issue without files, dry runs
+included, and the run prints one fixed notice that names no repository.
+
 State keys owned here: `heartbeats[half] = {"run_id", "start", "end",
 "result", "counts", "last_success"}`, `heartbeat_watch[half]` (when this
 half first saw the other with no success), `results[skill]` (per-skill
@@ -183,8 +191,38 @@ def read_excluded(path=EXCLUDE_PATH):
     return set(names or ())
 
 
+PRIVATE_ENV = 'FRESHNESS_PRIVATE_REPOS'
+# One fixed notice per half when its private repo list is unavailable (FRS-20).
+# It never holds a name, the list or any file text.
+PRIVATE_LIST_NOTICE = {
+    'actions': '::notice::FRESHNESS_PRIVATE_REPOS is not set or lists no names, so bot PRs are '
+               'planned as issues without their files (FRS-20).',
+    'mac': 'notice: ~/.config/skills-catalog/private-repos.txt is missing or lists no names, so bot PRs '
+           'are planned as issues without their files (FRS-20).',
+}
+
+
+def parse_private_names(text):
+    """Names from private repo list text, parsed like `tools/scrub.read_private_list`."""
+    names = []
+    for raw in (text or '').splitlines():
+        name = raw.split('#', 1)[0].strip()
+        if name and name not in names:
+            names.append(name)
+    return tuple(names)
+
+
+def private_names_from_env(environ):
+    """The Actions half's private repo list: newline-separated names in FRESHNESS_PRIVATE_REPOS.
+
+    Read only from `environ` and kept in memory; empty when the variable is
+    missing, empty or holds only comments, which makes the run fail closed.
+    """
+    return parse_private_names(environ.get(PRIVATE_ENV) or '')
+
+
 def read_private_names(path=None):
-    """The private repo list the scrub checks bot PR files against; empty when absent (Actions)."""
+    """The Mac half's private repo list the scrub checks bot PR files against; empty when absent."""
     amod._scan('')  # loads tools/scrub.py once
     scrub = amod._scrub_module
     path = os.path.expanduser(path or scrub.DEFAULT_PRIVATE_LIST)
@@ -418,7 +456,7 @@ class Deps:
 
     def __init__(self, github, clock, fetch_link=None, fetch_text=None, fetch_npm=None, cli_run=None,
                  classifier=None, notify_run=None, attention_fn=None, local_config=None, excluded=(),
-                 private_names=(), out=None, run_id=None):
+                 private_names=None, out=None, run_id=None):
         self.github = github
         self.clock = clock
         self.fetch_link = fetch_link
@@ -430,7 +468,10 @@ class Deps:
         self.attention_fn = attention_fn
         self.local_config = local_config or {}
         self.excluded = set(excluded or ())
-        self.private_names = tuple(private_names or ())
+        self.private_names = tuple(n for n in (private_names or ()) if str(n or '').strip())
+        # No names (omitted, missing, empty or comment-only) means the list is
+        # unavailable: every bot PR is planned as an issue (fail closed, FRS-20).
+        self.private_list_ok = bool(self.private_names)
         self.out = out if out is not None else sys.stdout
         self.run_id = run_id
 
@@ -466,7 +507,8 @@ def default_deps(half, dry_run, environ=None, clock=_utcnow):
         fetch_npm=fetch_npm, cli_run=cli_checks.make_run(path) if half == 'mac' else None,
         classifier=None if (dry_run or half != 'mac') else make_classifier(path),
         notify_run=make_notify_run(path), attention_fn=None, local_config=local, excluded=read_excluded(),
-        private_names=read_private_names(), run_id=run_id)
+        private_names=private_names_from_env(environ) if half == 'actions' else read_private_names(),
+        run_id=run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -750,7 +792,47 @@ class Run:
         if self.half == 'mac':
             routed += self.classify_pending(models, today)
         routed = [item for item in routed if item is not None]
+        if not self.deps.private_list_ok:
+            for item in routed:
+                if item.get('as') == 'pr':
+                    self._private_list_notice()
+                    item.update({'as': 'issue', 'files': {}})
         self.actions += amod.plan_findings(routed, self._open(), self.state, self.deps.private_names)
+
+    # -- publication policy for bot PRs (FRS-12, FRS-20) ------------------
+
+    def _private_list_notice(self):
+        if not self.private_notice_shown:
+            self.private_notice_shown = True
+            self._print(PRIVATE_LIST_NOTICE[self.half])
+
+    def guard_prs(self, actions):
+        """`actions` with every `open_pr` the publication checks reject planned as an issue.
+
+        A PR is published only when the private repo list is available and
+        its files pass the scrub against it. Otherwise it becomes an
+        `open_issue` without files or branch, and none at all when an open
+        item already has its fingerprint.
+        """
+        open_fps = {i.get('fingerprint') for i in self._open() if i.get('fingerprint')}
+        out = []
+        for action in actions:
+            if action.get('op') != 'open_pr':
+                out.append(action)
+                continue
+            if self.deps.private_list_ok and not any(
+                    amod._scan_file(path, text, self.deps.private_names)
+                    for path, text in (action.get('files') or {}).items()):
+                out.append(action)
+                continue
+            if not self.deps.private_list_ok:
+                self._private_list_notice()
+            if action.get('fingerprint') in open_fps:
+                continue
+            issue = {k: v for k, v in action.items() if k not in ('files', 'branch')}
+            issue['op'] = 'open_issue'
+            out.append(issue)
+        return out
 
     def classify_pending(self, models, today):
         pending = self.state['upstream_pending']
@@ -804,15 +886,16 @@ class Run:
         stale = age.read_stale(self.root)
         aged = [f['skill'] for f in self.findings if f['kind'] == 'past-max-age']
         self.calls.append('stale_actions')
-        self.actions += age.stale_actions(self.rereview, stale, self.now, root=self.root, aged=aged,
-                                          open_items=self._open(), excluded=self.excluded)
+        self.actions += self.guard_prs(age.stale_actions(self.rereview, stale, self.now, root=self.root,
+                                                         aged=aged, open_items=self._open(),
+                                                         excluded=self.excluded))
         self.calls.append('advance_actions')
         results = copy.deepcopy(self.state['results'])
         self.record_results(results)  # this run's results, not yet in the state
         # Applied only after every other action landed (FRS-9: a failed run advances nothing).
-        self.advance = age.advance_actions(results, self.now.date(), self.config['advance_policy'],
-                                            now=self.now, root=self.root, skills=self.age_skills,
-                                            open_items=self._open(), excluded=self.excluded)
+        self.advance = self.guard_prs(age.advance_actions(
+            results, self.now.date(), self.config['advance_policy'], now=self.now, root=self.root,
+            skills=self.age_skills, open_items=self._open(), excluded=self.excluded))
 
     # -- alerts, apply, announce --------------------------------------------
 
@@ -935,6 +1018,7 @@ class Run:
         self.rereview = []
         self.skip_writes = False
         self.advance = []
+        self.private_notice_shown = False
         # No lease: the halves run on separate schedules and every state write
         # is a compare-and-swap three-way merge (FRS-16). A rare overlap can
         # plan against the same daily caps; that is accepted (issue #72).
