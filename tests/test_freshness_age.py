@@ -89,7 +89,8 @@ class Repo(object):
 
 def _ok(mac_hours=2, **over):
     result = {'actions_run': 'run-1', 'actions_ok': True, 'mac_run': 'mac-1', 'mac_ok': True,
-              'mac_at': _iso(NOW - datetime.timedelta(hours=mac_hours))}
+              'mac_at': _iso(NOW - datetime.timedelta(hours=mac_hours)),
+              'actions_hash': 'a' * 64, 'mac_hash': 'a' * 64}
     result.update(over)
     return result
 

@@ -200,6 +200,35 @@ def read_skills(root, excluded=()):
     return out
 
 
+def content_hash(folder):
+    """Lowercase hex sha256 of a skill folder's content, or None when not a real directory.
+
+    Only regular files are hashed (symlinks and special files are skipped),
+    in sorted order, each as its `/`-separated relative path, a NUL, its byte
+    length, a NUL and its bytes. A file that cannot be read contributes its
+    path and the marker `unreadable`. The hash depends on content only, not
+    on where the folder lives (FRS-9).
+    """
+    if not _is_real_dir(folder):
+        return None
+    hasher = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            if not _is_regular(path):
+                continue
+            rel = os.path.relpath(path, folder).replace(os.sep, '/').encode('utf-8')
+            try:
+                with open(path, 'rb') as handle:
+                    data = handle.read()
+            except OSError:
+                hasher.update(rel + b'\0' + b'unreadable' + b'\0')
+                continue
+            hasher.update(rel + b'\0' + str(len(data)).encode('ascii') + b'\0' + data)
+    return hasher.hexdigest()
+
+
 def due_date(skill):
     """The last day a skill is within its max age, or None without a date."""
     if not skill.get('last_verified'):
@@ -485,7 +514,11 @@ def stale_actions(open_rereview, stale, now, root=None, aged=None, open_items=()
 
 
 def eligible(result, now, evals_required=False):
-    """True when every Actions check passed this run and the Mac run is under 26 h old and passed."""
+    """True when every Actions check passed this run and the Mac run is under 26 h old and passed.
+
+    Both halves must also have checked the same content: `actions_hash` and
+    `mac_hash` are non-empty and equal (see `content_hash`).
+    """
     if not isinstance(result, dict):
         return False
     if result.get('actions_ok') is not True or not result.get('actions_run'):
@@ -494,6 +527,12 @@ def eligible(result, now, evals_required=False):
         return False
     mac_at = smod.parse_iso(result.get('mac_at'))
     if mac_at is None or not (datetime.timedelta(0) <= now - mac_at < MAC_MAX_AGE):
+        return False
+    actions_hash = result.get('actions_hash')
+    mac_hash = result.get('mac_hash')
+    # stops an Actions pass from being paired with a Mac pass of different content (FRS-9)
+    if not (isinstance(actions_hash, str) and actions_hash and isinstance(mac_hash, str) and mac_hash
+            and actions_hash == mac_hash):
         return False
     if (evals_required or 'evals_ok' in result) and result.get('evals_ok') is not True:
         return False  # from M6, evals must pass too
@@ -528,8 +567,8 @@ def advance_actions(results, today, policy=DEFAULT_POLICY, now=None, root=None, 
     """Actions for one PR that advances `catalog-last-verified` (FRS-9).
 
     `results[skill] = {"actions_run": run_id, "actions_ok": bool,
-    "mac_run": run_id | None, "mac_ok": bool | None, "mac_at": iso,
-    "evals_ok"?: bool}`. A skill under `skills/` is eligible when
+    "actions_hash": sha256, "mac_run": run_id | None, "mac_ok": bool | None,
+    "mac_at": iso, "mac_hash": sha256 | None, "evals_ok"?: bool}`. A skill under `skills/` is eligible when
     `eligible()` holds; `policy` then picks which eligible skills get the
     PR (`at-max-age`: past or within 7 days of the max age;
     `every-clean-run`: all). The PR sets `catalog-last-verified` to `today`

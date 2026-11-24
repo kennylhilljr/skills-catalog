@@ -43,7 +43,8 @@ included, and the run prints one fixed notice that names no repository.
 State keys owned here: `heartbeats[half] = {"run_id", "start", "end",
 "result", "counts", "last_success"}`, `heartbeat_watch[half]` (when this
 half first saw the other with no success), `results[skill]` (per-skill
-check results that `age.advance_actions` reads), `pr_seen[number]` (when a
+check results that `age.advance_actions` reads; each entry also carries
+`actions_hash` and `mac_hash`, the content hash each half checked), `pr_seen[number]` (when a
 freshness PR was first seen open, for the unreviewed-PR dwell row) and
 `upstream_pending[fp]` (upstream findings waiting for the Mac classifier).
 
@@ -645,8 +646,10 @@ class Run:
         field_table = upstream.field_table(self.state['sources']) or None
         link_items = []
         per_skill = []
+        hashes = {}
         for section, name, folder in self._skills():
             per_skill.append(name)
+            hashes[name] = age.content_hash(folder)  # before the checks, so it describes what they read
             self.calls.append('check_frontmatter')
             self.findings += checks.check_frontmatter(folder, name, field_table)
             self.calls.append('check_models')
@@ -664,6 +667,7 @@ class Run:
         self.findings += found
         self.state['links'] = history
         self.checked_skills = per_skill
+        self.checked_hashes = hashes
 
     def watch_upstream(self):
         self.calls.append('watch')
@@ -701,8 +705,10 @@ class Run:
         run = cli_checks.cached(self.deps.cli_run)
         tools = upstream.tool_names(self.state['sources'])
         per_skill = []
+        hashes = {}
         for section, name, folder in self._skills():
             per_skill.append(name)
+            hashes[name] = age.content_hash(folder)  # before the checks, so it describes what they read
             self.calls.append('check_commands')
             self.findings += cli_checks.check_commands(name, folder, run)
             self.calls.append('check_cli_refs')
@@ -716,6 +722,7 @@ class Run:
         self.findings += held_drift.check_held(self.root, self.deps.local_config.get('held_sources') or {},
                                                self.excluded)
         self.checked_skills = per_skill
+        self.checked_hashes = hashes
 
     # -- dwell and heartbeats (FRS-16, FRS-17) -----------------------------
 
@@ -852,6 +859,9 @@ class Run:
         `execute` records into the state only after routing, alert planning
         and apply ran, so a step that fails late still leaves `*_ok: false`.
         `age_actions` reads a copy recorded the same way before then.
+        Each half also records the content hash (`age.content_hash`) of the
+        folder it checked, and `age.eligible` pairs the halves only when the
+        hashes match.
         """
         if results is None:
             results = self.state['results']
@@ -863,6 +873,7 @@ class Run:
             return
         failing = {f['skill'] for f in self.findings if f['kind'] != 'past-max-age'}
         names = set(self.checked_skills)
+        hashes = getattr(self, 'checked_hashes', {})
         for name in list(results):
             if name not in names:
                 del results[name]
@@ -870,9 +881,10 @@ class Run:
             entry = results.setdefault(name, {})  # each half sets only its own fields, so merges keep both
             ok = name not in failing and not self.failed
             if self.half == 'actions':
-                entry.update(actions_run=self.deps.run_id, actions_ok=ok)
+                entry.update(actions_run=self.deps.run_id, actions_ok=ok, actions_hash=hashes.get(name))
             else:
-                entry.update(mac_run=self.deps.run_id, mac_ok=ok, mac_at=smod.iso(self.now))
+                entry.update(mac_run=self.deps.run_id, mac_ok=ok, mac_at=smod.iso(self.now),
+                             mac_hash=hashes.get(name))
 
     def age_actions(self):
         stale = age.read_stale(self.root)
@@ -1006,6 +1018,7 @@ class Run:
     def execute(self):
         self.now = smod.require_utc(self.deps.clock())
         self.checked_skills = []
+        self.checked_hashes = {}
         self.age_skills = []
         self.rereview = []
         self.skip_writes = False
