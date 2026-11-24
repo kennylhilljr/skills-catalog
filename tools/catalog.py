@@ -128,17 +128,38 @@ def _has_skill_md(folder, label):
     _refuse(label + '/SKILL.md', mode)
 
 
+def _check_tree(root, section):
+    """Refuse a symlink or special file anywhere under section (CAT-11, CAT-23).
+
+    Walks every folder, including ones without a SKILL.md and the canary,
+    because the server and tools/install-local refuse a tag for any of them.
+    A missing section is fine.
+    """
+    base = os.path.join(root, section)
+    try:
+        mode = os.lstat(base).st_mode
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(mode):
+        _refuse(section, mode)
+    for dirpath, dirnames, filenames in os.walk(base, onerror=_raise, followlinks=False):
+        for name in dirnames + filenames:
+            full = os.path.join(dirpath, name)
+            mode = os.lstat(full).st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                rel = os.path.relpath(full, root).replace(os.sep, '/')
+                _refuse(rel, mode)
+
+
 def _section(root, section):
+    _check_tree(root, section)
     names = []
     base = os.path.join(root, section)
     for name in os.listdir(base):
         full = os.path.join(base, name)
-        mode = os.lstat(full).st_mode
-        if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-            _refuse(section + '/' + name, mode)
         if section == '.held' and name == CANARY:
             continue  # FRS-19: the canary is never published
-        if stat.S_ISDIR(mode) and _has_skill_md(full, section + '/' + name):
+        if stat.S_ISDIR(os.lstat(full).st_mode) and _has_skill_md(full, section + '/' + name):
             names.append(name)
     return [_entry(root, section, name) for name in sorted(names)]
 

@@ -249,6 +249,19 @@ class TestCatalog(unittest.TestCase):
         self._symlink('SKILL.md', os.path.join(self.tmp, '.held', HELD[0], 'alias.md'))
         self._assert_refused('.held/%s/alias.md' % HELD[0])
 
+    def test_symlink_in_folder_without_skill_md_refused(self):
+        """CAT-11: a folder under skills/ with no SKILL.md is still checked, as the server archives it."""
+        _copy_repo(self.tmp)
+        os.makedirs(os.path.join(self.tmp, 'skills', 'junk'))
+        self._symlink('../new-mcp/SKILL.md', os.path.join(self.tmp, 'skills', 'junk', 'link'))
+        self._assert_refused('skills/junk/link')
+
+    def test_symlink_in_canary_refused(self):
+        """CAT-23: the canary is left out of the manifest but gets the same symlink check."""
+        _copy_repo(self.tmp)
+        self._symlink('SKILL.md', os.path.join(self.tmp, '.held', 'zz-canary', 'alias.md'))
+        self._assert_refused('.held/zz-canary/alias.md')
+
     def test_symlink_named_ds_store_refused(self):
         """CAT-11: only a regular .DS_Store is ignored; a symlink with that name is refused."""
         _copy_repo(self.tmp)
