@@ -43,7 +43,8 @@ included, and the run prints one fixed notice that names no repository.
 State keys owned here: `heartbeats[half] = {"run_id", "start", "end",
 "result", "counts", "last_success"}`, `heartbeat_watch[half]` (when this
 half first saw the other with no success), `results[skill]` (per-skill
-check results that `age.advance_actions` reads), `pr_seen[number]` (when a
+check results that `age.advance_actions` reads; each entry also carries
+`actions_hash` and `mac_hash`, the content hash each half checked), `pr_seen[number]` (when a
 freshness PR was first seen open, for the unreviewed-PR dwell row) and
 `upstream_pending[fp]` (upstream findings waiting for the Mac classifier).
 
@@ -616,6 +617,44 @@ class Run:
     def _skills(self):
         return checks.iter_skills(self.root, self.excluded)
 
+    def _checked_skills(self):
+        """`_skills()`, refused when one name is under both `skills/` and `.held/` (FRS-9).
+
+        Hashes and results are keyed by name alone, so a duplicate would let
+        one folder's hash stand for the other's content.
+        """
+        skills = self._skills()
+        seen = {}
+        dupes = set()
+        for section, name, _folder in skills:
+            if name in seen and seen[name] != section:
+                dupes.add(name)
+            seen.setdefault(name, section)
+        if dupes:
+            raise RunError('skill names in more than one section: ' + ', '.join(sorted(dupes)))
+        return skills
+
+    def _settle_hashes(self, folders, hashes):
+        """Hash each folder again after every check ran (FRS-9).
+
+        The checks reopen the live files, so a folder that changed while they
+        ran may have been checked as a mix of old and new bytes. Such a skill
+        records no hash and fails, and so does the whole half, so it cannot
+        pair with the other half on content this half never checked.
+        """
+        self.changed_skills = set()
+        for name, folder in folders.items():
+            if age.content_hash(folder) != hashes[name]:
+                hashes[name] = None
+                self.changed_skills.add(name)
+        if self.changed_skills:
+            self._fail('content hash', 'changed while the checks read them: '
+                       + ', '.join(sorted(self.changed_skills)))
+
+    def settle_actions_hashes(self):
+        """Run after the age check too, since `age.read_skills` reopens each SKILL.md (FRS-9)."""
+        self._settle_hashes(self.hash_folders, self.checked_hashes)
+
     # -- state and GitHub items -----------------------------------------
 
     def load_state(self):
@@ -645,8 +684,12 @@ class Run:
         field_table = upstream.field_table(self.state['sources']) or None
         link_items = []
         per_skill = []
-        for section, name, folder in self._skills():
+        hashes = {}
+        folders = {}
+        for section, name, folder in self._checked_skills():
             per_skill.append(name)
+            folders[name] = folder
+            hashes[name] = age.content_hash(folder)  # before the checks; compared again after them
             self.calls.append('check_frontmatter')
             self.findings += checks.check_frontmatter(folder, name, field_table)
             self.calls.append('check_models')
@@ -663,7 +706,10 @@ class Run:
                                            self.config['link_min_gap_hours'])
         self.findings += found
         self.state['links'] = history
+        # Compared again in `settle_actions_hashes`, after the age check also read the files.
+        self.hash_folders = folders
         self.checked_skills = per_skill
+        self.checked_hashes = hashes
 
     def watch_upstream(self):
         self.calls.append('watch')
@@ -701,8 +747,12 @@ class Run:
         run = cli_checks.cached(self.deps.cli_run)
         tools = upstream.tool_names(self.state['sources'])
         per_skill = []
-        for section, name, folder in self._skills():
+        hashes = {}
+        folders = {}
+        for section, name, folder in self._checked_skills():
             per_skill.append(name)
+            folders[name] = folder
+            hashes[name] = age.content_hash(folder)  # before the checks; compared again after them
             self.calls.append('check_commands')
             self.findings += cli_checks.check_commands(name, folder, run)
             self.calls.append('check_cli_refs')
@@ -715,7 +765,9 @@ class Run:
         self.calls.append('check_held')
         self.findings += held_drift.check_held(self.root, self.deps.local_config.get('held_sources') or {},
                                                self.excluded)
+        self._settle_hashes(folders, hashes)
         self.checked_skills = per_skill
+        self.checked_hashes = hashes
 
     # -- dwell and heartbeats (FRS-16, FRS-17) -----------------------------
 
@@ -852,6 +904,9 @@ class Run:
         `execute` records into the state only after routing, alert planning
         and apply ran, so a step that fails late still leaves `*_ok: false`.
         `age_actions` reads a copy recorded the same way before then.
+        Each half also records the content hash (`age.content_hash`) of the
+        folder it checked, and `age.eligible` pairs the halves only when the
+        hashes match.
         """
         if results is None:
             results = self.state['results']
@@ -863,16 +918,18 @@ class Run:
             return
         failing = {f['skill'] for f in self.findings if f['kind'] != 'past-max-age'}
         names = set(self.checked_skills)
+        hashes = getattr(self, 'checked_hashes', {})
         for name in list(results):
             if name not in names:
                 del results[name]
         for name in self.checked_skills:
             entry = results.setdefault(name, {})  # each half sets only its own fields, so merges keep both
-            ok = name not in failing and not self.failed
+            ok = name not in failing and name not in getattr(self, 'changed_skills', ()) and not self.failed
             if self.half == 'actions':
-                entry.update(actions_run=self.deps.run_id, actions_ok=ok)
+                entry.update(actions_run=self.deps.run_id, actions_ok=ok, actions_hash=hashes.get(name))
             else:
-                entry.update(mac_run=self.deps.run_id, mac_ok=ok, mac_at=smod.iso(self.now))
+                entry.update(mac_run=self.deps.run_id, mac_ok=ok, mac_at=smod.iso(self.now),
+                             mac_hash=hashes.get(name))
 
     def age_actions(self):
         stale = age.read_stale(self.root)
@@ -1006,6 +1063,9 @@ class Run:
     def execute(self):
         self.now = smod.require_utc(self.deps.clock())
         self.checked_skills = []
+        self.checked_hashes = {}
+        self.hash_folders = {}
+        self.changed_skills = set()
         self.age_skills = []
         self.rereview = []
         self.skip_writes = False
@@ -1027,6 +1087,7 @@ class Run:
             self._step('upstream watch', self.watch_upstream)
             self._step('static checks', self.actions_checks)
             self._step('age', self.age_checks)
+            self._step('content hash', self.settle_actions_hashes)
             self._step('canary', self.verify_canary)
             if not self.skip_writes:
                 self._step('dwell', self.actions_dwell)
