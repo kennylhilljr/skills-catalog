@@ -564,10 +564,10 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.temp_dir.cleanup()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.assertEqual(self._lint(self._skill(extra='shell: >-\n  echo\n\n  rm -rf x\n'), schema),
-                         ['CAT-28: key "shell" must be a single-line plain or quoted scalar, not a block scalar, flow collection, tag, anchor or alias'])
+                         ['CAT-28: key "shell" must be one plain or quoted scalar on a single line'])
 
     def test_tag_anchor_and_alias_values_are_refused(self):
-        msg = 'CAT-28: key "shell" must be a single-line plain or quoted scalar, not a block scalar, flow collection, tag, anchor or alias'
+        msg = 'CAT-28: key "shell" must be one plain or quoted scalar on a single line'
         for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n',
                      'shell: [*a]\n', 'shell: {x: bash}\n', 'shell: # c\n',
                      'shell: - x\n', 'shell: "open\n', 'shell: a #c\n'):
@@ -596,12 +596,14 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
     def test_value_is_compared_as_written(self):
         schema = dict(self.schema)
         schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': 'bash'}}
-        for line in ('shell: "bash"\n', 'shell:  bash\n', 'shell: bash \n'):
+        mismatch = 'CAT-28: key "shell" does not match its x-privileged-allowlist entry'
+        syntax = 'CAT-28: key "shell" must be one plain or quoted scalar on a single line'
+        for line, want in (('shell: "bash"\n', mismatch), ('shell:  bash\n', syntax),
+                           ('shell: bash \n', syntax)):
             with self.subTest(line=line):
                 self.temp_dir.cleanup()
                 self.temp_dir = tempfile.TemporaryDirectory()
-                self.assertEqual(self._lint(self._skill(extra=line), schema),
-                                 ['CAT-28: key "shell" does not match its x-privileged-allowlist entry'])
+                self.assertEqual(self._lint(self._skill(extra=line), schema), [want])
 
     def test_parser_error_shows_code_point_not_invisible_character(self):
         findings = self._lint(self._skill(extra='bad\u200bkey: x\n'))

@@ -26,6 +26,7 @@ _SIMPLE_SCALAR = re.compile(
     r'^(?:[^\s\-?:,\[\]{}#&*!|>\'"%@`](?:[^:#]|:(?=\S)|(?<=\S)#)*(?<=\S)'
     r'|"(?:[^"\\]|\\.)*"'
     r"|'(?:[^']|'')*')$")
+_SCALAR_RULE = 'must be one plain or quoted scalar on a single line'
 _MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
                  '.mdtxt', '.mdtext', '.mkdown', '.ronn', '.rmd', '.qmd')
 
@@ -281,8 +282,7 @@ def check_privileged_keys(text, frontmatter, schema):
             continue
         value = raw[key]
         if not _SIMPLE_SCALAR.match(value):
-            findings.append(f'CAT-28: key "{key}" must be a single-line plain or quoted '
-                            'scalar, not a block scalar, flow collection, tag, anchor or alias')
+            findings.append(f'CAT-28: key "{key}" {_SCALAR_RULE}')
         elif key not in granted:
             findings.append(f'CAT-28: key "{key}" needs an entry in x-privileged-allowlist')
         elif granted[key] != value:
