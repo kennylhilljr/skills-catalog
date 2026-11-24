@@ -105,8 +105,11 @@ def _git(repo, *args):
 def _resolve_tag(repo, ref):
     """Return (tag, commit) for ref, which must name a tag."""
     if ref is None:
+        # Highest version wins, never the newest date: a hotfix tag made
+        # later on an older line must not become the default. This is the
+        # same order as `tools/install-local` (`git tag --sort=-v:refname`).
         code, out = _git(
-            repo, 'for-each-ref', '--sort=-v:refname', '--sort=-creatordate',
+            repo, 'for-each-ref', '--sort=-v:refname',
             '--format=%(refname:strip=2)', TAG_PATTERN,
         )
         if code != 0:

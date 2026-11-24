@@ -112,6 +112,19 @@ class ResourceTests(_Temp):
         async with Client(build_server(snap)) as client:
             self.assertEqual(await self.read_text(client, 'skill://alpha-skill/extra.md'), 'second\n')
 
+    def test_ref_none_picks_the_highest_version_not_the_latest_date(self):
+        # The highest version is tagged first; a hotfix on an older line and
+        # a lightweight tag come later. Version order decides, not date, and
+        # 10 sorts above 9 (version order, not text order).
+        repo = make_catalog_repo(self.tmp, skills=['alpha-skill'], tag='v2099.1.1.9')
+        commit_all(repo, 'highest', tag='v2099.1.1.10', stamp=next_stamp(1))
+        commit_all(repo, 'hotfix on an older line', tag='v2099.1.1.2', stamp=next_stamp(5))
+        commit_all(repo, 'later lightweight', stamp=next_stamp(6))
+        git(repo, 'tag', 'v2099.1.1.3', stamp=next_stamp(6))
+        snap = self.snap(repo)
+        self.assertEqual(snap.tag, 'v2099.1.1.10')
+        self.assertEqual(snap.commit, git(repo, 'rev-parse', 'v2099.1.1.10^{commit}').strip())
+
     def test_snapshot_is_private_and_cleaned_up(self):
         repo = make_catalog_repo(self.tmp)
         snap = materialize(repo, exclude_file=self.exclude)

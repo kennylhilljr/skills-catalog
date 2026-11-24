@@ -459,6 +459,18 @@ class InstallLocalCase(unittest.TestCase):
         claude_dest = os.path.join(self.home, '.claude', 'skills')
         self.assertEqual(state['destinations'][claude_dest]['alpha']['tag'], 'v2')
 
+    def test_default_ref_is_the_highest_version_not_the_latest_tag(self):
+        # Same rule as the MCP server: a tag made later on an older line
+        # does not win, and v10 sorts above v9.
+        self.commit_tag('v10')
+        self.skills['alpha']['SKILL.md'] = b'alpha hotfix\n'
+        self.commit_tag('v9')
+        run = self.run_tool(ref=None)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        with open(self.state) as handle:
+            state = json.load(handle)
+        self.assertEqual(state['destinations'][self.claude]['alpha']['tag'], 'v10')
+
 
 if __name__ == '__main__':
     unittest.main()
