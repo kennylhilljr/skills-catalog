@@ -571,7 +571,8 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n',
                      'shell: [*a]\n', 'shell: {x: bash}\n', 'shell: # c\n',
                      'shell: - x\n', 'shell: "open\n', 'shell: a #c\n',
-                     'shell: bash\u2028evil\n', 'shell: "bad\\q"\n'):
+                     'shell: bash\u2028evil\n', 'shell: "bad\\q"\n', 'shell: foo:\n',
+                     "shell: 'it''s'\n"):
             with self.subTest(line=line):
                 self.temp_dir.cleanup()
                 self.temp_dir = tempfile.TemporaryDirectory()
@@ -590,19 +591,21 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.assertIn('CAT-27: references/a<U+200B>.md:1: invisible or bidi character U+200B', findings)
 
     def test_cli_output_shows_code_point_for_folder_name(self):
-        import contextlib
-        import io
-        root = self.temp_dir.name
+        import subprocess
+        import sys
         self._skill(name='bad\u200bname')
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            results = _lint.lint_tree(root)
-            for key in sorted(results):
-                for finding in results[key]:
-                    print(_lint._visible(f'{key}: {finding}'))
-        self.assertTrue(out.getvalue())
-        self.assertNotIn('\u200b', out.getvalue())
-        self.assertIn('skills/bad<U+200B>name: ', out.getvalue())
+        r = subprocess.run([sys.executable, '-I', _lint_path, self.temp_dir.name],
+                           capture_output=True, encoding='utf-8')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn('\u200b', r.stdout)
+        self.assertIn('skills/bad<U+200B>name: ', r.stdout)
+
+    def test_bare_carriage_return_counts_as_line_break(self):
+        skill = self._skill(files={'references/r.md': 'a\rb\r\nc\r\u200b<!-- x -->\n'})
+        self.assertEqual(self._lint(skill), [
+            'CAT-27: references/r.md:4: invisible or bidi character U+200B',
+            'CAT-27: references/r.md:4: HTML comment',
+        ])
 
     def test_reference_finding_shows_code_point(self):
         findings = self._lint(self._skill(body='See `references/a\u200bb.md`.\n'))

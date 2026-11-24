@@ -21,13 +21,14 @@ _INVISIBLE = re.compile(
     '\U000e0000-\U000e007f]')
 # CAT-28: a privileged value is one plain, double-quoted or single-quoted
 # scalar of printable ASCII on one line, with no escapes. Plain: starts with
-# a letter, digit, `_` or `(`, has no `: ` and no trailing space, and uses no
+# a letter, digit, `_` or `(`, has no `: `, no trailing space or colon, no
 # `#`, quote or flow indicator. Stricter than YAML on purpose: anything this
 # accepts reads the same in YAML and in this linter.
 _SIMPLE_SCALAR = re.compile(
-    r'^(?:[A-Za-z0-9_(](?:[A-Za-z0-9_()*,./=@+ -]|:(?! ))*(?<! )'
+    r'^(?:[A-Za-z0-9_(](?:[A-Za-z0-9_()*,./=@+ -]|:(?=[^ ]))*(?<![ :])'
     r'|"[ !#-\[\]-~]*"'
-    r"|'(?:[ -&(-~]|'')*')$")
+    r"|'[ -&(-~]*')$")
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
 _SCALAR_RULE = 'must be one plain or quoted scalar of printable ASCII on a single line'
 _MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
                  '.mdtxt', '.mdtext', '.mkdown', '.ronn', '.rmd', '.qmd')
@@ -244,12 +245,13 @@ def check_text_files(skill_dir):
             except UnicodeDecodeError:
                 findings.append(f'CAT-27: {rel} is not valid UTF-8')
                 continue
-            for number, line in enumerate(text.split('\n'), 1):
+            lines = _LINE_BREAK.split(text)
+            for number, line in enumerate(lines, 1):
                 for ch in sorted(set(_INVISIBLE.findall(line))):
                     findings.append(
                         f'CAT-27: {rel}:{number}: invisible or bidi character U+{ord(ch):04X}')
             if fname.lower().endswith(_MARKDOWN_EXT):
-                for number, line in enumerate(text.split('\n'), 1):
+                for number, line in enumerate(lines, 1):
                     if '<!--' in line:
                         findings.append(f'CAT-27: {rel}:{number}: HTML comment')
     return findings
