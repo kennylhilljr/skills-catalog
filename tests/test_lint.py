@@ -564,17 +564,28 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.temp_dir.cleanup()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.assertEqual(self._lint(self._skill(extra='shell: >-\n  echo\n\n  rm -rf x\n'), schema),
-                         ['CAT-28: key "shell" must be a single-line value without a YAML tag, anchor or alias'])
+                         ['CAT-28: key "shell" must be a single-line plain or quoted scalar, not a block scalar, flow collection, tag, anchor or alias'])
 
     def test_tag_anchor_and_alias_values_are_refused(self):
-        msg = 'CAT-28: key "shell" must be a single-line value without a YAML tag, anchor or alias'
-        for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n'):
+        msg = 'CAT-28: key "shell" must be a single-line plain or quoted scalar, not a block scalar, flow collection, tag, anchor or alias'
+        for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n',
+                     'shell: [*a]\n', 'shell: {x: bash}\n'):
             with self.subTest(line=line):
                 self.temp_dir.cleanup()
                 self.temp_dir = tempfile.TemporaryDirectory()
                 schema = dict(self.schema)
                 schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': line[len('shell: '):-1]}}
                 self.assertEqual(self._lint(self._skill(extra=line), schema), [msg])
+
+    def test_star_inside_plain_value_is_allowed(self):
+        schema = dict(self.schema)
+        schema['x-privileged-allowlist'] = {'hidden-skill': {'allowed-tools': 'Read Bash(git:*)'}}
+        self.assertEqual(self._lint(self._skill(extra='allowed-tools: Read Bash(git:*)\n'), schema), [])
+
+    def test_reference_finding_shows_code_point(self):
+        findings = self._lint(self._skill(body='See `references/a\u200bb.md`.\n'))
+        self.assertFalse(any('\u200b' in f for f in findings), findings)
+        self.assertIn('CAT-7: reference "references/a<U+200B>b.md" does not resolve to a file', findings)
 
     def test_value_is_compared_as_written(self):
         schema = dict(self.schema)

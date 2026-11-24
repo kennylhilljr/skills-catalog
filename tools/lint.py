@@ -201,6 +201,11 @@ def load_schema(schema_path=None):
         return json.load(f)
 
 
+def _visible(message):
+    """Show each invisible character in a finding as its code point (CAT-27)."""
+    return _INVISIBLE.sub(lambda m: f'<U+{ord(m.group()):04X}>', message)
+
+
 def check_text_files(skill_dir):
     """CAT-27: scan every regular file in a skill folder.
 
@@ -246,9 +251,10 @@ def check_privileged_keys(text, frontmatter, schema):
     `allowed-tools` pre-approves tools and `hooks` and `shell` run commands,
     so each is accepted only when `x-privileged-allowlist` in the schema maps
     the skill's name to that key with the same value, compared as written on
-    its single frontmatter line (quotes and spaces included). A block scalar,
-    tag, anchor or alias is refused, because YAML and this linter's parser
-    read those differently.
+    its single frontmatter line (quotes and spaces included). The value must
+    be a plain or quoted scalar: a block scalar spans lines this comparison
+    does not see, and a flow collection, tag, anchor or alias can make YAML
+    read the same text differently (an alias pulls in another key's value).
     The gate runs main's linter and schema, so a PR cannot grant itself an
     entry.
     """
@@ -267,9 +273,9 @@ def check_privileged_keys(text, frontmatter, schema):
         if key not in raw:
             continue
         value = raw[key]
-        if not value.strip() or value.strip()[0] in '>|!&*':
-            findings.append(f'CAT-28: key "{key}" must be a single-line value '
-                            'without a YAML tag, anchor or alias')
+        if not value.strip() or value.strip()[0] in '>|!&*[{':
+            findings.append(f'CAT-28: key "{key}" must be a single-line plain or quoted '
+                            'scalar, not a block scalar, flow collection, tag, anchor or alias')
         elif key not in granted:
             findings.append(f'CAT-28: key "{key}" needs an entry in x-privileged-allowlist')
         elif granted[key] != value:
@@ -305,10 +311,8 @@ def lint_skill(skill_dir, schema=None):
     except UnicodeDecodeError:
         return text_findings or ['CAT-27: SKILL.md is not valid UTF-8']
     except ValueError as e:
-        # The parser error quotes the line; show any invisible character in
-        # it as its code point (CAT-27).
-        message = _INVISIBLE.sub(lambda m: f'<U+{ord(m.group()):04X}>', str(e))
-        return [f'CAT-4: {message}'] + text_findings
+        # The parser error quotes the line (CAT-27: no raw invisible text).
+        return [_visible(f'CAT-4: {e}')] + text_findings
 
     findings = []
 
@@ -500,10 +504,9 @@ def lint_skill(skill_dir, schema=None):
         if not held and consumers == 'none':
             findings.append('CAT-22: non-held skills cannot have catalog-consumers "none"')
 
-    # CAT-27: invisible characters and hidden comments in any file
-    findings.extend(text_findings)
-
-    return findings
+    # CAT-27: invisible characters and hidden comments in any file. Findings
+    # that quote skill text show invisible characters as code points.
+    return [_visible(f) for f in findings] + text_findings
 
 
 def lint_tree(root='.'):
