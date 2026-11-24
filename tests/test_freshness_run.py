@@ -598,6 +598,24 @@ class RobustnessTests(unittest.TestCase):
         self.assertEqual(runmod.merge_state(base, ours, fresh),
                          {'a': 2, 'b': {'x': 2, 'y': 3}, 'kept': {'k': 1}, 'new': 4, 'parked': {'e': 2}})
 
+    def test_a_concurrent_announcement_of_a_new_alert_survives_the_merge(self):
+        """Actions opens the alert, the Mac announces it from the old state, Actions loses its CAS."""
+        entry = {'kind': 'k', 'announced': False, 'last_reminder_at': None}
+        base = smod.empty_state()
+        fake = FakeGitHub(base)
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        job.now = smod.require_utc(deps.clock())
+        job.load_state()
+        job.state['alerts'] = {'fp': dict(entry)}
+        mac = json.loads(json.dumps(base))
+        mac['alerts'] = {'fp': dict(entry, announced=True, last_reminder_at='2026-11-18T11:00:00+00:00')}
+        fake.concurrent.append(mac)  # the Mac's write lands before this run's ref move
+        job.write_state()
+        alert = json.loads(fake.state_text)['alerts']['fp']
+        self.assertTrue(alert['announced'])
+        self.assertEqual(alert['last_reminder_at'], '2026-11-18T11:00:00+00:00')
+
     def test_a_reparked_upstream_finding_survives_the_mac_clearing_it(self):
         base = {'upstream_pending': {'fp': {'evidence': 'old'}}}
         mac = {'upstream_pending': {}}
