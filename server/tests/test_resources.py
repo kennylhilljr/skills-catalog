@@ -269,6 +269,20 @@ class OnlyDeliveredSkillsTests(_Temp):
         with self.assertRaisesRegex(SnapshotError, 'symlink in skills/alpha-skill'):
             materialize(repo, exclude_file=self.exclude)
 
+    def test_committed_ds_store_is_ignored(self):
+        """A regular .DS_Store is left out of the manifest by tools/catalog.py; the tag still serves."""
+        repo = make_catalog_repo(self.tmp, skills=SKILLS)
+        write_files(repo, {'skills/alpha-skill/.DS_Store': b'\x00\x01',
+                           'skills/alpha-skill/sub/.DS_Store': b'\x00\x02',
+                           'skills/.DS_Store': b'\x00\x03'})
+        git(repo, 'add', '-f', '--', 'skills', stamp=next_stamp(1))
+        commit_all(repo, 'ds_store', tag='v2099.1.1.2', stamp=next_stamp(1))
+        self.assertIn('alpha-skill/.DS_Store', _tag_files(repo, 'v2099.1.1.2'))
+        snap = self.snap(repo)
+        self.assertEqual(sorted(os.listdir(snap.root)), ['alpha-skill', 'beta-skill'])
+        for dirpath, _dirs, files in os.walk(snap.root):
+            self.assertNotIn('.DS_Store', files, dirpath)
+
 
 class ExclusionTests(_Temp):
     async def test_excluded_skill_is_invisible(self):

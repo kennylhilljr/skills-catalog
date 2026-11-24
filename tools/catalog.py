@@ -47,23 +47,44 @@ def _split_targets(value):
     return [part.strip() for part in value.split(',') if part.strip()]
 
 
-def _hash_files(folder):
-    """Map each regular file under folder (relative, '/'-separated) to its sha256."""
+IGNORED_FILES = ('.DS_Store',)
+
+
+def _refuse(path, mode):
+    """Raise ValueError for a symlink or special file (CAT-11).
+
+    The server and tools/install-local refuse a whole tag that holds one, so
+    the manifest check fails on it instead of skipping it.
+    """
+    kind = 'symlink' if stat.S_ISLNK(mode) else 'special file'
+    raise ValueError('%s: %s is not allowed under skills/ or .held/' % (path, kind))
+
+
+def _hash_files(folder, label):
+    """Map each regular file under folder (relative, '/'-separated) to its sha256.
+
+    A regular file named .DS_Store is ignored, as the server and
+    tools/install-local do. A symlink or special file anywhere in the folder
+    raises ValueError naming its repository-relative path (label + '/' + rel).
+    """
     found = {}
     for dirpath, dirnames, filenames in os.walk(folder, onerror=_raise, followlinks=False):
         # os.walk decides "symlink or not" for subfolders with calls that hide
         # OSErrors; lstat each one so such an error makes build() raise.
         for name in dirnames:
-            os.lstat(os.path.join(dirpath, name))
-        for name in filenames:
-            if name == '.DS_Store':
-                continue
             full = os.path.join(dirpath, name)
-            # lstat, not os.path.isfile/islink: those hide OSErrors, and a
-            # symlink is never a regular file here.
-            if not stat.S_ISREG(os.lstat(full).st_mode):
-                continue
+            mode = os.lstat(full).st_mode
+            if not stat.S_ISDIR(mode):
+                _refuse(label + '/' + os.path.relpath(full, folder).replace(os.sep, '/'), mode)
+        for name in filenames:
+            full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, folder).replace(os.sep, '/')
+            # lstat, not os.path.isfile/islink: those hide OSErrors.
+            mode = os.lstat(full).st_mode
+            if not stat.S_ISREG(mode):
+                _refuse(label + '/' + rel, mode)
+            if name in IGNORED_FILES:
+                continue
             with open(full, 'rb') as handle:
                 found[rel] = hashlib.sha256(handle.read()).hexdigest()
     return {rel: found[rel] for rel in sorted(found)}
@@ -84,31 +105,40 @@ def _entry(root, section, name):
         if not isinstance(value, str):
             raise ValueError('%s: metadata %s must be a string, got %r' % (path, meta_key, value))
         entry[key] = _split_targets(value) if key == 'targets' else value
-    entry['files'] = _hash_files(folder)
+    entry['files'] = _hash_files(folder, path)
     return entry
 
 
-def _has_skill_md(folder):
-    """True if folder is a real directory holding a regular SKILL.md.
+def _has_skill_md(folder, label):
+    """True if folder holds a regular SKILL.md.
 
-    Uses lstat so a symlinked skill folder or SKILL.md is skipped, never
-    followed. Only "does not exist" counts as no; other OSErrors propagate.
+    The caller has already refused a symlinked or special folder. Only "does
+    not exist" counts as no; other OSErrors propagate, and a SKILL.md that is
+    a symlink or special file raises ValueError.
     """
+    path = os.path.join(folder, 'SKILL.md')
     try:
-        if not stat.S_ISDIR(os.lstat(folder).st_mode):
-            return False
-        mode = os.lstat(os.path.join(folder, 'SKILL.md')).st_mode
+        mode = os.lstat(path).st_mode
     except (FileNotFoundError, NotADirectoryError):
         return False
-    return stat.S_ISREG(mode)
+    if stat.S_ISREG(mode):
+        return True
+    if stat.S_ISDIR(mode):
+        return False
+    _refuse(label + '/SKILL.md', mode)
 
 
 def _section(root, section):
     names = []
-    for name in os.listdir(os.path.join(root, section)):
+    base = os.path.join(root, section)
+    for name in os.listdir(base):
+        full = os.path.join(base, name)
+        mode = os.lstat(full).st_mode
+        if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+            _refuse(section + '/' + name, mode)
         if section == '.held' and name == CANARY:
             continue  # FRS-19: the canary is never published
-        if _has_skill_md(os.path.join(root, section, name)):
+        if stat.S_ISDIR(mode) and _has_skill_md(full, section + '/' + name):
             names.append(name)
     return [_entry(root, section, name) for name in sorted(names)]
 

@@ -341,7 +341,7 @@ def _render(root, changes, excluded=()):
                     continue
                 path = os.path.join(source, name)
                 if os.path.islink(path) or not os.path.isdir(path):
-                    continue  # tools/catalog.py skips these too
+                    continue  # not skills; a symlink here fails tools/catalog.py on main anyway
                 shutil.copytree(path, os.path.join(target, name), symlinks=True)
         stale = os.path.join(root, *STALE_PATH.split('/'))
         if os.path.isfile(stale):
