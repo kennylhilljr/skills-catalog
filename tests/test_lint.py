@@ -569,7 +569,8 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
     def test_tag_anchor_and_alias_values_are_refused(self):
         msg = 'CAT-28: key "shell" must be a single-line plain or quoted scalar, not a block scalar, flow collection, tag, anchor or alias'
         for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n',
-                     'shell: [*a]\n', 'shell: {x: bash}\n'):
+                     'shell: [*a]\n', 'shell: {x: bash}\n', 'shell: # c\n',
+                     'shell: - x\n', 'shell: "open\n', 'shell: a #c\n'):
             with self.subTest(line=line):
                 self.temp_dir.cleanup()
                 self.temp_dir = tempfile.TemporaryDirectory()
@@ -581,6 +582,11 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         schema = dict(self.schema)
         schema['x-privileged-allowlist'] = {'hidden-skill': {'allowed-tools': 'Read Bash(git:*)'}}
         self.assertEqual(self._lint(self._skill(extra='allowed-tools: Read Bash(git:*)\n'), schema), [])
+
+    def test_file_path_finding_shows_code_point(self):
+        findings = self._lint(self._skill(files={'references/a\u200b.md': 'x\u200b\n'}))
+        self.assertFalse(any('\u200b' in f for f in findings), findings)
+        self.assertIn('CAT-27: references/a<U+200B>.md:1: invisible or bidi character U+200B', findings)
 
     def test_reference_finding_shows_code_point(self):
         findings = self._lint(self._skill(body='See `references/a\u200bb.md`.\n'))

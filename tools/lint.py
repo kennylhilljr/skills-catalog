@@ -19,6 +19,13 @@ _META_LINE = re.compile(r'^  ' + _KEY + r': (.*)$')
 _INVISIBLE = re.compile(
     '[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff'
     '\U000e0000-\U000e007f]')
+# CAT-28: a privileged value is one plain or quoted YAML scalar on one line.
+# Plain: no leading indicator, no `: ` or ` #`, no trailing space. Quoted:
+# a whole double-quoted or single-quoted string.
+_SIMPLE_SCALAR = re.compile(
+    r'^(?:[^\s\-?:,\[\]{}#&*!|>\'"%@`](?:[^:#]|:(?=\S)|(?<=\S)#)*(?<=\S)'
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|'(?:[^']|'')*')$")
 _MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
                  '.mdtxt', '.mdtext', '.mkdown', '.ronn', '.rmd', '.qmd')
 
@@ -273,7 +280,7 @@ def check_privileged_keys(text, frontmatter, schema):
         if key not in raw:
             continue
         value = raw[key]
-        if not value.strip() or value.strip()[0] in '>|!&*[{':
+        if not _SIMPLE_SCALAR.match(value):
             findings.append(f'CAT-28: key "{key}" must be a single-line plain or quoted '
                             'scalar, not a block scalar, flow collection, tag, anchor or alias')
         elif key not in granted:
@@ -309,10 +316,10 @@ def lint_skill(skill_dir, schema=None):
             text = f.read()
         frontmatter, body = parse_frontmatter(text)
     except UnicodeDecodeError:
-        return text_findings or ['CAT-27: SKILL.md is not valid UTF-8']
+        return [_visible(f) for f in text_findings] or ['CAT-27: SKILL.md is not valid UTF-8']
     except ValueError as e:
         # The parser error quotes the line (CAT-27: no raw invisible text).
-        return [_visible(f'CAT-4: {e}')] + text_findings
+        return [_visible(f) for f in [f'CAT-4: {e}'] + text_findings]
 
     findings = []
 
@@ -506,7 +513,7 @@ def lint_skill(skill_dir, schema=None):
 
     # CAT-27: invisible characters and hidden comments in any file. Findings
     # that quote skill text show invisible characters as code points.
-    return [_visible(f) for f in findings] + text_findings
+    return [_visible(f) for f in findings + text_findings]
 
 
 def lint_tree(root='.'):
