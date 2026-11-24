@@ -61,7 +61,7 @@ Test levels: `unit` (pure function), `integration` (real git, temp folders and f
 | CAT-8 | *Superseded by CAT-24.* The scrub shall fail on a match for: provider key and token formats (GitHub, Anthropic, OpenAI, AWS, Slack, private key blocks), high-entropy strings over 32 characters outside fenced examples marked `example`, email addresses outside an allowlist (`noreply@github.com` style), RFC 1918 and link-local IP addresses, hostnames ending in `.local`, `.internal`, `.lan` or `.ts.net`, `/Users/<name>/` and `/home/<name>/` paths, and the names of Kenny's private repos from a configured list. | P1 | unit | M1 |
 | CAT-9 | When the scrub fails, it shall print the file, line and kind of each finding and never the matched value. | P1 | unit | M1 |
 | CAT-10 | The scrub shall also run as a pre-commit hook installable with `tools/install-hooks`, with the same rules as CI. | P2 | integration | M1 |
-| CAT-11 | When `skills/` changes, CI shall regenerate `catalog.json` (name, version, owner, targets, last verified, sha256 of every file except a regular `.DS_Store`, which the server also leaves out) and fail if the committed file differs or if `skills/` or `.held/` holds a symlink or special file. | P1 | integration | M1 |
+| CAT-11 | When `skills/` changes, CI shall regenerate `catalog.json` (name, version, owner, targets, last verified, sha256 of every file) and fail if the committed file differs. | P1 | integration | M1 |
 | CAT-12 | *Superseded by CAT-21.* The catalog shall hold review-change, verify-change, security-review, simplify-change, cross-review, ears-notation and ecc-operator, each passing CAT-2 to CAT-9. | P1 | integration | M1 |
 | CAT-13 | The merged review-change, verify-change, security-review and simplify-change shall name project facts only by reference to the consumer's AGENTS.md (spec location, fast gate command), with no project paths. | P1 | manual | M1 |
 | CAT-14 | Each imported skill shall end with a `## Changelog` table whose first row names its source repo path and commit. | P2 | unit | M1 |
@@ -76,6 +76,7 @@ Test levels: `unit` (pure function), `integration` (real git, temp folders and f
 | CAT-23 | `catalog.json` shall list skills under `skills/` in `skills` and held skills other than `zz-canary` in a separate `held` array, each entry with its `consumers` value, and CAT-11's check shall cover both. | P1 | integration | M1 |
 | CAT-24 | *Superseded by CAT-25.* The scrub shall fail on a match for: provider key and token formats (GitHub, Anthropic, OpenAI, AWS, Slack, private key blocks), high-entropy strings over 32 characters outside fenced examples marked `example`, email addresses outside an allowlist (`noreply@github.com` style), RFC 1918 and link-local IP addresses, hostnames ending in `.local`, `.internal`, `.lan` or `.ts.net`, `/Users/<name>/` and `/home/<name>/` paths, and, in files under `skills/` and `.held/`, the names of Kenny's private repos. The private repo list shall be read from an untracked local file or a CI secret and never committed, and the `catalog-owner` value of a held skill shall be exempt. | P1 | unit | M1 |
 | CAT-25 | The scrub shall fail on a match for: provider key and token formats (GitHub, Anthropic, OpenAI, AWS, Slack, private key blocks), high-entropy strings over 32 characters outside fenced examples marked `example` and outside the generated lock file `server/uv.lock` (where only this check is skipped), email addresses outside an allowlist (`noreply@github.com` style), RFC 1918 and link-local IP addresses, hostnames ending in `.local`, `.internal`, `.lan` or `.ts.net`, `/Users/<name>/` and `/home/<name>/` paths, and, in files under `skills/` and `.held/`, the names of Kenny's private repos. The private repo list shall be read from an untracked local file or a CI secret and never committed, and the `catalog-owner` value of a held skill shall be exempt. | P1 | unit | M1 |
+| CAT-26 | If `skills/` or `.held/` (the canary and folders without a `SKILL.md` included) holds a symlink or special file at any depth, then CAT-11's check shall fail and name its path. A regular file named `.DS_Store` shall be left out of the manifest, and the server shall leave it out of the files it extracts and hashes. | P1 | integration | M1 |
 
 ## M2: freshness bot, static checks and upstream watch, with alerting
 
@@ -234,7 +235,7 @@ Test levels: `unit` (pure function), `integration` (real git, temp folders and f
 
 | Milestone | Depends on | Gate to start the next |
 | --- | --- | --- |
-| M1 | none | CAT-1 to CAT-7, CAT-9 to CAT-11, CAT-21 to CAT-23 and CAT-25 pass on main |
+| M1 | none | CAT-1 to CAT-7, CAT-9 to CAT-11, CAT-21 to CAT-23, CAT-25 and CAT-26 pass on main |
 | M2 | M1 | 7 consecutive nightly runs with the canary reporting exactly its three findings (FRS-18) |
 | M3 | M1 (M2 recommended) | SUB-16 passes on the canary consumer |
 | M4 | M1 | MCP-1, MCP-5 to MCP-7 pass on the pinned FastMCP pre-release (DESIGN 4.4) |

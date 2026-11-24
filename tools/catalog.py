@@ -51,7 +51,7 @@ IGNORED_FILES = ('.DS_Store',)
 
 
 def _refuse(path, mode):
-    """Raise ValueError for a symlink or special file (CAT-11).
+    """Raise ValueError for a symlink or special file (CAT-26).
 
     The server and tools/install-local refuse a whole tag that holds one, so
     the manifest check fails on it instead of skipping it.
@@ -129,7 +129,7 @@ def _has_skill_md(folder, label):
 
 
 def _check_tree(root, section):
-    """Refuse a symlink or special file anywhere under section (CAT-11, CAT-23).
+    """Refuse a symlink or special file anywhere under section (CAT-26).
 
     Walks every folder, including ones without a SKILL.md and the canary,
     because the server and tools/install-local refuse a tag for any of them.

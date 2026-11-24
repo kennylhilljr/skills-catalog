@@ -209,7 +209,7 @@ class TestCatalog(unittest.TestCase):
         self.assertIn(path, result.stderr)
 
     def test_symlinked_skill_folder_refused(self):
-        """CAT-11: a symlinked skill folder fails the manifest check, it is not skipped."""
+        """CAT-26: a symlinked skill folder fails the manifest check, it is not skipped."""
         _copy_repo(self.tmp)
         outside = os.path.join(self.tmp, 'outside')
         shutil.copytree(os.path.join(_repo_root, 'skills', 'new-mcp'), outside)
@@ -217,7 +217,7 @@ class TestCatalog(unittest.TestCase):
         self._assert_refused('skills/linked-skill')
 
     def test_symlinked_skill_md_refused(self):
-        """CAT-11: a symlinked SKILL.md fails the manifest check and is not read."""
+        """CAT-26: a symlinked SKILL.md fails the manifest check and is not read."""
         _copy_repo(self.tmp)
         outside = os.path.join(self.tmp, 'outside.md')
         shutil.copyfile(os.path.join(_repo_root, 'skills', 'new-mcp', 'SKILL.md'), outside)
@@ -226,7 +226,7 @@ class TestCatalog(unittest.TestCase):
         self._assert_refused('skills/linked-md/SKILL.md')
 
     def test_symlinked_file_in_skill_refused(self):
-        """CAT-11: a symlinked file inside a skill folder fails the manifest check."""
+        """CAT-26: a symlinked file inside a skill folder fails the manifest check."""
         _copy_repo(self.tmp)
         outside = os.path.join(self.tmp, 'outside.md')
         with open(outside, 'w', encoding='utf-8') as handle:
@@ -236,7 +236,7 @@ class TestCatalog(unittest.TestCase):
         self._assert_refused('skills/new-mcp/refs/link.md')
 
     def test_symlinked_folder_in_skill_refused(self):
-        """CAT-11: a symlinked folder inside a skill folder fails the manifest check."""
+        """CAT-26: a symlinked folder inside a skill folder fails the manifest check."""
         _copy_repo(self.tmp)
         outside_dir = os.path.join(self.tmp, 'outside-dir')
         os.makedirs(outside_dir)
@@ -244,39 +244,39 @@ class TestCatalog(unittest.TestCase):
         self._assert_refused('skills/new-mcp/linkdir')
 
     def test_symlink_in_held_refused(self):
-        """CAT-23: .held/ gets the same symlink check as skills/."""
+        """CAT-26: .held/ gets the same symlink check as skills/."""
         _copy_repo(self.tmp)
         self._symlink('SKILL.md', os.path.join(self.tmp, '.held', HELD[0], 'alias.md'))
         self._assert_refused('.held/%s/alias.md' % HELD[0])
 
     def test_symlink_in_folder_without_skill_md_refused(self):
-        """CAT-11: a folder under skills/ with no SKILL.md is still checked, as the server archives it."""
+        """CAT-26: a folder under skills/ with no SKILL.md is still checked, as the server archives it."""
         _copy_repo(self.tmp)
         os.makedirs(os.path.join(self.tmp, 'skills', 'junk'))
         self._symlink('../new-mcp/SKILL.md', os.path.join(self.tmp, 'skills', 'junk', 'link'))
         self._assert_refused('skills/junk/link')
 
     def test_symlink_in_canary_refused(self):
-        """CAT-23: the canary is left out of the manifest but gets the same symlink check."""
+        """CAT-26: the canary is left out of the manifest but gets the same symlink check."""
         _copy_repo(self.tmp)
         self._symlink('SKILL.md', os.path.join(self.tmp, '.held', 'zz-canary', 'alias.md'))
         self._assert_refused('.held/zz-canary/alias.md')
 
     def test_symlink_named_ds_store_refused(self):
-        """CAT-11: only a regular .DS_Store is ignored; a symlink with that name is refused."""
+        """CAT-26: only a regular .DS_Store is ignored; a symlink with that name is refused."""
         _copy_repo(self.tmp)
         self._symlink('SKILL.md', os.path.join(self.tmp, 'skills', 'new-mcp', '.DS_Store'))
         self._assert_refused('skills/new-mcp/.DS_Store')
 
     @unittest.skipUnless(hasattr(os, 'mkfifo'), 'mkfifo not supported')
     def test_special_file_refused(self):
-        """CAT-11: a special file (here a FIFO) in a skill folder fails the manifest check."""
+        """CAT-26: a special file (here a FIFO) in a skill folder fails the manifest check."""
         _copy_repo(self.tmp)
         os.mkfifo(os.path.join(self.tmp, 'skills', 'new-mcp', 'pipe'))
         self._assert_refused('skills/new-mcp/pipe')
 
     def test_regular_ds_store_ignored(self):
-        """CAT-11: a regular .DS_Store is left out of the manifest, as the server ignores it."""
+        """CAT-26: a regular .DS_Store is left out of the manifest, as the server ignores it."""
         _copy_repo(self.tmp)
         before = _catalog.render(self.tmp)
         for path in (os.path.join(self.tmp, 'skills', '.DS_Store'),

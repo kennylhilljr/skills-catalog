@@ -270,7 +270,7 @@ class OnlyDeliveredSkillsTests(_Temp):
             materialize(repo, exclude_file=self.exclude)
 
     def test_committed_ds_store_is_ignored(self):
-        """A regular .DS_Store is left out of the manifest by tools/catalog.py; the tag still serves."""
+        """CAT-26: a regular .DS_Store is left out of the manifest by tools/catalog.py; the tag still serves."""
         repo = make_catalog_repo(self.tmp, skills=SKILLS)
         write_files(repo, {'skills/alpha-skill/.DS_Store': b'\x00\x01',
                            'skills/alpha-skill/sub/.DS_Store': b'\x00\x02',
