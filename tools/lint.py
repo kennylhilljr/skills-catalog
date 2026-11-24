@@ -19,14 +19,16 @@ _META_LINE = re.compile(r'^  ' + _KEY + r': (.*)$')
 _INVISIBLE = re.compile(
     '[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff'
     '\U000e0000-\U000e007f]')
-# CAT-28: a privileged value is one plain or quoted YAML scalar on one line.
-# Plain: no leading indicator, no `: ` or ` #`, no trailing space. Quoted:
-# a whole double-quoted or single-quoted string.
+# CAT-28: a privileged value is one plain, double-quoted or single-quoted
+# scalar of printable ASCII on one line, with no escapes. Plain: starts with
+# a letter, digit, `_` or `(`, has no `: ` and no trailing space, and uses no
+# `#`, quote or flow indicator. Stricter than YAML on purpose: anything this
+# accepts reads the same in YAML and in this linter.
 _SIMPLE_SCALAR = re.compile(
-    r'^(?:[^\s\-?:,\[\]{}#&*!|>\'"%@`](?:[^:#]|:(?=\S)|(?<=\S)#)*(?<=\S)'
-    r'|"(?:[^"\\]|\\.)*"'
-    r"|'(?:[^']|'')*')$")
-_SCALAR_RULE = 'must be one plain or quoted scalar on a single line'
+    r'^(?:[A-Za-z0-9_(](?:[A-Za-z0-9_()*,./=@+ -]|:(?! ))*(?<! )'
+    r'|"[ !#-\[\]-~]*"'
+    r"|'(?:[ -&(-~]|'')*')$")
+_SCALAR_RULE = 'must be one plain or quoted scalar of printable ASCII on a single line'
 _MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
                  '.mdtxt', '.mdtext', '.mkdown', '.ronn', '.rmd', '.qmd')
 
@@ -552,7 +554,7 @@ if __name__ == '__main__':
     for key in sorted(results.keys()):
         findings = results[key]
         for finding in findings:
-            print(f'{key}: {finding}')
+            print(_visible(f'{key}: {finding}'))
             total_findings += 1
 
     print(f'lint: {len(results)} skills, {total_findings} findings')

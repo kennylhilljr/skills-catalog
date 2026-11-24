@@ -564,13 +564,14 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.temp_dir.cleanup()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.assertEqual(self._lint(self._skill(extra='shell: >-\n  echo\n\n  rm -rf x\n'), schema),
-                         ['CAT-28: key "shell" must be one plain or quoted scalar on a single line'])
+                         ['CAT-28: key "shell" must be one plain or quoted scalar of printable ASCII on a single line'])
 
     def test_tag_anchor_and_alias_values_are_refused(self):
-        msg = 'CAT-28: key "shell" must be one plain or quoted scalar on a single line'
+        msg = 'CAT-28: key "shell" must be one plain or quoted scalar of printable ASCII on a single line'
         for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n',
                      'shell: [*a]\n', 'shell: {x: bash}\n', 'shell: # c\n',
-                     'shell: - x\n', 'shell: "open\n', 'shell: a #c\n'):
+                     'shell: - x\n', 'shell: "open\n', 'shell: a #c\n',
+                     'shell: bash\u2028evil\n', 'shell: "bad\\q"\n'):
             with self.subTest(line=line):
                 self.temp_dir.cleanup()
                 self.temp_dir = tempfile.TemporaryDirectory()
@@ -588,16 +589,37 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.assertFalse(any('\u200b' in f for f in findings), findings)
         self.assertIn('CAT-27: references/a<U+200B>.md:1: invisible or bidi character U+200B', findings)
 
+    def test_cli_output_shows_code_point_for_folder_name(self):
+        import contextlib
+        import io
+        root = self.temp_dir.name
+        self._skill(name='bad\u200bname')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            results = _lint.lint_tree(root)
+            for key in sorted(results):
+                for finding in results[key]:
+                    print(_lint._visible(f'{key}: {finding}'))
+        self.assertTrue(out.getvalue())
+        self.assertNotIn('\u200b', out.getvalue())
+        self.assertIn('skills/bad<U+200B>name: ', out.getvalue())
+
     def test_reference_finding_shows_code_point(self):
         findings = self._lint(self._skill(body='See `references/a\u200bb.md`.\n'))
         self.assertFalse(any('\u200b' in f for f in findings), findings)
         self.assertIn('CAT-7: reference "references/a<U+200B>b.md" does not resolve to a file', findings)
 
+    def test_carriage_return_in_privileged_value_is_rejected(self):
+        schema = dict(self.schema)
+        schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': 'bash'}}
+        findings = self._lint(self._skill(extra='shell: bash\r  evil\n'), schema)
+        self.assertEqual(findings, ['CAT-4: Invalid frontmatter line:   evil'])
+
     def test_value_is_compared_as_written(self):
         schema = dict(self.schema)
         schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': 'bash'}}
         mismatch = 'CAT-28: key "shell" does not match its x-privileged-allowlist entry'
-        syntax = 'CAT-28: key "shell" must be one plain or quoted scalar on a single line'
+        syntax = 'CAT-28: key "shell" must be one plain or quoted scalar of printable ASCII on a single line'
         for line, want in (('shell: "bash"\n', mismatch), ('shell:  bash\n', syntax),
                            ('shell: bash \n', syntax)):
             with self.subTest(line=line):
