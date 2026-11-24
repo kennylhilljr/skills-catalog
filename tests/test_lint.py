@@ -576,6 +576,28 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.assertEqual(self._lint(self._skill(body=body)),
                          ['CAT-27: SKILL.md:14: HTML comment outside a code fence'])
 
+    def test_comment_in_indented_list_fence_fails_closed(self):
+        body = '- item\n\n  ```html\n  <!-- x -->\n  ```\n'
+        self.assertEqual(self._lint(self._skill(body=body)),
+                         ['CAT-27: SKILL.md:16: HTML comment outside a code fence'])
+
+    def test_parser_error_shows_code_point_not_invisible_character(self):
+        findings = self._lint(self._skill(extra='bad\u200bkey: x\n'))
+        self.assertFalse(any('\u200b' in f for f in findings), findings)
+        self.assertIn('CAT-4: Invalid frontmatter line: bad<U+200B>key: x', findings)
+        self.assertIn('CAT-27: SKILL.md:4: invisible or bidi character U+200B', findings)
+
+    def test_quoted_name_uses_parsed_name_for_allowlist(self):
+        schema = dict(self.schema)
+        schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': 'bash'}}
+        skill = self._skill(extra='shell: bash\n')
+        path = os.path.join(skill, 'SKILL.md')
+        with open(path, encoding='utf-8') as f:
+            text = f.read().replace('name: hidden-skill', 'name: "hidden-skill"', 1)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        self.assertEqual(self._lint(skill, schema), [])
+
     def test_allowlist_entry_does_not_cover_another_skill(self):
         schema = dict(self.schema)
         schema['x-privileged-allowlist'] = {'other-skill': {'shell': 'bash'}}

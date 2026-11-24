@@ -19,7 +19,7 @@ _META_LINE = re.compile(r'^  ' + _KEY + r': (.*)$')
 _INVISIBLE = re.compile(
     '[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff'
     '\U000e0000-\U000e007f]')
-_FENCE_OPEN = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
+_FENCE_OPEN = re.compile(r'^(`{3,}|~{3,})(.*)$')
 _MARKDOWN_EXT = ('.md', '.markdown')
 
 
@@ -204,8 +204,9 @@ def load_schema(schema_path=None):
 def _comment_lines(text):
     """Yield 1-based line numbers holding `<!--` outside a fenced code block.
 
-    Only top-level fences count: a fence inside a blockquote or list item is
-    not recognised, so a comment there is reported (fail closed). Fences
+    Only a fence that opens in column 0 counts: an indented fence, or one in
+    a blockquote or list item, is not recognised, so a comment there is
+    reported (fail closed). Fences
     follow CommonMark: a backtick fence's info string holds no
     backtick, and a closing fence uses the opening character at least as many
     times with nothing but spaces after it. An unclosed fence runs to the end.
@@ -263,7 +264,7 @@ def check_text_files(skill_dir):
     return findings
 
 
-def check_privileged_keys(text, schema):
+def check_privileged_keys(text, frontmatter, schema):
     """CAT-28: a privileged key needs an exact entry in main's allowlist.
 
     `allowed-tools` pre-approves tools and `hooks` and `shell` run commands,
@@ -282,9 +283,9 @@ def check_privileged_keys(text, schema):
         m = _TOP_LINE.match(line)
         if m and m.group(1) not in raw:
             raw[m.group(1)] = (m.group(2) or '').strip()
-    name = raw.get('name')
+    name = frontmatter.get('name')
     allow = schema.get('x-privileged-allowlist', {})
-    granted = allow.get(name, {}) if name else {}
+    granted = allow.get(name, {}) if isinstance(name, str) else {}
     for key in schema.get('x-privileged-keys', []):
         if key not in raw:
             continue
@@ -326,7 +327,10 @@ def lint_skill(skill_dir, schema=None):
     except UnicodeDecodeError:
         return text_findings or ['CAT-27: SKILL.md is not valid UTF-8']
     except ValueError as e:
-        return [f'CAT-4: {e}'] + text_findings
+        # The parser error quotes the line; show any invisible character in
+        # it as its code point (CAT-27).
+        message = _INVISIBLE.sub(lambda m: f'<U+{ord(m.group()):04X}>', str(e))
+        return [f'CAT-4: {message}'] + text_findings
 
     findings = []
 
@@ -372,7 +376,7 @@ def lint_skill(skill_dir, schema=None):
                 findings.append(f'CAT-4: key "{key}" requires catalog-targets to be "claude"')
 
     # CAT-28: allowed-tools, hooks and shell need an allowlist entry
-    findings.extend(check_privileged_keys(text, schema))
+    findings.extend(check_privileged_keys(text, frontmatter, schema))
 
     # CAT-5: metadata validation
     if isinstance(metadata, dict):
