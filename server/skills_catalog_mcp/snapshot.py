@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -29,6 +30,8 @@ DEFAULT_EXCLUDE_FILE = os.path.join('~', '.config', 'skills-catalog', 'exclude.t
 TAG_PATTERN = 'refs/tags/v*'
 _NAME = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 _MISMATCH = 'skills/ does not match catalog.json'
+# Regular files that tools/catalog.py leaves out of the manifest.
+IGNORED_FILES = ('.DS_Store',)
 
 
 class SnapshotError(Exception):
@@ -151,7 +154,11 @@ def _skill_of(member_name):
 
 
 def _hash_files(folder):
-    """Map each file under folder (relative, '/'-separated) to its sha256, like tools/catalog.py."""
+    """Map each file under folder (relative, '/'-separated) to its sha256, like tools/catalog.py.
+
+    A regular file named in IGNORED_FILES is left out, as tools/catalog.py
+    leaves it out of the manifest.
+    """
     found = {}
     for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
         for name in dirnames + filenames:
@@ -161,6 +168,8 @@ def _hash_files(folder):
             full = os.path.join(dirpath, name)
             if not stat.S_ISREG(os.lstat(full).st_mode):
                 raise SnapshotError('special file in skills/' + os.path.basename(folder))
+            if name in IGNORED_FILES:
+                continue
             rel = os.path.relpath(full, folder).replace(os.sep, '/')
             with open(full, 'rb') as handle:
                 found[rel] = hashlib.sha256(handle.read()).hexdigest()
@@ -205,6 +214,8 @@ def _extract(tag, commit, data, tmp, excluded):
                 raise SnapshotError('symlink in skills/' + skill if skill else 'symlink in archive')
             if not (member.isfile() or member.isdir()):
                 raise SnapshotError('special file in skills/' + (skill or ''))
+            if member.isfile() and skill is not None and posixpath.basename(member.name) in IGNORED_FILES:
+                continue  # not in the manifest, so never served
             members.append(member)
         try:
             # filter='data' exists from Python 3.11.4. Before that, the
