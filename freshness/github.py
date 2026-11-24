@@ -241,7 +241,8 @@ class GitHub:
                         continue
                 seen.add(number)
                 out.append({'number': number, 'fingerprint': fp, 'is_pr': 'pull_request' in item,
-                            'state': state, 'closed_at': closed_at, 'body': item.get('body') or ''})
+                            'state': state, 'closed_at': closed_at, 'created_at': item.get('created_at'),
+                            'body': item.get('body') or ''})
         return out
 
     def read_state(self):

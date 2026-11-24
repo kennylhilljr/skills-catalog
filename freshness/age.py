@@ -269,9 +269,8 @@ def rereview_since(state, open_issues, skills, now, excluded=()):
     issue is no longer open are dropped. Skills in `excluded` are skipped
     before they are hashed (DESIGN 5.1). `state` is changed in place.
 
-    `github.list_bot_items` does not return `created_at` yet; until the
-    runner (part 9) passes it, the clock starts at the first run that saw
-    the issue, at most one run late.
+    `github.list_bot_items` returns `created_at` from the GitHub issue, so the
+    clock survives a lost or reset state once the runner passes it.
     """
     now_iso = smod.iso(now)
     excluded = set(excluded or ())
