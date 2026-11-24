@@ -69,7 +69,7 @@ def parse_args(argv):
     )
     parser.add_argument('--repo', default=default_repo(),
                         help='catalog repository (default: the one holding this script)')
-    parser.add_argument('--ref', help='tag to install (default: the newest v* tag)')
+    parser.add_argument('--ref', help='tag to install (default: the highest v* tag)')
     parser.add_argument('--claude-dir', default='~/.claude/skills')
     parser.add_argument('--agents-dir', default='~/.agents/skills')
     parser.add_argument('--state', default='~/.config/skills-catalog/installed.json')
@@ -85,9 +85,9 @@ def full_path(path):
 
 # ---------------------------------------------------------------- git source
 
-def git(repo, *args):
+def git(repo, *args, env=None):
     try:
-        run = subprocess.run(['git', '-C', repo] + list(args),
+        run = subprocess.run(['git', '-C', repo] + list(args), env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         raise Failure('git is not installed')
@@ -97,7 +97,13 @@ def git(repo, *args):
 def resolve_tag(repo, ref):
     """(tag, commit) for ref, which must name a tag."""
     if ref is None:
-        run = git(repo, 'tag', '--list', 'v*', '--sort=-v:refname')
+        # Highest version wins, never the newest date, and a pre-release
+        # (`v1.0-rc1`) ranks below its release. Global and system git config
+        # are ignored here, as the MCP server ignores them, so a personal
+        # `versionsort.suffix` cannot make the two pick different tags.
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        run = git(repo, '-c', 'versionsort.suffix=-', 'for-each-ref', '--sort=-v:refname',
+                  '--format=%(refname:strip=2)', 'refs/tags/v*', env=env)
         if run.returncode != 0:
             raise Failure('not a git repository: ' + repo)
         tags = os.fsdecode(run.stdout).split()

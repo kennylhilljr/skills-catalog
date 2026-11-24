@@ -99,7 +99,7 @@ class ResourceTests(_Temp):
             text = await self.read_text(client, 'skill://beta-skill/scripts/run.py')
         self.assertEqual(text, 'print("beta")\n')
 
-    async def test_ref_none_picks_the_newest_v_tag(self):
+    async def test_ref_none_picks_the_highest_v_tag(self):
         repo = make_catalog_repo(self.tmp, skills=['alpha-skill'])
         write_files(repo, {'skills/alpha-skill/extra.md': 'second\n'})
         write_files(repo, {'catalog.json': catalog_json({'alpha-skill': {'extra.md': 'second\n'}})})
@@ -124,6 +124,15 @@ class ResourceTests(_Temp):
         snap = self.snap(repo)
         self.assertEqual(snap.tag, 'v2099.1.1.10')
         self.assertEqual(snap.commit, git(repo, 'rev-parse', 'v2099.1.1.10^{commit}').strip())
+
+    def test_ref_none_ranks_a_pre_release_below_its_release(self):
+        # The release is tagged first, its pre-releases later.
+        repo = make_catalog_repo(self.tmp, skills=['alpha-skill'], tag='v2099.1.1.1')
+        commit_all(repo, 'rc', tag='v2099.1.1.1-rc2', stamp=next_stamp(1))
+        commit_all(repo, 'older rc', tag='v2099.1.1.1-rc1', stamp=next_stamp(2))
+        self.assertEqual(self.snap(repo).tag, 'v2099.1.1.1')
+        commit_all(repo, 'next line beta', tag='v2099.1.1.2-beta', stamp=next_stamp(3))
+        self.assertEqual(self.snap(repo).tag, 'v2099.1.1.2-beta')
 
     def test_snapshot_is_private_and_cleaned_up(self):
         repo = make_catalog_repo(self.tmp)

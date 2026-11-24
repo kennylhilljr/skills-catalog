@@ -106,10 +106,11 @@ def _resolve_tag(repo, ref):
     """Return (tag, commit) for ref, which must name a tag."""
     if ref is None:
         # Highest version wins, never the newest date: a hotfix tag made
-        # later on an older line must not become the default. This is the
-        # same order as `tools/install-local` (`git tag --sort=-v:refname`).
+        # later on an older line must not become the default. A pre-release
+        # (`v1.0-rc1`) ranks below its release (`v1.0`). `tools/install-local`
+        # uses the same git call, with the same config, so both pick one tag.
         code, out = _git(
-            repo, 'for-each-ref', '--sort=-v:refname',
+            repo, '-c', 'versionsort.suffix=-', 'for-each-ref', '--sort=-v:refname',
             '--format=%(refname:strip=2)', TAG_PATTERN,
         )
         if code != 0:
@@ -206,8 +207,8 @@ def _hash_files(folder):
 
 
 def materialize(repo, ref=None, exclude_file=DEFAULT_EXCLUDE_FILE, require_reviewed=False,
-                main_ref=DEFAULT_MAIN_REF):
-    """Extract the delivered skills of tag `ref` (default: newest `v*` tag) of `repo`.
+               main_ref=DEFAULT_MAIN_REF):
+    """Extract the delivered skills of tag `ref` (default: highest `v*` tag) of `repo`.
 
     `exclude_file` is the local exclusion list, by default
     `~/.config/skills-catalog/exclude.txt`; a missing file is an empty list.

@@ -471,6 +471,22 @@ class InstallLocalCase(unittest.TestCase):
             state = json.load(handle)
         self.assertEqual(state['destinations'][self.claude]['alpha']['tag'], 'v10')
 
+    def test_default_ref_ignores_personal_version_sort_config(self):
+        # A pre-release ranks below its release, as in the MCP server, even
+        # when the user's global git config sets its own version suffixes.
+        gitconfig = os.path.join(self.tmp, 'gitconfig')
+        with open(gitconfig, 'w') as handle:
+            handle.write('[versionsort]\n\tsuffix = .1\n\tsuffix = -rc2\n')
+        self.env['GIT_CONFIG_GLOBAL'] = gitconfig
+        self.commit_tag('v1.0')
+        self.commit_tag('v1.0-rc1')
+        self.commit_tag('v1.0-rc2')
+        run = self.run_tool(ref=None)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        with open(self.state) as handle:
+            state = json.load(handle)
+        self.assertEqual(state['destinations'][self.claude]['alpha']['tag'], 'v1.0')
+
 
 if __name__ == '__main__':
     unittest.main()
