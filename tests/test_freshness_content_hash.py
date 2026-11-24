@@ -60,6 +60,18 @@ class TestContentHash(unittest.TestCase):
         self.assertNotEqual(age.content_hash(folders[0]), age.content_hash(folders[1]))
         self.assertIsNone(age.content_hash(os.path.join(first.name, 'missing')))
 
+    def test_ds_store_does_not_change_hash(self):
+        """FRS-9, CAT-26: a regular .DS_Store anywhere in the folder does not change content_hash."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder = os.path.join(tmp.name, 'skill')
+        _write(os.path.join(folder, 'SKILL.md'), b'---\nname: skill\n---\n')
+        _write(os.path.join(folder, 'scripts', 'run.sh'), b'echo hi\n')
+        before = age.content_hash(folder)
+        _write(os.path.join(folder, '.DS_Store'), b'\x00\x01')
+        _write(os.path.join(folder, 'scripts', '.DS_Store'), b'\x00\x02')
+        self.assertEqual(age.content_hash(folder), before)
+
 
 if __name__ == '__main__':
     unittest.main()

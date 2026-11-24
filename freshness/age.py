@@ -206,17 +206,20 @@ def content_hash(folder):
     Only regular files are hashed (symlinks and special files are skipped),
     in sorted order, each as its `/`-separated relative path, a NUL, its byte
     length, a NUL and its bytes. A file that cannot be read contributes its
-    path and the marker `unreadable`. The hash depends on content only, not
-    on where the folder lives (FRS-9).
+    path and the marker `unreadable`. A regular file named in
+    `tools/catalog.py`'s `IGNORED_FILES` (`.DS_Store`) is left out, as the
+    manifest, the server and tools/install-local ignore it (CAT-26). The hash
+    depends on content only, not on where the folder lives (FRS-9).
     """
     if not _is_real_dir(folder):
         return None
+    ignored = set(_catalog_module().IGNORED_FILES)
     hasher = hashlib.sha256()
     for dirpath, dirnames, filenames in os.walk(folder):
         dirnames.sort()
         for filename in sorted(filenames):
             path = os.path.join(dirpath, filename)
-            if not _is_regular(path):
+            if not _is_regular(path) or filename in ignored:
                 continue
             rel = os.path.relpath(path, folder).replace(os.sep, '/').encode('utf-8')
             try:
