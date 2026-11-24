@@ -18,8 +18,14 @@ uv run --directory server --frozen python -m skills_catalog_mcp --repo ..
 | `--ref TAG` | the newest `v*` tag | the tag to serve; a branch or a commit sha is refused |
 | `--exclude-file PATH` | `~/.config/skills-catalog/exclude.txt` | the local exclusion list (DESIGN 5.1) |
 | `--transport stdio` | `stdio` | the transport |
+| `--tag-trust reviewed\|any` | `reviewed` for HTTP, `any` for stdio | `reviewed` serves only an annotated tag whose commit is an ancestor of `--main-ref` |
+| `--main-ref REF` | `origin/main` | the branch a reviewed tag must be on |
 
 The server exits with status 2 and `error: no catalog tag` when the repository has no `v*` tag, and `error: ref is not a tag` when `--ref` names anything but a tag.
+
+### Reviewed tags
+
+The manifest check proves a tag is consistent with its own `catalog.json`, not that anyone reviewed it: a local tag on an unmerged commit passes it. Every commit on `main` passed the `gate` check, so with `--tag-trust reviewed` the server serves a tag only when it is an annotated tag (not a lightweight one) and its commit is an ancestor of `--main-ref` (`git merge-base --is-ancestor`). Otherwise it exits with status 2 and the fixed message `error: tag is not reviewed: it must be an annotated tag on the main branch`, or `error: main ref not found` when the ref does not exist. The check is on by default for `--transport http`, since that serves agents other than the local user; for stdio pass `--tag-trust reviewed` to turn it on. Run `git fetch origin` first so `origin/main` is current. Release tags are cut on `main` with `git tag -a`.
 
 ## Client config (stdio)
 

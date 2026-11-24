@@ -28,6 +28,10 @@ log = logging.getLogger('skills_catalog_mcp')
 
 DEFAULT_EXCLUDE_FILE = os.path.join('~', '.config', 'skills-catalog', 'exclude.txt')
 TAG_PATTERN = 'refs/tags/v*'
+DEFAULT_MAIN_REF = 'origin/main'
+# Fixed messages for the reviewed-tag check: they never echo the tag or ref.
+NOT_REVIEWED = 'tag is not reviewed: it must be an annotated tag on the main branch'
+NO_MAIN_REF = 'main ref not found'
 _NAME = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$')
 _MISMATCH = 'skills/ does not match catalog.json'
 # Regular files that tools/catalog.py leaves out of the manifest.
@@ -128,6 +132,28 @@ def _resolve_tag(repo, ref):
     return ref, out.decode('ascii').strip()
 
 
+def _check_reviewed(repo, tag, commit, main_ref):
+    """Refuse a tag that is not annotated or whose commit is not on main_ref.
+
+    Every catalog commit on main passed the `gate` check before it merged, so
+    a tag on an ancestor of main_ref serves reviewed text. The manifest check
+    alone only proves the tag is self-consistent. A lightweight tag, or a tag
+    on a local or unmerged commit, is refused with a fixed message.
+    """
+    code, out = _git(repo, 'cat-file', '-t', 'refs/tags/' + tag)
+    if code != 0 or out.strip() != b'tag':
+        raise SnapshotError(NOT_REVIEWED)
+    if not isinstance(main_ref, str) or not main_ref or main_ref.startswith('-'):
+        raise SnapshotError(NO_MAIN_REF)
+    code, out = _git(repo, 'rev-parse', '--verify', '--quiet', '--end-of-options', main_ref + '^{commit}')
+    if code != 0:
+        raise SnapshotError(NO_MAIN_REF)
+    main = out.decode('ascii').strip()
+    code, _out = _git(repo, 'merge-base', '--is-ancestor', commit, main)
+    if code != 0:
+        raise SnapshotError(NOT_REVIEWED)
+
+
 def _inside(tmp, name):
     """True if archive member `name` is a plain relative path that stays inside tmp.
 
@@ -176,16 +202,21 @@ def _hash_files(folder):
     return found
 
 
-def materialize(repo, ref=None, exclude_file=DEFAULT_EXCLUDE_FILE):
+def materialize(repo, ref=None, exclude_file=DEFAULT_EXCLUDE_FILE, require_reviewed=False,
+                main_ref=DEFAULT_MAIN_REF):
     """Extract the delivered skills of tag `ref` (default: newest `v*` tag) of `repo`.
 
     `exclude_file` is the local exclusion list, by default
     `~/.config/skills-catalog/exclude.txt`; a missing file is an empty list.
-    Tests pass their own file. Raises SnapshotError when the ref is not a tag
-    or the tree does not match the tag's catalog.json.
+    Tests pass their own file. With `require_reviewed`, the tag must be an
+    annotated tag whose commit is an ancestor of `main_ref` (default
+    `origin/main`). Raises SnapshotError when the ref is not a tag, the tag
+    is not reviewed, or the tree does not match the tag's catalog.json.
     """
     excluded = load_exclusions(exclude_file)
     tag, commit = _resolve_tag(repo, ref)
+    if require_reviewed:
+        _check_reviewed(repo, tag, commit, main_ref)
     code, data = _git(repo, 'archive', '--format=tar', commit, '--', 'skills', 'catalog.json')
     if code != 0:
         raise SnapshotError('tag has no skills/ or catalog.json')

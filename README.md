@@ -4,7 +4,7 @@
 
 Every agent skill Kenny writes lives here, once. Each one is a `SKILL.md` folder that Claude Code and Codex both read. Bots pull the catalog at a pinned commit, and a freshness bot checks that each skill still works as the tools around it change.
 
-Status: milestone M1, the catalog and its validation CI, is done. Every pull request must pass the `gate` check: lint, scrub, the catalog manifest check and `skills-ref`, all run with main's tools and posted by a dedicated GitHub App. M2 (the freshness bot), M3 (the canary consumer) and M4 (the MCP server) are next.
+Status: M1 (the catalog and its validation CI) and M4 (the MCP server) are done. M2 (the freshness bot) is built and waits on owner setup and its nightly gate. M3 (the canary consumer) is in progress: the canary has the submodule, and its smoke check and canary run remain. Every pull request must pass the `gate` check: lint, scrub, the catalog manifest check and `skills-ref`, all run with main's tools and posted by a dedicated GitHub App.
 
 ## What is in the catalog
 
@@ -53,9 +53,9 @@ Two more sit outside that line. `sdd-triage` classifies support work by severity
 | Milestone | Scope | State |
 | --- | --- | --- |
 | M1 | The catalog and its validation CI | Done |
-| M2 | Freshness bot, static checks, upstream watch and alerting | Planned |
-| M3 | Submodule rollout to one canary consumer | Planned |
-| M4 | The MCP server | Planned |
+| M2 | Freshness bot, static checks, upstream watch and alerting | Built; owner setup and the nightly gate pending |
+| M3 | Submodule rollout to one canary consumer | In progress |
+| M4 | The MCP server | Done |
 | M5 | Bump-PR automation, and joining the iwb pipeline | Planned |
 | M6 | Behavioral evals for Claude and Codex | Planned |
 | M7 | Third-party search index | Optional |
@@ -88,9 +88,17 @@ Top-level fields are limited to the six that the Agent Skills spec defines: `nam
 Check the catalog before committing:
 
 ```sh
-python3 tools/lint.py                   # lint: 23 skills, 0 findings
-python3 -m unittest discover -s tests   # Ran 44 tests ... OK
+python3 tools/lint.py                   # lint the skills
+python3 -m unittest discover -s tests   # the catalog and tool tests
 ```
+
+Changes under `server/` also need the server tests, which use [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv run --directory server --frozen python -B -W error::DeprecationWarning -m unittest discover -s tests -t .
+```
+
+The required `gate` check covers the `catalog` workflow (the tests above), lint, the manifest check, `skills-ref` and the scrub. The `server` workflow runs `server-tests` on every pull request, but `gate` does not wait for it and it is not a required check, so confirm it passed before merging a change to `server/`.
 
 The inventory of skills on the owner's machine is generated, so regenerate it rather than editing it:
 
@@ -101,6 +109,16 @@ python3 tools/inventory.py --help
 The script needs Python 3.9+ and `gh` for repository visibility. Skills named in the owner's untracked local exclusion list, `~/.config/skills-catalog/exclude.txt`, are skipped entirely (DESIGN 5.1). `--offline --visibility file.json` skips `gh`. Judgment calls go in `inventory/decisions.json` and `inventory/provenance-overrides.json`, not in the generated files.
 
 This repository is public, so everything committed here is published. Read [AGENTS.md](AGENTS.md) before contributing. It covers what must never be committed, how held skills move, and the scrub check to run first.
+
+## MCP server (M4)
+
+`server/` is a FastMCP server that serves the delivered skills of one tagged release as `skill://` resources, over stdio or loopback-only HTTP. From the repository root:
+
+```sh
+uv run --directory server --frozen python -m skills_catalog_mcp --repo ..
+```
+
+Over HTTP it serves only an annotated tag whose commit is on `origin/main`, so the text it hands to agents passed the gate. Options, client config and what is never served are in [server/README.md](server/README.md).
 
 ## Freshness bot (M2)
 
@@ -132,4 +150,4 @@ Setup (owner steps, see the M2 tracker):
 
 ## License
 
-MIT for the catalog's own content, once a `LICENSE` is added in M1. Promoted third-party skills keep their own license beside them.
+MIT for the catalog's own content, see [LICENSE](LICENSE). Promoted third-party skills keep their own license beside them.
