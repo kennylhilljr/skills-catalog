@@ -416,8 +416,13 @@ class RouteTest(RootMixin, unittest.TestCase):
             with open(os.path.join(tmp, 'skills/demo/SKILL.md'), 'w', encoding='utf-8') as handle:
                 handle.write(item['files']['skills/demo/SKILL.md'])
             self.assertEqual(item['files']['catalog.json'], rmod._catalog_module().render(tmp))
-            # The changed skill still passes lint (CAT-14 changelog row, schema).
-            self.assertEqual(rmod._catalog_module()._lint.lint_skill(os.path.join(tmp, 'skills', 'demo')), [])
+            # The changed skill still passes lint (CAT-14 changelog row, schema),
+            # with the fixture's allowed-tools granted as main's allowlist
+            # would have to (CAT-28).
+            lint = rmod._catalog_module()._lint
+            schema = lint.load_schema()
+            schema['x-privileged-allowlist'] = {'demo': {'allowed-tools': 'Bash Read'}}
+            self.assertEqual(lint.lint_skill(os.path.join(tmp, 'skills', 'demo'), schema), [])
         # plan_findings turns it into an open_pr on the finding's branch.
         actions = alerts.plan_findings([item], [], {})
         self.assertEqual(actions[0]['op'], 'open_pr')
