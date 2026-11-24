@@ -239,6 +239,7 @@ A project that needs a project-specific variant (for example the research-mcp se
 - With `experimental_skills=True`, clients that speak the [Skills extension (SEP-2640)](https://modelcontextprotocol.io/seps/2640-skills-extension) can call `skills/list` and get each skill's description and a hashed file manifest. Few hosts speak it yet, and FastMCP marks it experimental.
 - Tools: `search_skills(query)` (name and description match, catalog only) and `skill_status(name)` (version, last verified, open freshness findings), so an agent can see that a skill is stale before using it.
 - Transport: stdio for local clients, and streamable HTTP on loopback for OpenClaw. No remote exposure.
+- Tag trust: the manifest check proves a tag matches its own `catalog.json`, not that it was reviewed. Over HTTP the server by default serves only an annotated tag whose commit is an ancestor of `origin/main`, every commit of which passed `gate`, and refuses any other tag with a fixed message (`--tag-trust`, `server/README.md`). Release tags are therefore cut with `git tag -a`.
 - `sync_skills()` from a FastMCP client can install the served skills into `~/.claude/skills` or `~/.agents/skills` on a machine. That is the path `tools/install-local` wraps (decided: yes).
 
 The server does not serve `.held/`.

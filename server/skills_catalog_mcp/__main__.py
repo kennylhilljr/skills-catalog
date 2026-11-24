@@ -1,4 +1,5 @@
-"""python -m skills_catalog_mcp --repo PATH [--ref TAG] [--exclude-file PATH] [--transport stdio|http] [--host H] [--port N]"""
+"""python -m skills_catalog_mcp --repo PATH [--ref TAG] [--exclude-file PATH] [--transport stdio|http] [--host H] [--port N]
+    [--tag-trust reviewed|any] [--main-ref REF]"""
 
 from __future__ import annotations
 
@@ -9,7 +10,9 @@ import sys
 
 from skills_catalog_mcp import transport
 from skills_catalog_mcp.app import build_server
-from skills_catalog_mcp.snapshot import DEFAULT_EXCLUDE_FILE, SnapshotError, materialize
+from skills_catalog_mcp.snapshot import DEFAULT_EXCLUDE_FILE, DEFAULT_MAIN_REF, SnapshotError, materialize
+
+TAG_TRUST = ('reviewed', 'any')
 
 DEFAULT_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -27,7 +30,18 @@ def parse_args(argv=None):
     parser.add_argument('--host', default=transport.DEFAULT_HOST,
                         help='HTTP bind address: 127.0.0.0/8, ::1 or localhost only (default: %(default)s)')
     parser.add_argument('--port', type=int, default=transport.DEFAULT_PORT, help='HTTP port (default: %(default)s)')
+    parser.add_argument('--tag-trust', default=None, choices=TAG_TRUST,
+                        help='reviewed: the tag must be annotated and on --main-ref; any: any v* tag '
+                             '(default: reviewed for http, any for stdio)')
+    parser.add_argument('--main-ref', default=DEFAULT_MAIN_REF,
+                        help='the branch a reviewed tag must be on (default: %(default)s)')
     return parser.parse_args(argv)
+
+
+def require_reviewed(args):
+    """True when the tag must be reviewed: --tag-trust, else on for HTTP only."""
+    trust = args.tag_trust or ('reviewed' if args.transport == 'http' else 'any')
+    return trust == 'reviewed'
 
 
 def quiet_fastmcp_debug():
@@ -58,7 +72,8 @@ def main(argv=None):
             print('error: %s' % exc, file=sys.stderr)
             return 2
     try:
-        snapshot = materialize(args.repo, args.ref, exclude_file=args.exclude_file)
+        snapshot = materialize(args.repo, args.ref, exclude_file=args.exclude_file,
+                               require_reviewed=require_reviewed(args), main_ref=args.main_ref)
     except SnapshotError as exc:
         print('error: %s' % exc, file=sys.stderr)
         return 2

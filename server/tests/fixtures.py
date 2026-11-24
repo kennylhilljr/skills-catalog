@@ -120,13 +120,14 @@ def commit_all(repo, message, tag=None, stamp=_BASE_TIME):
 
 
 def make_catalog_repo(tmp, skills=('alpha-skill', 'beta-skill'), held=None, extra_files=None,
-                      tag='v2099.1.1.1', manifest=None):
+                      tag='v2099.1.1.1', manifest=None, origin_main=True):
     """Build a git repo under tmp with skills/, .held/, catalog.json and a tag; return its path.
 
     skills and held are lists of names or dicts name -> {relpath: content}.
     extra_files maps repo-relative paths to content and is written after the
     manifest, so it can add files the manifest does not list. manifest
     replaces the generated catalog.json text. tag=None leaves the repo untagged.
+    origin_main points refs/remotes/origin/main at the commit, as in a clone.
     """
     repo = os.path.join(os.fspath(tmp), 'catalog')
     os.makedirs(repo)
@@ -141,7 +142,9 @@ def make_catalog_repo(tmp, skills=('alpha-skill', 'beta-skill'), held=None, extr
     files['catalog.json'] = manifest if manifest is not None else catalog_json(skills, held)
     files.update(extra_files or {})
     write_files(repo, files)
-    commit_all(repo, 'catalog', tag=tag)
+    commit = commit_all(repo, 'catalog', tag=tag)
+    if origin_main:
+        git(repo, 'update-ref', 'refs/remotes/origin/main', commit)
     return repo
 
 
