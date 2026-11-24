@@ -19,8 +19,8 @@ _META_LINE = re.compile(r'^  ' + _KEY + r': (.*)$')
 _INVISIBLE = re.compile(
     '[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff'
     '\U000e0000-\U000e007f]')
-_FENCE_OPEN = re.compile(r'^(`{3,}|~{3,})(.*)$')
-_MARKDOWN_EXT = ('.md', '.markdown')
+_MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
+                 '.mdtxt', '.mdtext', '.mkdown', '.ronn')
 
 
 def parse_frontmatter(text):
@@ -201,39 +201,14 @@ def load_schema(schema_path=None):
         return json.load(f)
 
 
-def _comment_lines(text):
-    """Yield 1-based line numbers holding `<!--` outside a fenced code block.
-
-    Only a fence that opens in column 0 counts: an indented fence, or one in
-    a blockquote or list item, is not recognised, so a comment there is
-    reported (fail closed). Fences
-    follow CommonMark: a backtick fence's info string holds no
-    backtick, and a closing fence uses the opening character at least as many
-    times with nothing but spaces after it. An unclosed fence runs to the end.
-    """
-    fence = None
-    for number, line in enumerate(text.split('\n'), 1):
-        if fence is None:
-            m = _FENCE_OPEN.match(line)
-            if m and not (m.group(1)[0] == '`' and '`' in m.group(2)):
-                fence = m.group(1)
-                continue
-            if '<!--' in line:
-                yield number
-        else:
-            stripped = line.strip()
-            indent = len(line) - len(line.lstrip(' '))
-            if (indent < 4 and stripped and set(stripped) == {fence[0]}
-                    and len(stripped) >= len(fence)):
-                fence = None
-
-
 def check_text_files(skill_dir):
     """CAT-27: scan every regular file in a skill folder.
 
     Rejects invisible and bidi characters in any text file, a file that is
     neither binary (holds a NUL byte) nor valid UTF-8, and an HTML comment
-    outside a code fence in a Markdown file. Findings name the file, line and
+    anywhere in a Markdown file. Code fences are not exempt: telling a fence
+    from text the way every renderer does is error-prone, so the check fails
+    closed. Findings name the file, line and
     code point, never the surrounding text. Symlinks are not followed (CAT-26
     rejects them).
     """
@@ -259,8 +234,9 @@ def check_text_files(skill_dir):
                     findings.append(
                         f'CAT-27: {rel}:{number}: invisible or bidi character U+{ord(ch):04X}')
             if fname.lower().endswith(_MARKDOWN_EXT):
-                for number in _comment_lines(text):
-                    findings.append(f'CAT-27: {rel}:{number}: HTML comment outside a code fence')
+                for number, line in enumerate(text.split('\n'), 1):
+                    if '<!--' in line:
+                        findings.append(f'CAT-27: {rel}:{number}: HTML comment')
     return findings
 
 
@@ -270,7 +246,7 @@ def check_privileged_keys(text, frontmatter, schema):
     `allowed-tools` pre-approves tools and `hooks` and `shell` run commands,
     so each is accepted only when `x-privileged-allowlist` in the schema maps
     the skill's name to that key with the same value, compared as written on
-    its single frontmatter line (quotes included). A block scalar is refused,
+    its single frontmatter line (quotes and spaces included). A block scalar is refused,
     because YAML and this linter's parser read its line breaks differently.
     The gate runs main's linter and schema, so a PR cannot grant itself an
     entry.
@@ -282,7 +258,7 @@ def check_privileged_keys(text, frontmatter, schema):
     for line in lines[1:end]:
         m = _TOP_LINE.match(line)
         if m and m.group(1) not in raw:
-            raw[m.group(1)] = (m.group(2) or '').strip()
+            raw[m.group(1)] = m.group(2) or ''
     name = frontmatter.get('name')
     allow = schema.get('x-privileged-allowlist', {})
     granted = allow.get(name, {}) if isinstance(name, str) else {}
@@ -290,7 +266,7 @@ def check_privileged_keys(text, frontmatter, schema):
         if key not in raw:
             continue
         value = raw[key]
-        if not value or value[0] in '>|':
+        if not value.strip() or value.strip()[0] in '>|':
             findings.append(f'CAT-28: key "{key}" must have a single-line value')
         elif key not in granted:
             findings.append(f'CAT-28: key "{key}" needs an entry in x-privileged-allowlist')

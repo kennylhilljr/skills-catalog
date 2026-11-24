@@ -81,7 +81,7 @@ metadata:
 ---
 ```
 
-Top-level fields are limited to the six that the Agent Skills spec defines: `name`, `description`, `license`, `compatibility`, `metadata` and `allowed-tools`. Catalog fields sit under `metadata` as strings. `allowed-tools`, `hooks` and `shell` need an entry in the schema's `x-privileged-allowlist`, and no file may hold invisible or bidi characters or, in Markdown, an HTML comment outside a code fence (DESIGN 4.1). Every description opens with the main use case and includes a "Use when" sentence. The freshness bot advances `catalog-last-verified`, so nobody edits it by hand.
+Top-level fields are limited to the six that the Agent Skills spec defines: `name`, `description`, `license`, `compatibility`, `metadata` and `allowed-tools`. Catalog fields sit under `metadata` as strings. `allowed-tools`, `hooks` and `shell` need an entry in the schema's `x-privileged-allowlist`, and no file may hold invisible or bidi characters or, in Markdown, an HTML comment (DESIGN 4.1). Every description opens with the main use case and includes a "Use when" sentence. The freshness bot advances `catalog-last-verified`, so nobody edits it by hand.
 
 ## Working in this repository
 
