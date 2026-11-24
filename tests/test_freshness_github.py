@@ -7,6 +7,7 @@ network: GitHub is a fake transport that records every request.
 import datetime
 import difflib
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -366,6 +367,20 @@ class Inv5Test(unittest.TestCase):
         gh.bot_login = None
         with self.assertRaises(ValueError):
             gh.list_bot_items(now=NOW)
+
+    def test_list_bot_items_returns_created_at(self):
+        """FRS-8: list_bot_items returns each issue's created_at (None when GitHub omits it)."""
+        gh, fake = make_github()
+        bot = {'login': 'freshness[bot]', 'type': 'Bot'}
+        fake.issues[7] = {'number': 7, 'state': 'open', 'body': fmod.marker(FP), 'closed_at': None,
+                          'created_at': '2026-10-29T00:00:00Z', 'user': bot}
+        fake.issues[8] = {'number': 8, 'state': 'open', 'body': fmod.marker(fmod.fingerprint('canary', 'z')),
+                          'closed_at': None, 'user': bot}
+        items = gh.list_bot_items(now=NOW)
+        by_number = {i['number']: i for i in items}
+        self.assertEqual(by_number[7]['created_at'], '2026-10-29T00:00:00Z')
+        self.assertIsNone(by_number[8]['created_at'])
+        self.assertIn("'created_at'", inspect.getsource(gmod.GitHub.list_bot_items))
 
     def test_open_pr_closes_unlabeled_pr_for_retry(self):
         gh, fake = make_github()
