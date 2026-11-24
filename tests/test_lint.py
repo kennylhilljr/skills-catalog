@@ -554,6 +554,28 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.assertEqual(self._lint(self._skill(extra='allowed-tools: Read Grep Bash\n'), schema),
                          ['CAT-28: key "allowed-tools" does not match its x-privileged-allowlist entry'])
 
+    def test_block_scalar_privileged_value_is_refused(self):
+        # A folded scalar with a blank line parses here as "echo rm -rf x" but
+        # YAML reads it as two lines, so it must not match a plain entry.
+        schema = dict(self.schema)
+        schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': 'echo rm -rf x'}}
+        self.assertEqual(self._lint(self._skill(extra='shell: echo rm -rf x\n'), schema), [])
+        self.temp_dir.cleanup()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.assertEqual(self._lint(self._skill(extra='shell: >-\n  echo\n\n  rm -rf x\n'), schema),
+                         ['CAT-28: key "shell" must have a single-line value'])
+
+    def test_value_is_compared_as_written(self):
+        schema = dict(self.schema)
+        schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': 'bash'}}
+        self.assertEqual(self._lint(self._skill(extra='shell: "bash"\n'), schema),
+                         ['CAT-28: key "shell" does not match its x-privileged-allowlist entry'])
+
+    def test_comment_in_blockquoted_fence_fails_closed(self):
+        body = '> ```html\n> <!-- x -->\n> ```\n'
+        self.assertEqual(self._lint(self._skill(body=body)),
+                         ['CAT-27: SKILL.md:14: HTML comment outside a code fence'])
+
     def test_allowlist_entry_does_not_cover_another_skill(self):
         schema = dict(self.schema)
         schema['x-privileged-allowlist'] = {'other-skill': {'shell': 'bash'}}

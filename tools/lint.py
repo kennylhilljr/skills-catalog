@@ -204,7 +204,9 @@ def load_schema(schema_path=None):
 def _comment_lines(text):
     """Yield 1-based line numbers holding `<!--` outside a fenced code block.
 
-    Fences follow CommonMark: a backtick fence's info string holds no
+    Only top-level fences count: a fence inside a blockquote or list item is
+    not recognised, so a comment there is reported (fail closed). Fences
+    follow CommonMark: a backtick fence's info string holds no
     backtick, and a closing fence uses the opening character at least as many
     times with nothing but spaces after it. An unclosed fence runs to the end.
     """
@@ -261,24 +263,37 @@ def check_text_files(skill_dir):
     return findings
 
 
-def check_privileged_keys(frontmatter, schema):
+def check_privileged_keys(text, schema):
     """CAT-28: a privileged key needs an exact entry in main's allowlist.
 
     `allowed-tools` pre-approves tools and `hooks` and `shell` run commands,
     so each is accepted only when `x-privileged-allowlist` in the schema maps
-    the skill's name to that key with the same value. The gate runs main's
-    linter and schema, so a PR cannot grant itself an entry.
+    the skill's name to that key with the same value, compared as written on
+    its single frontmatter line (quotes included). A block scalar is refused,
+    because YAML and this linter's parser read its line breaks differently.
+    The gate runs main's linter and schema, so a PR cannot grant itself an
+    entry.
     """
     findings = []
-    name = frontmatter.get('name')
+    lines = text.split('\n')
+    end = lines.index('---', 1) if '---' in lines[1:] else len(lines)
+    raw = {}
+    for line in lines[1:end]:
+        m = _TOP_LINE.match(line)
+        if m and m.group(1) not in raw:
+            raw[m.group(1)] = (m.group(2) or '').strip()
+    name = raw.get('name')
     allow = schema.get('x-privileged-allowlist', {})
-    granted = allow.get(name, {}) if isinstance(name, str) else {}
+    granted = allow.get(name, {}) if name else {}
     for key in schema.get('x-privileged-keys', []):
-        if key not in frontmatter:
+        if key not in raw:
             continue
-        if key not in granted:
+        value = raw[key]
+        if not value or value[0] in '>|':
+            findings.append(f'CAT-28: key "{key}" must have a single-line value')
+        elif key not in granted:
             findings.append(f'CAT-28: key "{key}" needs an entry in x-privileged-allowlist')
-        elif granted[key] != frontmatter[key]:
+        elif granted[key] != value:
             findings.append(f'CAT-28: key "{key}" does not match its x-privileged-allowlist entry')
     return findings
 
@@ -357,7 +372,7 @@ def lint_skill(skill_dir, schema=None):
                 findings.append(f'CAT-4: key "{key}" requires catalog-targets to be "claude"')
 
     # CAT-28: allowed-tools, hooks and shell need an allowlist entry
-    findings.extend(check_privileged_keys(frontmatter, schema))
+    findings.extend(check_privileged_keys(text, schema))
 
     # CAT-5: metadata validation
     if isinstance(metadata, dict):
