@@ -11,6 +11,28 @@ _KEY = r'([A-Za-z0-9][A-Za-z0-9_-]*)'
 _TOP_LINE = re.compile(r'^' + _KEY + r':(?: (.*))?$')
 _META_LINE = re.compile(r'^  ' + _KEY + r': (.*)$')
 
+# CAT-27: characters a reviewer cannot see in a diff or rendered Markdown, but
+# an agent reading the served text does: zero-width and bidi controls, word
+# joiners and invisible operators, the byte order mark, the soft hyphen, the
+# Mongolian vowel separator and the Unicode tag block (which can spell out
+# ASCII text invisibly).
+_INVISIBLE = re.compile(
+    '[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff'
+    '\U000e0000-\U000e007f]')
+# CAT-28: a privileged value is one plain, double-quoted or single-quoted
+# scalar of printable ASCII on one line, with no escapes. Plain: starts with
+# a letter, digit, `_` or `(`, has no `: `, no trailing space or colon, no
+# `#`, quote or flow indicator. Stricter than YAML on purpose: anything this
+# accepts reads the same in YAML and in this linter.
+_SIMPLE_SCALAR = re.compile(
+    r'^(?:[A-Za-z0-9_(](?:[A-Za-z0-9_()*,./=@+ -]|:(?=[^ ]))*(?<![ :])'
+    r'|"[ !#-\[\]-~]*"'
+    r"|'[ -&(-~]*')$")
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
+_SCALAR_RULE = 'must be one plain or quoted scalar of printable ASCII on a single line'
+_MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
+                 '.mdtxt', '.mdtext', '.mkdown', '.ronn', '.rmd', '.qmd')
+
 
 def parse_frontmatter(text):
     """Parse SKILL.md frontmatter and body.
@@ -186,8 +208,90 @@ def load_schema(schema_path=None):
             'frontmatter.schema.json'
         )
 
-    with open(schema_path) as f:
+    with open(schema_path, encoding='utf-8') as f:
         return json.load(f)
+
+
+def _visible(message):
+    """Show each invisible character in a finding as its code point (CAT-27)."""
+    return _INVISIBLE.sub(lambda m: f'<U+{ord(m.group()):04X}>', message)
+
+
+def check_text_files(skill_dir):
+    """CAT-27: scan every regular file in a skill folder.
+
+    Rejects invisible and bidi characters in any text file, a file that is
+    neither binary (holds a NUL byte) nor valid UTF-8, and an HTML comment
+    anywhere in a Markdown file. Code fences are not exempt: telling a fence
+    from text the way every renderer does is error-prone, so the check fails
+    closed. Findings name the file, line and
+    code point, never the surrounding text. Symlinks are not followed (CAT-26
+    rejects them).
+    """
+    findings = []
+    for root, dirs, files in os.walk(skill_dir):
+        dirs.sort()
+        for fname in sorted(files):
+            path = os.path.join(root, fname)
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+            rel = os.path.relpath(path, skill_dir).replace(os.sep, '/')
+            with open(path, 'rb') as f:
+                data = f.read()
+            if b'\0' in data:
+                continue
+            try:
+                text = data.decode('utf-8')
+            except UnicodeDecodeError:
+                findings.append(f'CAT-27: {rel} is not valid UTF-8')
+                continue
+            lines = _LINE_BREAK.split(text)
+            for number, line in enumerate(lines, 1):
+                for ch in sorted(set(_INVISIBLE.findall(line))):
+                    findings.append(
+                        f'CAT-27: {rel}:{number}: invisible or bidi character U+{ord(ch):04X}')
+            if fname.lower().endswith(_MARKDOWN_EXT):
+                for number, line in enumerate(lines, 1):
+                    if '<!--' in line:
+                        findings.append(f'CAT-27: {rel}:{number}: HTML comment')
+    return findings
+
+
+def check_privileged_keys(text, frontmatter, schema):
+    """CAT-28: a privileged key needs an exact entry in main's allowlist.
+
+    `allowed-tools` pre-approves tools and `hooks` and `shell` run commands,
+    so each is accepted only when `x-privileged-allowlist` in the schema maps
+    the skill's name to that key with the same value, compared as written on
+    its single frontmatter line (quotes and spaces included). The value must
+    be a plain or quoted scalar: a block scalar spans lines this comparison
+    does not see, and a flow collection, tag, anchor or alias can make YAML
+    read the same text differently (an alias pulls in another key's value).
+    The gate runs main's linter and schema, so a PR cannot grant itself an
+    entry.
+    """
+    findings = []
+    lines = text.split('\n')
+    end = lines.index('---', 1) if '---' in lines[1:] else len(lines)
+    raw = {}
+    for line in lines[1:end]:
+        m = _TOP_LINE.match(line)
+        if m and m.group(1) not in raw:
+            raw[m.group(1)] = m.group(2) or ''
+    name = frontmatter.get('name')
+    allow = schema.get('x-privileged-allowlist', {})
+    granted = allow.get(name, {}) if isinstance(name, str) else {}
+    for key in schema.get('x-privileged-keys', []):
+        if key not in raw:
+            continue
+        value = raw[key]
+        if not _SIMPLE_SCALAR.match(value):
+            findings.append(f'CAT-28: key "{key}" {_SCALAR_RULE}')
+        elif key not in granted:
+            findings.append(f'CAT-28: key "{key}" needs an entry in x-privileged-allowlist')
+        elif granted[key] != value:
+            findings.append(f'CAT-28: key "{key}" does not match its x-privileged-allowlist entry')
+    return findings
 
 
 def lint_skill(skill_dir, schema=None):
@@ -208,13 +312,18 @@ def lint_skill(skill_dir, schema=None):
     if not os.path.isfile(skill_file):
         return ['CAT-4: SKILL.md is missing']
 
+    text_findings = check_text_files(skill_dir)
+
     # Parse frontmatter
     try:
-        with open(skill_file) as f:
+        with open(skill_file, encoding='utf-8') as f:
             text = f.read()
         frontmatter, body = parse_frontmatter(text)
+    except UnicodeDecodeError:
+        return [_visible(f) for f in text_findings] or ['CAT-27: SKILL.md is not valid UTF-8']
     except ValueError as e:
-        return [f'CAT-4: {e}']
+        # The parser error quotes the line (CAT-27: no raw invisible text).
+        return [_visible(f) for f in [f'CAT-4: {e}'] + text_findings]
 
     findings = []
 
@@ -258,6 +367,9 @@ def lint_skill(skill_dir, schema=None):
                 findings.append(f'CAT-4: unknown key "{key}"')
             elif catalog_targets != 'claude':
                 findings.append(f'CAT-4: key "{key}" requires catalog-targets to be "claude"')
+
+    # CAT-28: allowed-tools, hooks and shell need an allowlist entry
+    findings.extend(check_privileged_keys(text, frontmatter, schema))
 
     # CAT-5: metadata validation
     if isinstance(metadata, dict):
@@ -403,7 +515,9 @@ def lint_skill(skill_dir, schema=None):
         if not held and consumers == 'none':
             findings.append('CAT-22: non-held skills cannot have catalog-consumers "none"')
 
-    return findings
+    # CAT-27: invisible characters and hidden comments in any file. Findings
+    # that quote skill text show invisible characters as code points.
+    return [_visible(f) for f in findings + text_findings]
 
 
 def lint_tree(root='.'):
@@ -442,7 +556,7 @@ if __name__ == '__main__':
     for key in sorted(results.keys()):
         findings = results[key]
         for finding in findings:
-            print(f'{key}: {finding}')
+            print(_visible(f'{key}: {finding}'))
             total_findings += 1
 
     print(f'lint: {len(results)} skills, {total_findings} findings')

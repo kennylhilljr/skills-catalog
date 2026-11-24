@@ -73,6 +73,12 @@
     "shell",
     "disallowed-tools"
   ],
+  "x-privileged-keys": [
+    "allowed-tools",
+    "hooks",
+    "shell"
+  ],
+  "x-privileged-allowlist": {},
   "x-license-allowlist": [
     "MIT",
     "Apache-2.0",
