@@ -1007,8 +1007,11 @@ class Run:
     def announce(self):
         if self.dry_run:
             return
-        open_alerts = [{'number': i['number'], 'fingerprint': i['fingerprint']}
-                       for i in self._open(prs=False) if i['fingerprint'] in self.state.get('alerts', {})]
+        # FRS-23: an alert issue whose state write failed on the Actions side is still announced.
+        open_alerts = [{'number': i['number'], 'fingerprint': i['fingerprint'], 'title': i.get('title')}
+                       for i in self._open(prs=False)
+                       if i['fingerprint'] in self.state.get('alerts', {})
+                       or amod.ALERT_LABEL in (i.get('labels') or ())]
         for result in self.results:
             if result.get('op') in ('open_issue', 'reopen') and result.get('ok') \
                     and result.get('fingerprint') in self.state.get('alerts', {}):

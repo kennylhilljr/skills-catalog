@@ -219,7 +219,10 @@ class GitHub:
         return (item.get('user') or {}).get('login') == self.bot_login
 
     def list_bot_items(self, now=None):
-        """Open, and closed in the last 14 days, issues and PRs carrying a fingerprint marker."""
+        """Open, and closed in the last 14 days, issues and PRs carrying a fingerprint marker.
+
+        Each item also carries 'title' and 'labels' (label names).
+        """
         if not self.bot_login:
             raise ValueError('list_bot_items needs bot_login, the freshness App login')
         now = _utc(now)
@@ -240,9 +243,16 @@ class GitHub:
                     if when is None or when < since:
                         continue
                 seen.add(number)
+                labels = []
+                for entry in item.get('labels') or []:
+                    if isinstance(entry, dict) and isinstance(entry.get('name'), str):
+                        labels.append(entry['name'])
+                    elif isinstance(entry, str):
+                        labels.append(entry)
                 out.append({'number': number, 'fingerprint': fp, 'is_pr': 'pull_request' in item,
                             'state': state, 'closed_at': closed_at, 'created_at': item.get('created_at'),
-                            'body': item.get('body') or ''})
+                            'body': item.get('body') or '',
+                            'title': item.get('title') or '', 'labels': labels})
         return out
 
     def read_state(self):

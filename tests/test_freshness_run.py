@@ -870,6 +870,29 @@ class MacHalfTests(unittest.TestCase):
         self.assertTrue(ok, job.errors)
         self.assertFalse([t for t in _opened_titles(fake) if 'heartbeat' in t])
 
+    def test_announces_open_alert_issue_missing_from_state(self):
+        """FRS-23: an open alert issue absent from state.alerts is still announced and recorded."""
+        sends = []
+        state = smod.empty_state()
+        state['heartbeats'] = {'actions': _beat(smod.iso(NOW - datetime.timedelta(hours=2)))}
+        alert = _item(41, 'dead-link', 'zz-demo')
+        alert['title'] = 'freshness-alert: dead-link: zz-demo'
+        alert['labels'] = [{'name': 'freshness-alert'}, {'name': 'dead-link'}]
+        other = _item(42, 'stale', 'zz-other')
+        other['labels'] = [{'name': 'freshness'}]
+        fake = FakeGitHub(state, items=[alert, other])
+        ok, job, _ = _execute('mac', fake, cli_run=FakeCli(),
+                              notify_run=lambda argv, **k: sends.append(argv) or types.SimpleNamespace(returncode=0))
+        self.assertTrue(ok, job.errors)
+        self.assertTrue(any('/issues/41' in argv[-1] for argv in sends))
+        self.assertFalse(any('/issues/42' in argv[-1] for argv in sends))
+        written = fake.written_state()['alerts']
+        entry = written[fmod.fingerprint('dead-link', 'zz-demo')]
+        self.assertTrue(entry['announced'] is True)
+        self.assertEqual(entry['kind'], 'dead-link')
+        self.assertEqual(entry['issue'], 41)
+        self.assertNotIn(fmod.fingerprint('stale', 'zz-other'), written)
+
     def test_mac_results_feed_the_advance_rule(self):
         fake = FakeGitHub()
         _execute('mac', fake, cli_run=FakeCli())
