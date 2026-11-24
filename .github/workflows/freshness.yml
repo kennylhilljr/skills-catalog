@@ -13,13 +13,18 @@
 #   the nightly job is skipped instead of failing, and no run creates the
 #   environment without its branch policy.
 # - nightly: runs in the `freshness` environment, which only main may deploy
-#   to. It holds the variable FRESHNESS_APP_CLIENT_ID and the secret
-#   FRESHNESS_APP_PRIVATE_KEY. The App token is minted for this repository
-#   only, with contents, issues and pull requests write.
+#   to. It holds the variable FRESHNESS_APP_CLIENT_ID and the secrets
+#   FRESHNESS_APP_PRIVATE_KEY and FRESHNESS_PRIVATE_REPOS. The App token is
+#   minted for this repository only, with contents, issues and pull requests
+#   write. FRESHNESS_PRIVATE_REPOS (private repo names, one per line) reaches
+#   only the runner step, as an env var; without it the run plans every bot
+#   PR as an issue (DESIGN 7.6).
 #
 # Rules for editing this file (DESIGN 4.1):
 # - No pull_request trigger: PR code never runs with the App key.
-# - FRESHNESS_APP_PRIVATE_KEY appears only in the token step.
+# - FRESHNESS_APP_PRIVATE_KEY appears only in the token step, and
+#   FRESHNESS_PRIVATE_REPOS only in the runner step's env. Never echo either
+#   or interpolate them into a `run:` script.
 # - The checkout keeps no credentials, and no step pushes; every change goes
 #   through freshness/github.py, which refuses writes to main (INV-5).
 # - Never put github.event values into a `run:` script; pass them through
@@ -101,4 +106,5 @@ jobs:
         env:
           FRESHNESS_TOKEN: ${{ steps.app.outputs.token }}
           FRESHNESS_BOT_LOGIN: ${{ steps.app.outputs.app-slug }}[bot]
+          FRESHNESS_PRIVATE_REPOS: ${{ secrets.FRESHNESS_PRIVATE_REPOS }}
         run: python3 -B -m freshness.run --half actions
