@@ -513,8 +513,9 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         ])
 
     def test_html_comment_in_other_markdown_extension_is_rejected(self):
-        self.assertEqual(self._lint(self._skill(files={'references/a.MKDN': '<!-- x -->\n'})),
-                         ['CAT-27: references/a.MKDN:1: HTML comment'])
+        skill = self._skill(files={'references/a.MKDN': '<!-- x -->\n', 'examples/b.qmd': '<!--\n'})
+        self.assertEqual(self._lint(skill), ['CAT-27: examples/b.qmd:1: HTML comment',
+                                             'CAT-27: references/a.MKDN:1: HTML comment'])
 
     def test_html_comment_in_non_markdown_file_is_allowed(self):
         self.assertEqual(self._lint(self._skill(files={'examples/page.html': '<!-- x -->\n'})), [])
@@ -563,7 +564,17 @@ class TestHiddenTextAndPrivilegedKeys(unittest.TestCase):
         self.temp_dir.cleanup()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.assertEqual(self._lint(self._skill(extra='shell: >-\n  echo\n\n  rm -rf x\n'), schema),
-                         ['CAT-28: key "shell" must have a single-line value'])
+                         ['CAT-28: key "shell" must be a single-line value without a YAML tag, anchor or alias'])
+
+    def test_tag_anchor_and_alias_values_are_refused(self):
+        msg = 'CAT-28: key "shell" must be a single-line value without a YAML tag, anchor or alias'
+        for line in ('shell: !!str |\n', 'shell: &a bash\n', 'shell: *a\n'):
+            with self.subTest(line=line):
+                self.temp_dir.cleanup()
+                self.temp_dir = tempfile.TemporaryDirectory()
+                schema = dict(self.schema)
+                schema['x-privileged-allowlist'] = {'hidden-skill': {'shell': line[len('shell: '):-1]}}
+                self.assertEqual(self._lint(self._skill(extra=line), schema), [msg])
 
     def test_value_is_compared_as_written(self):
         schema = dict(self.schema)

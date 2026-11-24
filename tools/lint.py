@@ -20,7 +20,7 @@ _INVISIBLE = re.compile(
     '[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff'
     '\U000e0000-\U000e007f]')
 _MARKDOWN_EXT = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mdwn',
-                 '.mdtxt', '.mdtext', '.mkdown', '.ronn')
+                 '.mdtxt', '.mdtext', '.mkdown', '.ronn', '.rmd', '.qmd')
 
 
 def parse_frontmatter(text):
@@ -246,8 +246,9 @@ def check_privileged_keys(text, frontmatter, schema):
     `allowed-tools` pre-approves tools and `hooks` and `shell` run commands,
     so each is accepted only when `x-privileged-allowlist` in the schema maps
     the skill's name to that key with the same value, compared as written on
-    its single frontmatter line (quotes and spaces included). A block scalar is refused,
-    because YAML and this linter's parser read its line breaks differently.
+    its single frontmatter line (quotes and spaces included). A block scalar,
+    tag, anchor or alias is refused, because YAML and this linter's parser
+    read those differently.
     The gate runs main's linter and schema, so a PR cannot grant itself an
     entry.
     """
@@ -266,8 +267,9 @@ def check_privileged_keys(text, frontmatter, schema):
         if key not in raw:
             continue
         value = raw[key]
-        if not value.strip() or value.strip()[0] in '>|':
-            findings.append(f'CAT-28: key "{key}" must have a single-line value')
+        if not value.strip() or value.strip()[0] in '>|!&*':
+            findings.append(f'CAT-28: key "{key}" must be a single-line value '
+                            'without a YAML tag, anchor or alias')
         elif key not in granted:
             findings.append(f'CAT-28: key "{key}" needs an entry in x-privileged-allowlist')
         elif granted[key] != value:
