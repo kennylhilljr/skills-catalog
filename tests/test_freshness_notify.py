@@ -1,6 +1,7 @@
 """Tests for freshness/notify.py, the Mac ops notifier.
 
-Requirement: FRS-23, with the caps and retries of FRS-25 (docs/SPEC.md).
+Requirement: FRS-23, with the caps and retries of FRS-25 and the one message
+per dwell state of FRS-17 (docs/SPEC.md).
 No test runs `openclaw` or touches the network: `run` is a fake, and prbot
 is a fake module written to a temp folder.
 """
@@ -428,6 +429,63 @@ class AnnounceTest(unittest.TestCase):
             with self.assertRaises(N.ConfigError) as caught:
                 N.load_config(path)
             self.assertNotIn(CHANNEL, str(caught.exception))
+
+
+class DwellGroupTest(unittest.TestCase):
+    """FRS-17 through the Mac notifier."""
+
+    def _planned(self, state, subjects, open_issues):
+        actions, state = A.plan_alerts([alert(x) for x in subjects], open_issues, [], state, 'run-m', NOW)
+        results = [{'op': 'send_ops', 'fingerprint': a['fingerprint'], 'ok': True, 'text': a['text']}
+                   for a in actions if a['op'] == 'send_ops']
+        return state, results
+
+    def test_members_are_not_announced_one_by_one(self):
+        subjects = ['re-review:a', 're-review:b', 're-review:c']
+        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(subjects)]
+        state, results = self._planned(actions_half([alert(x) for x in subjects], [], S.empty_state()),
+                                       subjects, open_issues)
+        self.assertEqual(len(results), 1)
+        run = FakeRun()
+        new = mac(open_issues, state, run, ops_results=results)
+        self.assertEqual(len(run.calls), 1)
+        self.assertIn('(and 2 more re-review items stuck)', run.texts()[0])
+        self.assertEqual(new['ops']['sent'], 1)
+        self.assertIn('re-review', new['ops']['dwell_groups'])
+
+    def test_failed_direct_send_frees_the_state_for_the_next_run(self):
+        subjects = ['re-review:a', 're-review:b']
+        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(subjects)]
+        state, results = self._planned(actions_half([alert(x) for x in subjects], [], S.empty_state()),
+                                       subjects, open_issues)
+        new = mac(open_issues, state, FakeRun(fail={1}), ops_results=results)
+        self.assertEqual(new['ops']['dwell_groups'], {})
+        self.assertEqual(new['ops']['failed'], [])
+        fps = [F.fingerprint('dwell', x) for x in subjects]
+        self.assertFalse(any(new['alerts'][fp]['announced'] for fp in fps))
+        _, again = self._planned(new, subjects, open_issues)
+        self.assertEqual(len(again), 1)
+
+    def test_failed_digest_with_a_group_frees_every_member(self):
+        subjects = ['re-review:a', 're-review:b']
+        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(subjects)]
+        state = actions_half([alert(x) for x in subjects], [], S.empty_state())
+        state = S.roll_day(state, NOW)
+        state['ops']['sent'] = A.OPS_PER_DAY
+        state, results = self._planned(state, subjects, open_issues)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]['text'].startswith(A.DIGEST_PREFIX))
+        run, att = FakeRun(), FakeAttention()
+        ok = mac(open_issues, state, run, att, ops_results=results)
+        self.assertEqual(len(run.calls), 1)
+        self.assertIn('(and 1 more re-review item stuck)', run.texts()[0])
+        self.assertEqual(len(att.calls), 1)
+        self.assertIn('re-review', ok['ops']['dwell_groups'])
+        failed = mac(open_issues, state, FakeRun(fail={1}), ops_results=results)
+        self.assertEqual(failed['ops']['dwell_groups'], {})
+        self.assertEqual(failed['ops']['failed'], [])
+        fps = [F.fingerprint('dwell', x) for x in subjects]
+        self.assertFalse(any(failed['alerts'][fp]['announced'] for fp in fps))
 
 
 class ConfigTest(unittest.TestCase):

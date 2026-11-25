@@ -1,6 +1,6 @@
 """Alert rendering and the alert and finding planner of the freshness bot.
 
-Requirements: FRS-13, FRS-22, FRS-24, FRS-25, FRS-27 (docs/SPEC.md).
+Requirements: FRS-13, FRS-17, FRS-22, FRS-24, FRS-25, FRS-27 (docs/SPEC.md).
 Contract: docs/DESIGN.md 7.5 and 7.8.
 
 This module is pure logic. It decides what to do and returns Actions
@@ -18,6 +18,7 @@ import copy
 import datetime
 import importlib.util
 import os
+import re
 
 from . import finding as fmod
 from . import state as smod
@@ -379,16 +380,105 @@ def plan_alerts(alerts, open_issues, closed_issues, state, run_id, now, scope=No
     return _scrub_actions(actions), new
 
 
+def dwell_state_of(subject):
+    """The freshness/dwell.STATES name a `<state>:<item>` subject starts with, or None."""
+    from . import dwell  # dwell imports this module
+    for name in dwell.STATES:
+        if isinstance(subject, str) and subject.startswith(name + ':'):
+            return name
+    return None
+
+
+_GROUP_NOTE = re.compile(r' \(and \d+ more [a-z0-9-]+ items? stuck\)$')
+
+
+def _group_note(more, name):
+    return ' (and %d more %s item%s stuck)' % (more, name, '' if more == 1 else 's')
+
+
+def strip_group_note(head):
+    """An ops message head without the dwell group count `_plan_ops` adds."""
+    return _GROUP_NOTE.sub('', head)
+
+
+def release_dwell_group(state, fingerprint):
+    """Free the dwell state slot whose message was `fingerprint`'s; True if one was held.
+
+    Every member of the group is due again, so the next run sends one
+    message for the state's alerts that are still open (FRS-17, FRS-25).
+    """
+    groups = (state.get('ops') or {}).get('dwell_groups') or {}
+    table = state.get('alerts') or {}
+    released = False
+    for name in [n for n, g in groups.items() if fingerprint is not None and g.get('fp') == fingerprint]:
+        for member, how in (groups.pop(name).get('members') or {}).items():
+            entry = table.get(member)
+            if entry is None:
+                continue
+            if how == 'announce':
+                entry['announced'] = False
+            entry['last_reminder_at'] = None
+        released = True
+    return released
+
+
+def _group_dwell(ops, candidates):
+    """One candidate per dwell state per UTC day (FRS-17).
+
+    Announcements and reminders of alerts whose subject starts with a dwell
+    state share one message per state: the one with the lowest fingerprint,
+    saying how many more items of the state are stuck. Once a state's
+    message is queued, its other alerts that day are marked sent without a
+    message. A failed send frees the slot again (`release_dwell_group`).
+    """
+    groups = ops.setdefault('dwell_groups', {})
+    out, by_state = [], {}
+    for cand in candidates:
+        fp, text, on_queued, how, subject = cand
+        name = dwell_state_of(subject) if how else None
+        if name is None:
+            out.append(cand[:3])
+            continue
+        if name not in by_state:
+            by_state[name] = []
+            out.append(name)
+        if all(m[0] != fp for m in by_state[name]):
+            by_state[name].append(cand)
+    result = []
+    for item in out:
+        if not isinstance(item, str):
+            result.append(item)
+            continue
+        name, members = item, by_state[item]
+        if name in groups:  # today's message for this state is already queued
+            for fp, _, on_queued, how, _ in members:
+                on_queued()
+                groups[name].setdefault('members', {})[fp] = how
+            continue
+        members.sort(key=lambda m: m[0])
+        rep_fp, rep_text = members[0][0], members[0][1]
+        if len(members) > 1:
+            head, sep, tail = rep_text.rpartition(': ')
+            rep_text = head + _group_note(len(members) - 1, name) + sep + tail
+
+        def queued(name=name, members=members, rep_fp=rep_fp):
+            for _, _, on_queued, _, _ in members:
+                on_queued()
+            groups[name] = {'fp': rep_fp, 'members': {m[0]: m[3] for m in members}}
+        result.append((rep_fp, rep_text, queued))
+    return result
+
+
 def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
-    """Ops messages under the daily cap, with one digest (FRS-23, FRS-24, FRS-25)."""
+    """Ops messages under the daily cap, with one digest (FRS-17, FRS-23, FRS-24, FRS-25)."""
     ops = new['ops']
-    candidates = []  # (fingerprint, text, on_queued)
+    candidates = []  # (fingerprint, text, on_queued, 'announce' | 'reminder' | None, subject)
 
     for text in list(ops.get('failed') or []):
         def retried(text=text):
             if text in ops['failed']:
                 ops['failed'].remove(text)
-        candidates.append((fmod.fingerprint('ops-retry', text), text, retried))
+        candidates.append((fmod.fingerprint('ops-retry', text), text, retried, None, None))
 
     for fp in sorted(table):
         entry = table[fp]
@@ -401,15 +491,16 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
         def announced(entry=entry):
             entry['announced'] = True
             entry['last_reminder_at'] = now_iso
-        candidates.append((fp, _ops_text(prefix, entry), announced))
+        candidates.append((fp, _ops_text(prefix, entry), announced, 'announce', entry.get('subject')))
 
     for fp in reminders:
         entry = table[fp]
 
         def reminded(entry=entry):
             entry['last_reminder_at'] = now_iso
-        candidates.append((fp, _ops_text(_REMINDER_PREFIX, entry), reminded))
+        candidates.append((fp, _ops_text(_REMINDER_PREFIX, entry), reminded, 'reminder', entry.get('subject')))
 
+    candidates = _group_dwell(ops, candidates)
     actions = []
     for fp, text, on_queued in candidates:
         if ops['sent'] < OPS_PER_DAY:
@@ -503,10 +594,10 @@ def _reset_alert_message(state, text, fingerprint=None):
     two subjects can scrub to the same text; at worst one is sent twice.
     """
     table = state.get('alerts') or {}
-    head = text.rsplit(': ', 1)[0]
-    entries = [table[fingerprint]] if fingerprint in table else list(table.values())
+    head = strip_group_note(text.rsplit(': ', 1)[0])
+    entries = [(fingerprint, table[fingerprint])] if fingerprint in table else list(table.items())
     matched = False
-    for entry in entries:
+    for fp, entry in entries:
         if head == _ops_head(_REMINDER_PREFIX, entry):
             entry['last_reminder_at'] = None
             matched = True
@@ -514,6 +605,9 @@ def _reset_alert_message(state, text, fingerprint=None):
             entry['announced'] = False
             entry['last_reminder_at'] = None
             matched = True
+        else:
+            continue
+        release_dwell_group(state, fp)  # the state's other alerts are due again too
     return matched
 
 

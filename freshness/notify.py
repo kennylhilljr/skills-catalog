@@ -204,7 +204,7 @@ def _fit_digest(items):
     return included, []
 
 
-def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()):
+def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=(), state=None):
     """Tie the planner's digest lines to alert fingerprints.
 
     The planner folds announcements in fingerprint order, and two subjects
@@ -218,14 +218,15 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
     used, items = set(direct), []
     for line in pending:
         head, _, tail = line.rpartition(': ')
+        bare = amod.strip_group_note(head)  # a dwell state's one message (FRS-17)
         kinds = {}
         for fp in sorted(table):
             if fp in used:
                 continue
             entry = table[fp]
-            if any(head == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
+            if any(bare == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
                 kinds[fp] = 'announce'
-            elif head == amod._ops_head(amod._REMINDER_PREFIX, entry):
+            elif bare == amod._ops_head(amod._REMINDER_PREFIX, entry):
                 kinds[fp] = 'reminder'
         if not kinds:
             items.append({'line': line, 'fp': None, 'type': 'other', 'args': None})
@@ -245,7 +246,7 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
         link = tail if tail.startswith('http') else link_of(fp)
         item = {'line': head + ': ' + (link or ''), 'fp': fp, 'type': kinds[fp], 'args': None}
         if link is None or fp in failed_fps:
-            _due_again(None, item, table)
+            _due_again(state, item, table)
             continue
         if item['type'] == 'announce':
             item['args'] = (entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
@@ -258,6 +259,8 @@ def _due_again(state, item, table=None):
     """Make a digest item that was not delivered due on the next run (FRS-25)."""
     table = table if table is not None else state.get('alerts') or {}
     entry = table.get(item['fp']) if item['fp'] else None
+    if state is not None and item['fp']:
+        amod.release_dwell_group(state, item['fp'])  # the state's other alerts too (FRS-17)
     if item['type'] == 'announce' and entry is not None:
         entry['announced'] = False
         entry['last_reminder_at'] = None
@@ -375,7 +378,7 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     if digest_open:
         direct = set(r.get('fingerprint') for r in planned
                      if not (r.get('text') or '').startswith(amod.DIGEST_PREFIX))
-        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps, direct)
+        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps, direct, new)
     for fp, text, args in mine:
         text = amod.scrub_text(text)
         if ops['sent'] < amod.OPS_PER_DAY:

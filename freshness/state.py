@@ -14,7 +14,11 @@ Keys owned here::
                   "last_reminder_at": iso | None, "announced": bool,
                   "clean_runs": [run_id], "closed_at": iso | None}
     ops = {"day": "YYYY-MM-DD", "sent": int, "digest_sent": bool,
-           "pending": [text], "failed": [text]}
+           "pending": [text], "failed": [text],
+           "dwell_groups": {state: {"fp": fp, "members": {fp: "announce" | "reminder"}}}}
+
+`ops.dwell_groups` holds the dwell states (freshness/dwell.STATES) whose one
+ops message of the day is queued (FRS-17); it resets with the day.
     issues = {"day": "YYYY-MM-DD", "opened": int, "storm_issue": int | None}
     findings[fp] = {"evidence_sha": str}
 
@@ -29,7 +33,7 @@ UTC = datetime.timezone.utc
 
 
 def _empty_ops():
-    return {'day': '', 'sent': 0, 'digest_sent': False, 'pending': [], 'failed': []}
+    return {'day': '', 'sent': 0, 'digest_sent': False, 'pending': [], 'failed': [], 'dwell_groups': {}}
 
 
 def _empty_issues():
