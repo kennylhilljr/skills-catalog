@@ -408,6 +408,12 @@ def strip_group_note(head):
     return _GROUP_NOTE.sub('', head)
 
 
+def head_matches(head, entry, prefixes):
+    """True when message head `head` is entry's head for one of `prefixes`, with or without a group count."""
+    heads = {head, strip_group_note(head)}
+    return any(_ops_head(p, entry) in heads for p in prefixes)
+
+
 def release_dwell_group(state, fingerprint):
     """Free the dwell state slot whose message was `fingerprint`'s; True if one was held.
 
@@ -437,6 +443,8 @@ def _group_dwell(ops, candidates):
     saying how many more items of the state are stuck. Once a state's
     message is queued, its other alerts that day are marked sent without a
     message. A failed send frees the slot again (`release_dwell_group`).
+    `attend` lists the announced members without a message of their own,
+    which still get their OpenClaw attention call (FRS-23, freshness/notify.py).
     """
     groups = ops.setdefault('dwell_groups', {})
     out, by_state = [], {}
@@ -461,6 +469,8 @@ def _group_dwell(ops, candidates):
             for fp, _, on_queued, how, _ in members:
                 on_queued()
                 groups[name].setdefault('members', {})[fp] = how
+                if how == 'announce':
+                    groups[name].setdefault('attend', []).append(fp)
             continue
         members.sort(key=lambda m: m[0])
         rep_fp, rep_text = members[0][0], members[0][1]
@@ -471,7 +481,8 @@ def _group_dwell(ops, candidates):
         def queued(name=name, members=members, rep_fp=rep_fp):
             for _, _, on_queued, _, _ in members:
                 on_queued()
-            groups[name] = {'fp': rep_fp, 'members': {m[0]: m[3] for m in members}}
+            groups[name] = {'fp': rep_fp, 'members': {m[0]: m[3] for m in members},
+                            'attend': [m[0] for m in members if m[3] == 'announce' and m[0] != rep_fp]}
         result.append((rep_fp, rep_text, queued))
     return result
 
@@ -601,14 +612,14 @@ def _reset_alert_message(state, text, fingerprint=None):
     two subjects can scrub to the same text; at worst one is sent twice.
     """
     table = state.get('alerts') or {}
-    head = strip_group_note(text.rsplit(': ', 1)[0])
+    head = text.rsplit(': ', 1)[0]
     entries = [(fingerprint, table[fingerprint])] if fingerprint in table else list(table.items())
     matched = False
     for fp, entry in entries:
-        if head == _ops_head(_REMINDER_PREFIX, entry):
+        if head_matches(head, entry, (_REMINDER_PREFIX,)):
             entry['last_reminder_at'] = None
             matched = True
-        elif any(head == _ops_head(p, entry) for p in _ANNOUNCE_PREFIXES):
+        elif head_matches(head, entry, _ANNOUNCE_PREFIXES):
             entry['announced'] = False
             entry['last_reminder_at'] = None
             matched = True

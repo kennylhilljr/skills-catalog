@@ -582,6 +582,17 @@ class DwellOpsTests(unittest.TestCase):
         actions, _ = A.plan_alerts([], open_list(raised), [], S.load(S.dump(actions_state)), 'r2', NOW + HOUR)
         self.assertEqual(len(ops(actions)), 1)
 
+    def test_subject_that_looks_like_a_group_count_still_retries(self):
+        a = alert('nightly (and 1 more re-review item stuck)')
+        actions, state = A.plan_alerts([a], [], [], None, 'r1', NOW)
+        A.record_send(state, ops(actions)[0]['text'], False, fingerprint=fp_of(a))
+        self.assertFalse(state['alerts'][fp_of(a)]['announced'])
+        self.assertEqual(state['ops']['failed'], [])
+        actions, state = A.plan_alerts([a], [], [], None, 'r1', NOW)
+        A.record_send(state, ops(actions)[0]['text'], False)
+        self.assertFalse(state['alerts'][fp_of(a)]['announced'])
+        self.assertEqual(state['ops']['failed'], [])
+
     def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
         raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]
         actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)

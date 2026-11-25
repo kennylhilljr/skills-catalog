@@ -446,12 +446,42 @@ class DwellGroupTest(unittest.TestCase):
         state, results = self._planned(actions_half([alert(x) for x in subjects], [], S.empty_state()),
                                        subjects, open_issues)
         self.assertEqual(len(results), 1)
-        run = FakeRun()
-        new = mac(open_issues, state, run, ops_results=results)
+        run, att = FakeRun(), FakeAttention()
+        new = mac(open_issues, state, run, att, ops_results=results)
         self.assertEqual(len(run.calls), 1)
         self.assertIn('(and 2 more re-review items stuck)', run.texts()[0])
         self.assertEqual(new['ops']['sent'], 1)
         self.assertIn('re-review', new['ops']['dwell_groups'])
+        # FRS-23: every alert issue still gets its attention call, once.
+        self.assertEqual(sorted(c[1] for c in att.calls), [url(80), url(81), url(82)])
+        self.assertEqual(new['ops']['dwell_groups']['re-review']['attend'], [])
+        # A new item of the state later that day: no message, but attention.
+        more = subjects + ['re-review:d']
+        more_issues = open_issues + [issue(90, subject='re-review:d')]
+        state, results = self._planned(actions_half([alert('re-review:d')], open_issues, new, NOW + HOUR),
+                                       more, more_issues)
+        self.assertEqual(results, [])
+        run, att = FakeRun(), FakeAttention()
+        again = mac(more_issues, state, run, att, now=NOW + HOUR, ops_results=results)
+        self.assertEqual(run.calls, [])
+        self.assertEqual([c[1] for c in att.calls], [url(90)])
+        self.assertEqual(again['ops']['dwell_groups']['re-review']['attend'], [])
+
+    def test_member_whose_issue_was_not_opened_is_due_again(self):
+        subjects = ['re-review:a', 're-review:b']
+        actions, state = A.plan_alerts([alert(x) for x in subjects], [], [], S.empty_state(), 'run-m', NOW)
+        send_op = [a for a in actions if a['op'] == 'send_ops'][0]
+        rep = send_op['fingerprint']
+        other = [F.fingerprint('dwell', x) for x in subjects if F.fingerprint('dwell', x) != rep][0]
+        results = [{'op': 'open_issue', 'fingerprint': rep, 'ok': True, 'number': 80, 'url': url(80)},
+                   {'op': 'open_issue', 'fingerprint': other, 'ok': False},
+                   {'op': 'send_ops', 'fingerprint': rep, 'ok': True,
+                    'text': send_op['text'].replace(A.ISSUE_URL_PLACEHOLDER, url(80))}]
+        run, att = FakeRun(), FakeAttention()
+        new = mac([], state, run, att, ops_results=results)
+        self.assertEqual([c[1] for c in att.calls], [url(80)])
+        self.assertTrue(new['alerts'][rep]['announced'])
+        self.assertFalse(new['alerts'][other]['announced'])
 
     def test_failed_direct_send_frees_the_state_for_the_next_run(self):
         subjects = ['re-review:a', 're-review:b']
@@ -479,7 +509,7 @@ class DwellGroupTest(unittest.TestCase):
         ok = mac(open_issues, state, run, att, ops_results=results)
         self.assertEqual(len(run.calls), 1)
         self.assertIn('(and 1 more re-review item stuck)', run.texts()[0])
-        self.assertEqual(len(att.calls), 1)
+        self.assertEqual(sorted(c[1] for c in att.calls), [url(80), url(81)])
         self.assertIn('re-review', ok['ops']['dwell_groups'])
         failed = mac(open_issues, state, FakeRun(fail={1}), ops_results=results)
         self.assertEqual(failed['ops']['dwell_groups'], {})

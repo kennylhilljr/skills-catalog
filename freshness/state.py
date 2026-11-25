@@ -16,10 +16,12 @@ Keys owned here::
                   "dwell_state"?: str}   # set for `<state>:<item>` dwell subjects (FRS-17)
     ops = {"day": "YYYY-MM-DD", "sent": int, "digest_sent": bool,
            "pending": [text], "failed": [text],
-           "dwell_groups": {state: {"fp": fp, "members": {fp: "announce" | "reminder"}}}}
+           "dwell_groups": {state: {"fp": fp, "members": {fp: "announce" | "reminder"},
+                                    "attend": [fp]}}}
 
 `ops.dwell_groups` holds the dwell states (freshness/dwell.STATES) whose one
-ops message of the day is queued (FRS-17); it resets with the day.
+ops message of the day is queued (FRS-17); it resets with the day. `attend`
+lists announced members still owed their OpenClaw attention call (FRS-23).
     issues = {"day": "YYYY-MM-DD", "opened": int, "storm_issue": int | None}
     findings[fp] = {"evidence_sha": str}
 

@@ -218,15 +218,14 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
     used, items = set(direct), []
     for line in pending:
         head, _, tail = line.rpartition(': ')
-        bare = amod.strip_group_note(head)  # a dwell state's one message (FRS-17)
         kinds = {}
         for fp in sorted(table):
             if fp in used:
                 continue
             entry = table[fp]
-            if any(bare == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
+            if amod.head_matches(head, entry, amod._ANNOUNCE_PREFIXES):  # with a dwell count (FRS-17)
                 kinds[fp] = 'announce'
-            elif bare == amod._ops_head(amod._REMINDER_PREFIX, entry):
+            elif amod.head_matches(head, entry, (amod._REMINDER_PREFIX,)):
                 kinds[fp] = 'reminder'
         if not kinds:
             items.append({'line': line, 'fp': None, 'type': 'other', 'args': None})
@@ -270,6 +269,32 @@ def _due_again(state, item, table=None):
         failed = state['ops'].setdefault('failed', [])
         if item['line'] not in failed:
             failed.append(item['line'])
+
+
+def _attend_group_members(state, table, link_of, failed_fps, attended, call_attention):
+    """Attention for dwell alerts announced inside their state's one message (FRS-17, FRS-23).
+
+    A member whose issue could not be opened is due again; one with no
+    issue URL yet waits for the next run.
+    """
+    for group in (state['ops'].get('dwell_groups') or {}).values():
+        keep = []
+        for fp in group.get('attend') or []:
+            entry = table.get(fp)
+            if entry is None or entry.get('closed_at') or fp in attended:
+                continue
+            if fp in failed_fps:
+                entry['announced'] = False
+                entry['last_reminder_at'] = None
+                continue
+            link = link_of(fp)
+            if link is None:
+                keep.append(fp)
+                continue
+            call_attention(entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
+                           'freshness alert ' + entry['kind'] + ' is open for ' + entry['subject'])
+            attended.add(fp)
+        group['attend'] = keep
 
 
 def _new_entry(kind, subject, number):
@@ -371,6 +396,12 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
             attended.add(fp)
         ok = send(_clean(text), config, run)
         amod.record_send(new, text, ok, fp)
+
+    def link_of(fp):
+        entry = table[fp]
+        return opened_urls.get(fp) or open_urls.get(fp) or (
+            amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None)
+    _attend_group_members(new, table, link_of, failed_fps, attended, call_attention)
 
     # 2. This function's announcements, under the same daily cap.
     digest_open = bool(incoming_digest or not ops['digest_sent'])
