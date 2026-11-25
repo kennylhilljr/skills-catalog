@@ -777,6 +777,18 @@ class EvidenceCommentTests(unittest.TestCase):
                 self._run(fake, [found], apply=apply)
                 self.assertEqual(self._sha(fake.written_state(), found), fmod.evidence_sha(self.OLD))
 
+    def test_a_comment_without_the_evidence_field_records_nothing(self):
+        found = _evidence_finding('plain', self.NEW)
+        fp = fmod.finding_fingerprint(found)
+        job = runmod.Run('actions', _deps(FakeGitHub(), 'actions'))
+        job.state = self._state(found)
+        action = {'op': 'comment', 'fingerprint': fp, 'number': 1, 'body': 'b'}
+        job._acknowledge_evidence([action], [{'op': 'comment', 'fingerprint': fp, 'ok': True}])
+        self.assertEqual(self._sha(job.state, found), fmod.evidence_sha(self.OLD))
+        action['finding_evidence_sha'] = fmod.evidence_sha(self.NEW)
+        job._acknowledge_evidence([action], [{'op': 'comment', 'fingerprint': fp, 'ok': True}])
+        self.assertEqual(self._sha(job.state, found), fmod.evidence_sha(self.NEW))
+
     def test_skipped_apply_and_dry_run_keep_the_old_hash(self):
         found = _evidence_finding('skipped', self.NEW)
         items = self._items([(71, found, False)])
