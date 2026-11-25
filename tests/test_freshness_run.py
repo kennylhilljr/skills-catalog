@@ -598,6 +598,24 @@ class RobustnessTests(unittest.TestCase):
         self.assertEqual(runmod.merge_state(base, ours, fresh),
                          {'a': 2, 'b': {'x': 2, 'y': 3}, 'kept': {'k': 1}, 'new': 4, 'parked': {'e': 2}})
 
+    def test_a_concurrent_announcement_of_a_new_alert_survives_the_merge(self):
+        """Actions opens the alert, the Mac announces it from the old state, Actions loses its CAS."""
+        entry = {'kind': 'k', 'announced': False, 'last_reminder_at': None}
+        base = smod.empty_state()
+        fake = FakeGitHub(base)
+        deps = _deps(fake, 'actions')
+        job = runmod.Run('actions', deps)
+        job.now = smod.require_utc(deps.clock())
+        job.load_state()
+        job.state['alerts'] = {'fp': dict(entry)}
+        mac = json.loads(json.dumps(base))
+        mac['alerts'] = {'fp': dict(entry, announced=True, last_reminder_at='2026-11-18T11:00:00+00:00')}
+        fake.concurrent.append(mac)  # the Mac's write lands before this run's ref move
+        job.write_state()
+        alert = json.loads(fake.state_text)['alerts']['fp']
+        self.assertTrue(alert['announced'])
+        self.assertEqual(alert['last_reminder_at'], '2026-11-18T11:00:00+00:00')
+
     def test_a_reparked_upstream_finding_survives_the_mac_clearing_it(self):
         base = {'upstream_pending': {'fp': {'evidence': 'old'}}}
         mac = {'upstream_pending': {}}
@@ -869,6 +887,29 @@ class MacHalfTests(unittest.TestCase):
         ok, job, _ = _execute('mac', fake, cli_run=FakeCli())
         self.assertTrue(ok, job.errors)
         self.assertFalse([t for t in _opened_titles(fake) if 'heartbeat' in t])
+
+    def test_announces_open_alert_issue_missing_from_state(self):
+        """FRS-23: an open alert issue absent from state.alerts is still announced and recorded."""
+        sends = []
+        state = smod.empty_state()
+        state['heartbeats'] = {'actions': _beat(smod.iso(NOW - datetime.timedelta(hours=2)))}
+        alert = _item(41, 'dead-link', 'zz-demo')
+        alert['title'] = 'freshness-alert: dead-link: zz-demo'
+        alert['labels'] = [{'name': 'freshness-alert'}, {'name': 'dead-link'}]
+        other = _item(42, 'stale', 'zz-other')
+        other['labels'] = [{'name': 'freshness'}]
+        fake = FakeGitHub(state, items=[alert, other])
+        ok, job, _ = _execute('mac', fake, cli_run=FakeCli(),
+                              notify_run=lambda argv, **k: sends.append(argv) or types.SimpleNamespace(returncode=0))
+        self.assertTrue(ok, job.errors)
+        self.assertTrue(any('/issues/41' in argv[-1] for argv in sends))
+        self.assertFalse(any('/issues/42' in argv[-1] for argv in sends))
+        written = fake.written_state()['alerts']
+        entry = written[fmod.fingerprint('dead-link', 'zz-demo')]
+        self.assertTrue(entry['announced'] is True)
+        self.assertEqual(entry['kind'], 'dead-link')
+        self.assertEqual(entry['issue'], 41)
+        self.assertNotIn(fmod.fingerprint('stale', 'zz-other'), written)
 
     def test_mac_results_feed_the_advance_rule(self):
         fake = FakeGitHub()

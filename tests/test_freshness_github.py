@@ -382,6 +382,22 @@ class Inv5Test(unittest.TestCase):
         self.assertIsNone(by_number[8]['created_at'])
         self.assertIn("'created_at'", inspect.getsource(gmod.GitHub.list_bot_items))
 
+    def test_list_bot_items_returns_title_and_labels(self):
+        """test_list_bot_items_returns_title_and_labels: each marked item carries its title and label names (unit list-bot-items-title-labels)."""
+        gh, fake = make_github()
+        bot = {'login': 'freshness[bot]', 'type': 'Bot'}
+        fake.issues[7] = {'number': 7, 'state': 'open', 'closed_at': None, 'user': bot,
+                          'body': fmod.marker(fmod.fingerprint('dead-link', 'zz-demo')),
+                          'title': 'freshness-alert: dead-link: zz-demo',
+                          'labels': [{'name': 'freshness-alert'}, {'name': 'dead-link'}]}
+        fake.issues[8] = {'number': 8, 'state': 'open', 'closed_at': None, 'user': bot,
+                          'body': fmod.marker(fmod.fingerprint('dead-link', 'zz-bare'))}
+        items = {i['number']: i for i in gh.list_bot_items(now=NOW)}
+        self.assertEqual(items[7]['title'], 'freshness-alert: dead-link: zz-demo')
+        self.assertEqual(items[7]['labels'], ['freshness-alert', 'dead-link'])
+        self.assertEqual(items[8]['title'], '')
+        self.assertEqual(items[8]['labels'], [])
+
     def test_open_pr_closes_unlabeled_pr_for_retry(self):
         gh, fake = make_github()
         action = {'op': 'open_pr', 'fingerprint': FP, 'title': 't', 'body': 'b', 'labels': ['freshness'],

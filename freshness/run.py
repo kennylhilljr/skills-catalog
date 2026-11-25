@@ -548,6 +548,25 @@ def merge_state(base, ours, fresh):
     return out
 
 
+def keep_concurrent_announcements(base, merged, fresh):
+    """Keep a delivery the other half made for an alert this run just created.
+
+    Both halves can open the same alert entry from a base that lacked it. The
+    generic merge then lets this run's `announced: false` beat the other
+    half's `true`, and the next Mac run would announce the open issue again.
+    """
+    base_alerts = (base or {}).get('alerts') or {}
+    fresh_alerts = (fresh or {}).get('alerts') or {}
+    for fp, entry in (merged.get('alerts') or {}).items():
+        theirs = fresh_alerts.get(fp)
+        if fp in base_alerts or not (isinstance(entry, dict) and isinstance(theirs, dict)):
+            continue
+        if theirs.get('announced') and not entry.get('announced'):
+            entry['announced'] = True
+            entry['last_reminder_at'] = theirs.get('last_reminder_at')
+    return merged
+
+
 STATE_WRITE_ATTEMPTS = 3
 
 
@@ -1007,8 +1026,11 @@ class Run:
     def announce(self):
         if self.dry_run:
             return
-        open_alerts = [{'number': i['number'], 'fingerprint': i['fingerprint']}
-                       for i in self._open(prs=False) if i['fingerprint'] in self.state.get('alerts', {})]
+        # FRS-23: an alert issue whose state write failed on the Actions side is still announced.
+        open_alerts = [{'number': i['number'], 'fingerprint': i['fingerprint'], 'title': i.get('title')}
+                       for i in self._open(prs=False)
+                       if i['fingerprint'] in self.state.get('alerts', {})
+                       or amod.ALERT_LABEL in (i.get('labels') or ())]
         for result in self.results:
             if result.get('op') in ('open_issue', 'reopen') and result.get('ok') \
                     and result.get('fingerprint') in self.state.get('alerts', {}):
@@ -1052,7 +1074,8 @@ class Run:
             text, sha = self.gh.read_state()
             if sha != self.state_sha:
                 fresh = smod.load(text)
-                self.state = merge_state(self.base_state, self.state, fresh)
+                self.state = keep_concurrent_announcements(
+                    self.base_state, merge_state(self.base_state, self.state, fresh), fresh)
                 self.base_state, self.state_sha = fresh, sha
             if cas_write_state(self.gh, smod.dump(self.state), sha, message):
                 return
