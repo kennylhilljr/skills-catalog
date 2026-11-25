@@ -1000,7 +1000,30 @@ class Run:
         for result in results:
             if not result.get('ok') and result.get('op') != 'send_ops':
                 self._fail('apply', '%s %s' % (result.get('op'), result.get('error') or 'failed'))
+        self._acknowledge_evidence(actions, results)
         return results
+
+    def _acknowledge_evidence(self, actions, results):
+        """Record a finding's new evidence hash once its comment landed (FRS-13).
+
+        `GitHub.apply` returns one result per action, in order. Only a
+        comment that carries `finding_evidence_sha` and whose result is a
+        successful comment for the same fingerprint moves the hash, so a
+        failed or missing comment is planned again on the next run.
+        """
+        table = self.state.setdefault('findings', {})
+        for action, result in zip(actions, results):
+            sha = action.get('finding_evidence_sha') if isinstance(action, dict) else None
+            if not sha or action.get('op') != 'comment':
+                continue
+            fp = action.get('fingerprint')
+            if result.get('op') != 'comment' or result.get('fingerprint') != fp or result.get('ok') is not True:
+                continue
+            record = table.get(fp)
+            if isinstance(record, dict):
+                record['evidence_sha'] = sha
+            else:
+                table[fp] = {'evidence_sha': sha}
 
     def keep_upstream_edges(self):
         """Undo this run's upstream bookkeeping when its findings were not delivered.

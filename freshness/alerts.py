@@ -437,7 +437,11 @@ def plan_findings(findings, open_items, state, private_names=()):
     issues and PRs `{"number", "fingerprint"}` parsed from the marker.
     An open item with the fingerprint gets nothing when the evidence is
     unchanged and one comment when it changed. `state["findings"]` records
-    the last evidence hash per fingerprint and is updated in place.
+    the last delivered evidence hash per fingerprint and is updated in
+    place for new findings. A changed-evidence comment leaves the stored
+    hash alone and carries the new one as `finding_evidence_sha`; the
+    runner records it only after the comment succeeds, so a failed comment
+    is planned again on the next run.
     `private_names`: the private repo list the scrub checks PR files
     against (read by the caller, like `tools/scrub.py --private-repos`);
     a PR whose files fail the scrub becomes an issue without the files.
@@ -462,8 +466,8 @@ def plan_findings(findings, open_items, state, private_names=()):
                 table[fp] = {'evidence_sha': sha}
             elif record.get('evidence_sha') != sha:
                 actions.append({'op': 'comment', 'fingerprint': fp, 'number': open_by_fp[fp]['number'],
-                                'body': 'Evidence changed:\n\n' + found.get('evidence', '')})
-                record['evidence_sha'] = sha
+                                'body': 'Evidence changed:\n\n' + found.get('evidence', ''),
+                                'finding_evidence_sha': sha})
             continue
         body = fmod.strip_markers(item.get('body') or '')
         body = body.rstrip('\n') + '\n\n' + fmod.marker(fp) + '\n'
