@@ -601,6 +601,15 @@ class DwellOpsTests(unittest.TestCase):
         self.assertFalse(state['alerts'][fp_of(literal)]['announced'])
         self.assertTrue(state['alerts'][fp_of(plain)]['announced'])
 
+    def test_group_message_wins_over_a_member_named_like_it(self):
+        raised = [alert('re-review:0'), alert('re-review:0 (and 1 more re-review item stuck)')]
+        args = list(past_cap())
+        args[0], args[1] = raised, open_list(raised)
+        actions, state = A.plan_alerts(*args)
+        A.record_send(state, ops(actions)[-1]['text'], False)  # the digest failed
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised))
+
     def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
         raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]
         actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)

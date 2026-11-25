@@ -221,9 +221,9 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
     for line in pending:
         head, _, tail = line.rpartition(': ')
         kinds = {}
-        for grouped in (False, True):  # then without a dwell count (FRS-17)
+        for grouped, only in amod.match_passes(state):  # a dwell group first (FRS-17)
             for fp in sorted(table):
-                if fp in used:
+                if fp in used or (only is not None and fp not in only):
                     continue
                 entry = table[fp]
                 if amod.head_matches(head, entry, amod._ANNOUNCE_PREFIXES, grouped):

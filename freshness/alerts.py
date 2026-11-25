@@ -423,6 +423,18 @@ def head_matches(head, entry, prefixes, grouped=False):
     return any(_ops_head(p, entry) == head for p in prefixes)
 
 
+def match_passes(state):
+    """The order in which a message head is tied to alerts: `(grouped, fingerprints | None)`.
+
+    First the representative of a dwell group queued today, by its head
+    without the count; then the exact head; then any head without a count.
+    So neither a group's message nor a subject that itself ends like a count
+    is taken for another alert (FRS-17, FRS-25).
+    """
+    reps = set(g.get('fp') for g in ((state or {}).get('ops') or {}).get('dwell_groups', {}).values())
+    return ((True, reps), (False, None), (True, None))
+
+
 def release_dwell_group(state, fingerprint):
     """Free the dwell state slot whose message was `fingerprint`'s; True if one was held.
 
@@ -623,9 +635,11 @@ def _reset_alert_message(state, text, fingerprint=None):
     table = state.get('alerts') or {}
     head = text.rsplit(': ', 1)[0]
     entries = [(fingerprint, table[fingerprint])] if fingerprint in table else list(table.items())
-    for grouped in (False, True):
+    for grouped, only in match_passes(state):
         matched = False
         for fp, entry in entries:
+            if only is not None and fp not in only:
+                continue
             if head_matches(head, entry, (_REMINDER_PREFIX,), grouped):
                 entry['last_reminder_at'] = None
             elif head_matches(head, entry, _ANNOUNCE_PREFIXES, grouped):
