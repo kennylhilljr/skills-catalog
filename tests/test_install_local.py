@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.path.join(REPO, 'tools', 'install-local')
@@ -96,8 +97,8 @@ class InstallLocalCase(unittest.TestCase):
         self.git('commit', '-q', '--allow-empty', '-m', tag)
         self.git('tag', tag)
 
-    def run_tool(self, *extra, ref='v1', defaults=False):
-        args = [sys.executable, '-B', TOOL, '--repo', self.repo]
+    def run_tool(self, *extra, ref='v1', defaults=False, repo=None):
+        args = [sys.executable, '-B', TOOL, '--repo', self.repo if repo is None else repo]
         if ref is not None:
             args += ['--ref', ref]
         if not defaults:
@@ -275,6 +276,84 @@ class InstallLocalCase(unittest.TestCase):
             self.assertNotIn(HIDDEN, handle.read())
         dry = self.run_tool('--dry-run')
         self.assertNotIn(HIDDEN, dry.stdout.lower() + dry.stderr.lower())
+
+    def load_tool(self):
+        loader = importlib.machinery.SourceFileLoader('install_local_git_env', TOOL)
+        spec = importlib.util.spec_from_loader('install_local_git_env', loader)
+        tool = importlib.util.module_from_spec(spec)
+        loader.exec_module(tool)
+        return tool
+
+    def hostile_git_env(self, git_dir):
+        """Inherited GIT_* variables that would redirect or reconfigure git (#108)."""
+        return {
+            'GIT_DIR': git_dir,
+            'GIT_WORK_TREE': os.path.dirname(git_dir),
+            'GIT_INDEX_FILE': os.path.join(self.tmp, 'index'),
+            'GIT_CONFIG_PARAMETERS': "'versionsort.suffix'='-'",
+            'GIT_CONFIG_COUNT': '1',
+            'GIT_CONFIG_KEY_0': 'versionsort.suffix',
+            'GIT_CONFIG_VALUE_0': '-rc',
+            'GIT_CONFIG_GLOBAL': os.path.join(self.tmp, 'gitconfig'),
+            'GIT_TERMINAL_PROMPT': '1',
+        }
+
+    def make_other_repo(self, tag=None):
+        """A second repository; with tag, it holds that tag with different skill text."""
+        real, skills = self.repo, self.skills
+        other = os.path.join(self.tmp, 'other')
+        os.makedirs(other)
+        self.repo = other
+        try:
+            self.git('init', '-q')
+            if tag is not None:
+                self.skills = {'alpha': {'SKILL.md': b'alpha from the other repo\n'}}
+                self.commit_tag(tag)
+        finally:
+            self.repo, self.skills = real, skills
+        return other
+
+    def test_inherited_git_dir_is_ignored(self):
+        self.commit_tag('v1')
+        other = self.make_other_repo()
+        self.env['GIT_DIR'] = os.path.join(self.repo, '.git')
+        run = self.run_tool(ref=None, repo=other)
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertIn('no v* tag in', run.stderr)
+        self.assertFalse(os.path.exists(self.claude))
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_inherited_git_variables_do_not_change_an_explicit_ref_install(self):
+        self.commit_tag('v1')
+        other = self.make_other_repo('v1')
+        self.env.update(self.hostile_git_env(os.path.join(other, '.git')))
+        run = self.run_tool()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assert_installed(self.claude, self.skills)
+        self.assert_installed(self.agents, self.skills)
+
+    def test_every_git_call_gets_the_clean_environment(self):
+        tool = self.load_tool()
+        self.commit_tag('v1')
+        hostile = self.hostile_git_env(os.path.join(self.tmp, 'elsewhere', '.git'))
+        with unittest.mock.patch.dict(os.environ, hostile):
+            env = tool.git_env()
+            self.assertEqual({k: v for k, v in env.items() if k.startswith('GIT_')},
+                             {'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+                              'GIT_TERMINAL_PROMPT': '0'})
+            self.assertEqual({k: v for k, v in env.items() if not k.startswith('GIT_')},
+                             {k: v for k, v in os.environ.items() if not k.startswith('GIT_')})
+            real_run = subprocess.run
+            with unittest.mock.patch.object(tool.subprocess, 'run', side_effect=real_run) as spy:
+                self.assertEqual(tool.resolve_tag(self.repo, None)[0], 'v1')
+                tag, commit = tool.resolve_tag(self.repo, 'v1')
+                files = tool.read_tag(self.repo, commit, set())
+        self.assertIn('catalog.json', files)
+        commands = [call.args[0][3] for call in spy.call_args_list]
+        for needed in ('for-each-ref', 'check-ref-format', 'show-ref', 'rev-parse', 'archive'):
+            self.assertIn(needed, commands)
+        for call in spy.call_args_list:
+            self.assertEqual(call.kwargs.get('env'), env, call.args[0])
 
     def test_folder_changed_after_planning_is_refused(self):
         loader = importlib.machinery.SourceFileLoader('install_local', TOOL)

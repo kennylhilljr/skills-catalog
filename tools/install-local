@@ -35,6 +35,7 @@ import io
 import json
 import os
 import posixpath
+import re
 import shutil
 import stat
 import subprocess
@@ -69,7 +70,7 @@ def parse_args(argv):
     )
     parser.add_argument('--repo', default=default_repo(),
                         help='catalog repository (default: the one holding this script)')
-    parser.add_argument('--ref', help='tag to install (default: the highest v* tag)')
+    parser.add_argument('--ref', help='tag to install (default: the highest v<digit>... tag by version order, see tag_sort_key)')
     parser.add_argument('--claude-dir', default='~/.claude/skills')
     parser.add_argument('--agents-dir', default='~/.agents/skills')
     parser.add_argument('--state', default='~/.config/skills-catalog/installed.json')
@@ -85,31 +86,77 @@ def full_path(path):
 
 # ---------------------------------------------------------------- git source
 
-def git(repo, *args, env=None):
+def git_env():
+    """The environment for every git call, the same as the MCP server's _git_env.
+
+    Every inherited GIT_* variable is dropped: GIT_DIR, GIT_WORK_TREE and the
+    like would override `git -C <repo>` and read another repository. Global and
+    system config are switched off and git never prompts.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    env.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'})
+    return env
+
+
+def git(repo, *args):
     try:
-        run = subprocess.run(['git', '-C', repo] + list(args), env=env,
+        run = subprocess.run(['git', '-C', repo] + list(args), env=git_env(),
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         raise Failure('git is not installed')
     return run
 
 
+# Release tag order (MCP-1, MCP-9). Keep this block identical in
+# tools/install-local and server/skills_catalog_mcp/snapshot.py;
+# tests/test_tag_order.py checks that both copies agree.
+_TAG_RE = re.compile(r'^v([0-9]+(?:\.[0-9]+)*)(.*)$', re.DOTALL)
+_CHUNK_RE = re.compile(r'[0-9]+|[^0-9]+', re.DOTALL)
+
+
+def _number_key(digits):
+    """Compare a run of ASCII digits as a number, without int() size limits."""
+    digits = digits.lstrip('0')
+    return (len(digits), digits)
+
+
+def tag_sort_key(tag):
+    """Sort key for a release tag, higher is newer; None if tag is not v<digit>...
+
+    The tag is v<numbers><rest>. Numbers compare as integers, so v1.10 is newer
+    than v1.9. An empty rest, or one that starts with `+` (build metadata), is
+    a release. Any other rest (v1.0-rc1, v1.0rc1) is a pre-release, older than
+    the release with the same numbers. Pre-release suffixes compare piece by
+    piece, digit runs as numbers, so rc10 is newer than rc2. The full name
+    breaks ties. Git's versionsort config is never consulted.
+    """
+    match = _TAG_RE.match(tag)
+    if match is None:
+        return None
+    numbers = tuple(_number_key(part) for part in match.group(1).split('.'))
+    rest = match.group(2)
+    release = 1 if (not rest or rest.startswith('+')) else 0
+    pieces = tuple((0, _number_key(piece)) if piece[0] in '0123456789' else (1, piece)
+                   for piece in _CHUNK_RE.findall(rest))
+    return (numbers, release, pieces, tag)
+
+
+def newest_tag(names):
+    """The newest name by tag_sort_key, skipping names that do not parse; None if none do."""
+    keyed = [(tag_sort_key(name), name) for name in names]
+    keyed = [pair for pair in keyed if pair[0] is not None]
+    return max(keyed)[1] if keyed else None
+
+
 def resolve_tag(repo, ref):
     """(tag, commit) for ref, which must name a tag."""
     if ref is None:
-        # Highest version wins, never the newest date, and a pre-release
-        # (`v1.0-rc1`) ranks below its release. Global and system git config
-        # are ignored here, as the MCP server ignores them, so a personal
-        # `versionsort.suffix` cannot make the two pick different tags.
-        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
-        run = git(repo, '-c', 'versionsort.suffix=-', 'for-each-ref', '--sort=-v:refname',
-                  '--format=%(refname:strip=2)', 'refs/tags/v*', env=env)
+        run = git(repo, 'for-each-ref', '--format=%(refname:strip=2)', 'refs/tags/v*')
         if run.returncode != 0:
             raise Failure('not a git repository: ' + repo)
-        tags = os.fsdecode(run.stdout).split()
-        if not tags:
+        ref = newest_tag(os.fsdecode(run.stdout).split())
+        if ref is None:
             raise Failure('no v* tag in ' + repo)
-        ref = tags[0]
     full = 'refs/tags/' + ref
     # The exact ref must exist: no revision syntax such as `v1~1` or `v1^`.
     if (not ref or ref.startswith('-')

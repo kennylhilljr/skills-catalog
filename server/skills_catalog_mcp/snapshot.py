@@ -102,23 +102,58 @@ def _git(repo, *args):
     return proc.returncode, proc.stdout
 
 
+# Release tag order (MCP-1, MCP-9). Keep this block identical in
+# tools/install-local and server/skills_catalog_mcp/snapshot.py;
+# tests/test_tag_order.py checks that both copies agree.
+_TAG_RE = re.compile(r'^v([0-9]+(?:\.[0-9]+)*)(.*)$', re.DOTALL)
+_CHUNK_RE = re.compile(r'[0-9]+|[^0-9]+', re.DOTALL)
+
+
+def _number_key(digits):
+    """Compare a run of ASCII digits as a number, without int() size limits."""
+    digits = digits.lstrip('0')
+    return (len(digits), digits)
+
+
+def tag_sort_key(tag):
+    """Sort key for a release tag, higher is newer; None if tag is not v<digit>...
+
+    The tag is v<numbers><rest>. Numbers compare as integers, so v1.10 is newer
+    than v1.9. An empty rest, or one that starts with `+` (build metadata), is
+    a release. Any other rest (v1.0-rc1, v1.0rc1) is a pre-release, older than
+    the release with the same numbers. Pre-release suffixes compare piece by
+    piece, digit runs as numbers, so rc10 is newer than rc2. The full name
+    breaks ties. Git's versionsort config is never consulted.
+    """
+    match = _TAG_RE.match(tag)
+    if match is None:
+        return None
+    numbers = tuple(_number_key(part) for part in match.group(1).split('.'))
+    rest = match.group(2)
+    release = 1 if (not rest or rest.startswith('+')) else 0
+    pieces = tuple((0, _number_key(piece)) if piece[0] in '0123456789' else (1, piece)
+                   for piece in _CHUNK_RE.findall(rest))
+    return (numbers, release, pieces, tag)
+
+
+def newest_tag(names):
+    """The newest name by tag_sort_key, skipping names that do not parse; None if none do."""
+    keyed = [(tag_sort_key(name), name) for name in names]
+    keyed = [pair for pair in keyed if pair[0] is not None]
+    return max(keyed)[1] if keyed else None
+
+
 def _resolve_tag(repo, ref):
     """Return (tag, commit) for ref, which must name a tag."""
     if ref is None:
-        # Highest version wins, never the newest date: a hotfix tag made
-        # later on an older line must not become the default. A pre-release
-        # (`v1.0-rc1`) ranks below its release (`v1.0`). `tools/install-local`
-        # uses the same git call, with the same config, so both pick one tag.
-        code, out = _git(
-            repo, '-c', 'versionsort.suffix=-', 'for-each-ref', '--sort=-v:refname',
-            '--format=%(refname:strip=2)', TAG_PATTERN,
-        )
+        # Version order from tag_sort_key, never tag dates or git's
+        # versionsort config, so this picks the same tag as install-local.
+        code, out = _git(repo, 'for-each-ref', '--format=%(refname:strip=2)', TAG_PATTERN)
         if code != 0:
             raise SnapshotError('no catalog tag')
-        tags = out.decode('utf-8', 'replace').split()
-        if not tags:
+        ref = newest_tag(out.decode('utf-8', 'replace').split())
+        if ref is None:
             raise SnapshotError('no catalog tag')
-        ref = tags[0]
     # The ref is a literal tag name, never a revision expression such as
     # `v1~1` or `v1^{tree}`, which would resolve to an untagged commit.
     if not isinstance(ref, str) or not ref or ref.startswith('-'):
