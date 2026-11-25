@@ -15,7 +15,7 @@ uv run --directory server --frozen python -m skills_catalog_mcp --repo ..
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--repo PATH` | the parent of `server/` | the catalog git repository |
-| `--ref TAG` | the newest `v*` tag | the tag to serve; a branch or a commit sha is refused |
+| `--ref TAG` | the highest `v*` tag in version order, the same one `tools/install-local` picks; a pre-release such as `v1.0-rc1` ranks below `v1.0` | the tag to serve; a branch or a commit sha is refused |
 | `--exclude-file PATH` | `~/.config/skills-catalog/exclude.txt` | the local exclusion list (DESIGN 5.1) |
 | `--transport stdio` | `stdio` | the transport |
 | `--tag-trust reviewed\|any` | `reviewed` for HTTP, `any` for stdio | `reviewed` serves only an annotated tag whose commit is an ancestor of `--main-ref` |
