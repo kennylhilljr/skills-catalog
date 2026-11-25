@@ -420,7 +420,30 @@ class FindingPlanTests(unittest.TestCase):
         self.assertEqual(A.plan_findings([self.routed()], open_items, state), [])
         actions = A.plan_findings([self.routed('now also in README')], open_items, state)
         self.assertEqual([(a['op'], a['number']) for a in actions], [('comment', 11)])
+        self.assertEqual(F.validate_action(actions[0]), [])
+        # Delivery is acknowledged by the runner, not the planner.
+        fp = F.finding_fingerprint(finding())
+        state['findings'][fp]['evidence_sha'] = actions[0]['finding_evidence_sha']
         self.assertEqual(A.plan_findings([self.routed('now also in README')], open_items, state), [])
+
+    def test_changed_evidence_remains_pending_until_delivery(self):
+        state = S.empty_state()
+        A.plan_findings([self.routed()], [], state)
+        fp = F.finding_fingerprint(finding())
+        old = state['findings'][fp]['evidence_sha']
+        open_items = [{'number': 11, 'fingerprint': fp}]
+        new = F.evidence_sha('now also in README')
+        for _ in range(2):
+            actions = A.plan_findings([self.routed('now also in README')], open_items, state)
+            self.assertEqual([(a['op'], a['number'], a['finding_evidence_sha']) for a in actions],
+                             [('comment', 11, new)])
+            self.assertEqual(state['findings'][fp]['evidence_sha'], old)
+
+    def test_an_open_item_without_a_record_is_initialized(self):
+        state = S.empty_state()
+        fp = F.finding_fingerprint(finding())
+        self.assertEqual(A.plan_findings([self.routed()], [{'number': 11, 'fingerprint': fp}], state), [])
+        self.assertEqual(state['findings'][fp], {'evidence_sha': F.evidence_sha('claude-2.1 is retired')})
 
 
 class ScrubTests(unittest.TestCase):

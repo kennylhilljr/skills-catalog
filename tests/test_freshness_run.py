@@ -7,6 +7,7 @@ test touches the network, GitHub, `gh`, `openclaw`, `claude` or `codex`.
 
 import builtins
 import contextlib
+import copy
 import datetime
 import importlib.machinery
 import importlib.util
@@ -638,6 +639,179 @@ class RobustnessTests(unittest.TestCase):
         path = run.keywords['env']['PATH'].split(os.pathsep)
         self.assertEqual(path[1:], ['/opt/tools/bin', '/usr/bin'])
         self.assertTrue(path[0].endswith(os.path.join('.local', 'bin')))
+
+
+class FailingCommentGitHub(FakeGitHub):
+    """A FakeGitHub whose comments on the issue or PR numbers in `fail` are rejected."""
+
+    def __init__(self, state=None, items=(), fail=()):
+        super().__init__(state, items)
+        self.fail = set(fail)
+
+    def __call__(self, method, path, body):
+        for number in self.fail:
+            if method == 'POST' and path.endswith('/issues/%d/comments' % number):
+                self.requests.append((method, path, body))
+                return 422, {'message': 'Validation Failed'}
+        return super().__call__(method, path, body)
+
+    def comments(self):
+        return [int(p.split('/')[-2]) for m, p, b in self.requests if m == 'POST' and p.endswith('/comments')]
+
+
+def _evidence_finding(subject, evidence):
+    return {'kind': 'model-retired', 'skill': 'zz-canary', 'subject': subject, 'file': 'skills/x/SKILL.md',
+            'line': 1, 'evidence': evidence, 'fix': None}
+
+
+class EvidenceCommentTests(unittest.TestCase):
+    """FRS-13: a changed-evidence comment that fails is planned again (issue #97)."""
+
+    OLD = 'old evidence'
+    NEW = 'new evidence'
+
+    def _state(self, *founds):
+        state = smod.empty_state()
+        state['findings'] = {fmod.finding_fingerprint(f): {'evidence_sha': fmod.evidence_sha(self.OLD)}
+                             for f in founds}
+        return state
+
+    def _items(self, pairs):
+        items = []
+        for number, found, is_pr in pairs:
+            item = {'number': number, 'state': 'open', 'closed_at': None, 'user': {'login': BOT},
+                    'body': 'x\n\n' + fmod.marker(fmod.finding_fingerprint(found)) + '\n'}
+            if is_pr:
+                item['pull_request'] = {}
+            items.append(item)
+        return items
+
+    def _run(self, fake, founds, as_='issue', dry_run=False, apply=None, plan_alerts=None):
+        """One Actions run that finds `founds`, with real routing output, planning, apply and state write."""
+        real_checks = runmod.Run.actions_checks
+        real_route = runmod.rmod.route
+        subjects = {f['subject'] for f in founds}
+
+        def actions_checks(job):
+            real_checks(job)
+            job.findings += [dict(f) for f in founds]
+
+        def route(found, *a, **k):
+            if found['subject'] in subjects:
+                return {'finding': found, 'as': as_, 'labels': ['freshness'], 'title': 'fix ' + found['subject'],
+                        'body': 'b', 'files': {}}
+            return real_route(found, *a, **k)
+        deps = _deps(fake, 'actions', private_names=[PRIVATE])
+        job = runmod.Run('actions', deps, dry_run=dry_run)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(runmod.Run, 'actions_checks', actions_checks))
+            stack.enter_context(mock.patch.object(runmod.rmod, 'route', side_effect=route))
+            if apply is not None:
+                stack.enter_context(mock.patch.object(deps.github, 'apply', side_effect=apply))
+            if plan_alerts is not None:
+                stack.enter_context(mock.patch.object(amod, 'plan_alerts', side_effect=plan_alerts))
+            job.execute()
+        return job
+
+    def _sha(self, state, found):
+        return state['findings'][fmod.finding_fingerprint(found)]['evidence_sha']
+
+    def test_failed_finding_comment_retries_from_persisted_state(self):
+        for is_pr in (False, True):
+            with self.subTest(is_pr=is_pr):
+                found = _evidence_finding('retry-%s' % is_pr, self.NEW)
+                items = self._items([(41, found, is_pr)])
+                as_ = 'pr' if is_pr else 'issue'
+                fake = FailingCommentGitHub(self._state(found), items, fail=[41])
+                self._run(fake, [found], as_)
+                self.assertEqual(fake.comments(), [41])
+                state = fake.written_state()
+                self.assertEqual(self._sha(state, found), fmod.evidence_sha(self.OLD))
+
+                fake = FailingCommentGitHub(state, items)
+                job = self._run(fake, [found], as_)
+                self.assertEqual(fake.comments(), [41], 'the failed comment is planned again')
+                self.assertFalse([e for e in job.errors if e.startswith('apply')], job.errors)
+                state = fake.written_state()
+                self.assertEqual(self._sha(state, found), fmod.evidence_sha(self.NEW))
+
+                fake = FailingCommentGitHub(state, items)
+                self._run(fake, [found], as_)
+                self.assertEqual(fake.comments(), [], 'delivered evidence is not commented again')
+
+    def test_a_mixed_batch_advances_only_the_delivered_finding(self):
+        ok_found = _evidence_finding('delivered', self.NEW)
+        bad_found = _evidence_finding('rejected', self.NEW)
+        items = self._items([(51, ok_found, False), (52, bad_found, True)])
+        fake = FailingCommentGitHub(self._state(ok_found, bad_found), items, fail=[52])
+        self._run(fake, [ok_found, bad_found])
+        self.assertEqual(sorted(fake.comments()), [51, 52])
+        state = fake.written_state()
+        self.assertEqual(self._sha(state, ok_found), fmod.evidence_sha(self.NEW))
+        self.assertEqual(self._sha(state, bad_found), fmod.evidence_sha(self.OLD))
+        fake = FailingCommentGitHub(state, items)
+        self._run(fake, [ok_found, bad_found])
+        self.assertEqual(fake.comments(), [52])
+
+    def test_undelivered_or_mismatched_results_keep_the_old_hash(self):
+        found = _evidence_finding('kept', self.NEW)
+        items = self._items([(61, found, False)])
+
+        def raises(actions):
+            raise ghmod.GitHubError('boom')
+
+        def missing(actions):
+            return []
+
+        def wrong_fp(actions):
+            return [{'op': a['op'], 'fingerprint': 'f' * 64, 'ok': True} for a in actions]
+
+        def wrong_op(actions):
+            return [{'op': 'open_issue', 'fingerprint': a['fingerprint'], 'ok': True} for a in actions]
+
+        def truthy_not_true(actions):
+            return [{'op': a['op'], 'fingerprint': a['fingerprint'], 'ok': 1} for a in actions]
+        for apply in (raises, missing, wrong_fp, wrong_op, truthy_not_true):
+            with self.subTest(apply=apply.__name__):
+                fake = FailingCommentGitHub(self._state(found), items)
+                self._run(fake, [found], apply=apply)
+                self.assertEqual(self._sha(fake.written_state(), found), fmod.evidence_sha(self.OLD))
+
+    def test_skipped_apply_and_dry_run_keep_the_old_hash(self):
+        found = _evidence_finding('skipped', self.NEW)
+        items = self._items([(71, found, False)])
+        fake = FailingCommentGitHub(self._state(found), items)
+        self._run(fake, [found], plan_alerts=RuntimeError('planner bug'))
+        self.assertEqual(fake.comments(), [])
+        self.assertEqual(self._sha(fake.written_state(), found), fmod.evidence_sha(self.OLD))
+
+        fake = FailingCommentGitHub(self._state(found), items)
+        job = self._run(fake, [found], dry_run=True)
+        self.assertEqual(fake.comments(), [])
+        self.assertEqual(self._sha(job.state, found), fmod.evidence_sha(self.OLD))
+
+    def test_the_comment_action_keeps_its_hash_through_the_scrub_and_validation(self):
+        found = _evidence_finding('shape', self.NEW)
+        state = self._state(found)
+        item = {'finding': found, 'as': 'issue', 'labels': [], 'title': 't', 'body': 'b', 'files': {}}
+        open_items = [{'number': 81, 'fingerprint': fmod.finding_fingerprint(found)}]
+        actions = amod.plan_findings([item], open_items, state)
+        self.assertEqual(actions[0]['finding_evidence_sha'], fmod.evidence_sha(self.NEW))
+        self.assertEqual(fmod.validate_action(actions[0]), [])
+
+    def test_an_acknowledged_hash_survives_a_concurrent_state_write(self):
+        found = _evidence_finding('merged', self.NEW)
+        items = self._items([(91, found, False)])
+        base = self._state(found)
+        fake = FailingCommentGitHub(base, items)
+        other = copy.deepcopy(base)
+        other['heartbeats'] = {'mac': _beat('2026-11-18T10:00:00+00:00')}
+        fake.concurrent = [other]
+        self._run(fake, [found])
+        self.assertEqual(fake.concurrent, [], 'the other half wrote in between')
+        state = smod.load(fake.state_text)
+        self.assertEqual(self._sha(state, found), fmod.evidence_sha(self.NEW))
+        self.assertEqual(state['heartbeats']['mac']['run_id'], 'r0')
 
 
 PRIVATE = 'zz-' + 'hidden-' + 'repo'
