@@ -1207,6 +1207,10 @@ class CredentialTests(unittest.TestCase):
             self.assertEqual(argv, ['security', 'find-generic-password', '-s', 'svc', '-w'])
             return types.SimpleNamespace(returncode=0, stdout=self.KEY)
         self.assertEqual(runmod.keychain_key('svc', run=run), self.KEY)
+        # macOS prints a multi-line password (a PEM key) as hex.
+        def hexed(argv, **kwargs):
+            return types.SimpleNamespace(returncode=0, stdout=self.KEY.hex().encode() + b'\n')
+        self.assertEqual(runmod.keychain_key('svc', run=hexed), self.KEY)
         with self.assertRaises(runmod.RunError):
             runmod.keychain_key('svc', run=lambda argv, **k: types.SimpleNamespace(returncode=44, stdout=b''))
 
