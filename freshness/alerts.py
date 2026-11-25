@@ -408,10 +408,19 @@ def strip_group_note(head):
     return _GROUP_NOTE.sub('', head)
 
 
-def head_matches(head, entry, prefixes):
-    """True when message head `head` is entry's head for one of `prefixes`, with or without a group count."""
-    heads = {head, strip_group_note(head)}
-    return any(_ops_head(p, entry) in heads for p in prefixes)
+def head_matches(head, entry, prefixes, grouped=False):
+    """True when message head `head` is entry's head for one of `prefixes`.
+
+    `grouped` compares the head without its dwell group count instead; a
+    caller tries the exact head first, so a subject that itself ends like a
+    count never matches another alert.
+    """
+    if grouped:
+        bare = strip_group_note(head)
+        if bare == head:
+            return False
+        head = bare
+    return any(_ops_head(p, entry) == head for p in prefixes)
 
 
 def release_dwell_group(state, fingerprint):
@@ -614,19 +623,21 @@ def _reset_alert_message(state, text, fingerprint=None):
     table = state.get('alerts') or {}
     head = text.rsplit(': ', 1)[0]
     entries = [(fingerprint, table[fingerprint])] if fingerprint in table else list(table.items())
-    matched = False
-    for fp, entry in entries:
-        if head_matches(head, entry, (_REMINDER_PREFIX,)):
-            entry['last_reminder_at'] = None
+    for grouped in (False, True):
+        matched = False
+        for fp, entry in entries:
+            if head_matches(head, entry, (_REMINDER_PREFIX,), grouped):
+                entry['last_reminder_at'] = None
+            elif head_matches(head, entry, _ANNOUNCE_PREFIXES, grouped):
+                entry['announced'] = False
+                entry['last_reminder_at'] = None
+            else:
+                continue
             matched = True
-        elif head_matches(head, entry, _ANNOUNCE_PREFIXES):
-            entry['announced'] = False
-            entry['last_reminder_at'] = None
-            matched = True
-        else:
-            continue
-        release_dwell_group(state, fp)  # the state's other alerts are due again too
-    return matched
+            release_dwell_group(state, fp)  # the state's other alerts are due again too
+        if matched:
+            return True
+    return False
 
 
 def record_send(state, text, ok, fingerprint=None):

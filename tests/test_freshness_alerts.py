@@ -593,6 +593,14 @@ class DwellOpsTests(unittest.TestCase):
         self.assertFalse(state['alerts'][fp_of(a)]['announced'])
         self.assertEqual(state['ops']['failed'], [])
 
+    def test_exact_head_wins_over_a_group_count(self):
+        plain, literal = alert('nightly'), alert('nightly (and 1 more re-review item stuck)')
+        actions, state = A.plan_alerts([plain, literal], [], [], None, 'r1', NOW)
+        text = [x['text'] for x in ops(actions) if 'stuck' in x['text']][0]
+        A.record_send(state, text, False)  # no fingerprint, as for a digest line
+        self.assertFalse(state['alerts'][fp_of(literal)]['announced'])
+        self.assertTrue(state['alerts'][fp_of(plain)]['announced'])
+
     def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
         raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]
         actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)

@@ -161,7 +161,9 @@ def _fit(text):
         return '\n'.join(kept)
     head, sep, url = text.rpartition(': ')
     if sep and url.startswith('http') and len(url) < MESSAGE_MAX - 40:
-        return head[:MESSAGE_MAX - len(url) - 5] + '...: ' + url
+        bare = amod.strip_group_note(head)
+        note = head[len(bare):]  # a dwell state's count is kept (FRS-17)
+        return bare[:MESSAGE_MAX - len(url) - len(note) - 5] + '...' + note + ': ' + url
     return text[:MESSAGE_MAX - 3] + '...'
 
 
@@ -219,14 +221,17 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
     for line in pending:
         head, _, tail = line.rpartition(': ')
         kinds = {}
-        for fp in sorted(table):
-            if fp in used:
-                continue
-            entry = table[fp]
-            if amod.head_matches(head, entry, amod._ANNOUNCE_PREFIXES):  # with a dwell count (FRS-17)
-                kinds[fp] = 'announce'
-            elif amod.head_matches(head, entry, (amod._REMINDER_PREFIX,)):
-                kinds[fp] = 'reminder'
+        for grouped in (False, True):  # then without a dwell count (FRS-17)
+            for fp in sorted(table):
+                if fp in used:
+                    continue
+                entry = table[fp]
+                if amod.head_matches(head, entry, amod._ANNOUNCE_PREFIXES, grouped):
+                    kinds[fp] = 'announce'
+                elif amod.head_matches(head, entry, (amod._REMINDER_PREFIX,), grouped):
+                    kinds[fp] = 'reminder'
+            if kinds:
+                break
         if not kinds:
             items.append({'line': line, 'fp': None, 'type': 'other', 'args': None})
             continue
@@ -376,6 +381,14 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     failed_fps = set(r.get('fingerprint') for r in results
                      if r.get('op') in ('open_issue', 'reopen') and not r.get('ok'))
 
+    # Dwell alerts announced inside their state's one message, before any
+    # send can release the group (FRS-17, FRS-23).
+    def link_of(fp):
+        entry = table[fp]
+        return opened_urls.get(fp) or open_urls.get(fp) or (
+            amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None)
+    _attend_group_members(new, table, link_of, failed_fps, attended, call_attention)
+
     # 1. Part 1's planned messages: their cap slots are already counted.
     incoming_digest = False
     for result in planned:
@@ -396,12 +409,6 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
             attended.add(fp)
         ok = send(_clean(text), config, run)
         amod.record_send(new, text, ok, fp)
-
-    def link_of(fp):
-        entry = table[fp]
-        return opened_urls.get(fp) or open_urls.get(fp) or (
-            amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None)
-    _attend_group_members(new, table, link_of, failed_fps, attended, call_attention)
 
     # 2. This function's announcements, under the same daily cap.
     digest_open = bool(incoming_digest or not ops['digest_sent'])

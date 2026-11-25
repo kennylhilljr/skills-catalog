@@ -467,6 +467,27 @@ class DwellGroupTest(unittest.TestCase):
         self.assertEqual([c[1] for c in att.calls], [url(90)])
         self.assertEqual(again['ops']['dwell_groups']['re-review']['attend'], [])
 
+    def test_failed_direct_send_still_gives_every_member_attention(self):
+        subjects = ['re-review:a', 're-review:b']
+        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(subjects)]
+        state, results = self._planned(actions_half([alert(x) for x in subjects], [], S.empty_state()),
+                                       subjects, open_issues)
+        att = FakeAttention()
+        new = mac(open_issues, state, FakeRun(fail={1}), att, ops_results=results)
+        self.assertEqual(sorted(c[1] for c in att.calls), [url(80), url(81)])
+        self.assertEqual(new['ops']['dwell_groups'], {})
+
+    def test_long_subject_keeps_the_group_count(self):
+        long_ids = ['re-review:' + c * 350 for c in 'ab']
+        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(long_ids)]
+        state, results = self._planned(actions_half([alert(x) for x in long_ids], [], S.empty_state()),
+                                       long_ids, open_issues)
+        run = FakeRun()
+        mac(open_issues, state, run, ops_results=results)
+        text = run.texts()[0]
+        self.assertLessEqual(len(text), N.MESSAGE_MAX)
+        self.assertIn('(and 1 more re-review item stuck): ' + A.ISSUE_URL_BASE, text)
+
     def test_member_whose_issue_was_not_opened_is_due_again(self):
         subjects = ['re-review:a', 're-review:b']
         actions, state = A.plan_alerts([alert(x) for x in subjects], [], [], S.empty_state(), 'run-m', NOW)
