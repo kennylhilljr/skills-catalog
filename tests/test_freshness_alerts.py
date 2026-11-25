@@ -347,6 +347,54 @@ class CloseTests(unittest.TestCase):
         self.assertEqual(state['alerts'][fp_of(self.a)]['clean_runs'], [])
 
 
+class OutOfScopeReminderTests(unittest.TestCase):
+    """FRS-17, FRS-24."""
+
+    ACTIONS_SCOPE = {'canary', 'dwell', 'source-failing', 'heartbeat-mac'}
+
+    def setUp(self):
+        self.a = alert('zz-canary', kind='canary')
+        _, state = A.plan_alerts([self.a], [], [], S.empty_state(), 'a1', NOW,
+                                 scope=self.ACTIONS_SCOPE, announce=False)
+        state['alerts'][fp_of(self.a)]['announced'] = True
+        state['alerts'][fp_of(self.a)]['last_reminder_at'] = S.iso(NOW)
+        self.state = state
+        self.open = opened(state, self.a, 11)
+
+    def mac(self, state, run_id, when):
+        return A.plan_alerts([], self.open, [], state, run_id, when, scope={'heartbeat-actions'})
+
+    def test_mac_run_reminds_open_actions_alert(self):
+        actions, state = self.mac(self.state, 'm1', NOW + 2 * DAY)
+        sent = ops(actions)
+        self.assertEqual(len(sent), 1)
+        self.assertIn('still open', sent[0]['text'])
+        self.assertIn('/issues/11', sent[0]['text'])
+        self.assertEqual(sent[0]['fingerprint'], fp_of(self.a))
+        self.assertEqual(of(actions, 'close'), [])
+        entry = state['alerts'][fp_of(self.a)]
+        self.assertEqual(entry['clean_runs'], [])
+        self.assertEqual(entry['last_reminder_at'], S.iso(NOW + 2 * DAY))
+
+    def test_reminder_respects_cooldown(self):
+        _, state = self.mac(self.state, 'm1', NOW + 2 * DAY)
+        actions, _ = self.mac(state, 'm2', NOW + 2 * DAY + 2 * HOUR)
+        self.assertEqual(ops(actions), [])
+        self.assertEqual(of(actions, 'close'), [])
+
+    def test_actions_half_still_sends_nothing(self):
+        actions, _ = A.plan_alerts([], self.open, [], self.state, 'a2', NOW + 2 * DAY,
+                                   scope=self.ACTIONS_SCOPE, announce=False)
+        self.assertEqual(ops(actions), [])
+
+    def test_unannounced_entry_gets_no_reminder(self):
+        state = copy.deepcopy(self.state)
+        state['alerts'][fp_of(self.a)]['announced'] = False
+        state['alerts'][fp_of(self.a)]['last_reminder_at'] = None
+        actions, _ = self.mac(state, 'm1', NOW + 2 * DAY)
+        self.assertFalse([m for m in ops(actions) if 'still open' in m['text']])
+
+
 class FindingPlanTests(unittest.TestCase):
     """FRS-13."""
 

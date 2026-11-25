@@ -255,7 +255,9 @@ def plan_alerts(alerts, open_issues, closed_issues, state, run_id, now, scope=No
     "closed_at"}` parsed from the fingerprint marker of alert issues.
     `scope`: the alert kinds this run checks, or None for all; an open alert
     of another kind is not counted clean by this run (the Actions and Mac
-    halves raise different kinds). `announce=False` plans no ops messages
+    halves raise different kinds). An already announced open alert of
+    another kind still gets its daily reminder from this run (FRS-24),
+    because the half that raises it may not send ops messages. `announce=False` plans no ops messages
     and leaves the ops state alone (the Actions half only opens issues,
     FRS-23).
 
@@ -346,6 +348,9 @@ def plan_alerts(alerts, open_issues, closed_issues, state, run_id, now, scope=No
         if fp in raised or entry.get('closed_at'):
             continue
         if scope is not None and entry.get('kind') != 'storm' and entry.get('kind') not in scope:
+            if (fp in open_by_fp and entry.get('announced')
+                    and _elapsed(entry.get('last_reminder_at'), now, COOLDOWN) and fp not in reminders):
+                reminders.append(fp)
             continue
         issue = open_by_fp.get(fp)
         if issue is None:
