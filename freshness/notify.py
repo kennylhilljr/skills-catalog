@@ -161,7 +161,9 @@ def _fit(text):
         return '\n'.join(kept)
     head, sep, url = text.rpartition(': ')
     if sep and url.startswith('http') and len(url) < MESSAGE_MAX - 40:
-        return head[:MESSAGE_MAX - len(url) - 5] + '...: ' + url
+        bare = amod.strip_group_note(head)
+        note = head[len(bare):]  # a dwell state's count is kept (FRS-17)
+        return bare[:MESSAGE_MAX - len(url) - len(note) - 5] + '...' + note + ': ' + url
     return text[:MESSAGE_MAX - 3] + '...'
 
 
@@ -204,7 +206,7 @@ def _fit_digest(items):
     return included, []
 
 
-def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()):
+def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=(), state=None):
     """Tie the planner's digest lines to alert fingerprints.
 
     The planner folds announcements in fingerprint order, and two subjects
@@ -218,15 +220,18 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
     used, items = set(direct), []
     for line in pending:
         head, _, tail = line.rpartition(': ')
-        kinds = {}
-        for fp in sorted(table):
-            if fp in used:
-                continue
-            entry = table[fp]
-            if any(head == amod._ops_head(p, entry) for p in amod._ANNOUNCE_PREFIXES):
-                kinds[fp] = 'announce'
-            elif head == amod._ops_head(amod._REMINDER_PREFIX, entry):
-                kinds[fp] = 'reminder'
+        kinds, grouped = {}, False
+        for grouped, only in amod.match_passes(state):  # a dwell group first (FRS-17)
+            for fp in sorted(table):
+                if fp in used or (only is not None and fp not in only):
+                    continue
+                entry = table[fp]
+                if amod.head_matches(head, entry, amod._ANNOUNCE_PREFIXES, grouped):
+                    kinds[fp] = 'announce'
+                elif amod.head_matches(head, entry, (amod._REMINDER_PREFIX,), grouped):
+                    kinds[fp] = 'reminder'
+            if kinds:
+                break
         if not kinds:
             items.append({'line': line, 'fp': None, 'type': 'other', 'args': None})
             continue
@@ -243,9 +248,10 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
         used.add(fp)
         entry = table[fp]
         link = tail if tail.startswith('http') else link_of(fp)
-        item = {'line': head + ': ' + (link or ''), 'fp': fp, 'type': kinds[fp], 'args': None}
+        item = {'line': head + ': ' + (link or ''), 'fp': fp, 'type': kinds[fp], 'args': None,
+                'grouped': grouped}
         if link is None or fp in failed_fps:
-            _due_again(None, item, table)
+            _due_again(state, item, table)
             continue
         if item['type'] == 'announce':
             item['args'] = (entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
@@ -258,6 +264,12 @@ def _due_again(state, item, table=None):
     """Make a digest item that was not delivered due on the next run (FRS-25)."""
     table = table if table is not None else state.get('alerts') or {}
     entry = table.get(item['fp']) if item['fp'] else None
+    if state is not None and item['fp']:
+        amod.release_dwell_group(state, item['fp'])  # the state's other alerts too (FRS-17)
+        if item.get('grouped'):
+            # Tied by its text without a dwell count, which another alert may
+            # match exactly: reset every match; at worst one is sent twice.
+            amod._reset_alert_message(state, item['line'])
     if item['type'] == 'announce' and entry is not None:
         entry['announced'] = False
         entry['last_reminder_at'] = None
@@ -267,6 +279,32 @@ def _due_again(state, item, table=None):
         failed = state['ops'].setdefault('failed', [])
         if item['line'] not in failed:
             failed.append(item['line'])
+
+
+def _attend_group_members(state, table, link_of, failed_fps, attended, call_attention):
+    """Attention for dwell alerts announced inside their state's one message (FRS-17, FRS-23).
+
+    A member whose issue could not be opened is due again; one with no
+    issue URL yet waits for the next run.
+    """
+    for group in (state['ops'].get('dwell_groups') or {}).values():
+        keep = []
+        for fp in group.get('attend') or []:
+            entry = table.get(fp)
+            if entry is None or entry.get('closed_at') or fp in attended:
+                continue
+            if fp in failed_fps:
+                entry['announced'] = False
+                entry['last_reminder_at'] = None
+                continue
+            link = link_of(fp)
+            if link is None:
+                keep.append(fp)
+                continue
+            call_attention(entry['kind'], link, amod.alert_title(entry['kind'], entry['subject']),
+                           'freshness alert ' + entry['kind'] + ' is open for ' + entry['subject'])
+            attended.add(fp)
+        group['attend'] = keep
 
 
 def _new_entry(kind, subject, number):
@@ -348,6 +386,14 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     failed_fps = set(r.get('fingerprint') for r in results
                      if r.get('op') in ('open_issue', 'reopen') and not r.get('ok'))
 
+    # Dwell alerts announced inside their state's one message, before any
+    # send can release the group (FRS-17, FRS-23).
+    def link_of(fp):
+        entry = table[fp]
+        return opened_urls.get(fp) or open_urls.get(fp) or (
+            amod.ISSUE_URL_BASE + str(entry['issue']) if entry.get('issue') is not None else None)
+    _attend_group_members(new, table, link_of, failed_fps, attended, call_attention)
+
     # 1. Part 1's planned messages: their cap slots are already counted.
     incoming_digest = False
     for result in planned:
@@ -375,7 +421,7 @@ def announce(open_alert_issues, state, config, run, attention_fn, now, ops_resul
     if digest_open:
         direct = set(r.get('fingerprint') for r in planned
                      if not (r.get('text') or '').startswith(amod.DIGEST_PREFIX))
-        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps, direct)
+        items = _match_pending(ops['pending'], table, opened_urls, open_urls, failed_fps, direct, new)
     for fp, text, args in mine:
         text = amod.scrub_text(text)
         if ops['sent'] < amod.OPS_PER_DAY:

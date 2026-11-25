@@ -1,6 +1,6 @@
 """Tests for freshness/finding.py, freshness/state.py and freshness/alerts.py.
 
-Requirements: FRS-13, FRS-22, FRS-24, FRS-25, FRS-27 (docs/SPEC.md).
+Requirements: FRS-13, FRS-17, FRS-22, FRS-24, FRS-25, FRS-27 (docs/SPEC.md).
 Pure logic: no network, GitHub, gh or openclaw. `now` is passed in.
 """
 
@@ -11,6 +11,7 @@ import os
 import unittest
 
 from freshness import alerts as A
+from freshness import dwell as D
 from freshness import finding as F
 from freshness import state as S
 
@@ -308,7 +309,7 @@ class CapTests(unittest.TestCase):
         rolled = S.roll_day({'ops': {'day': '2026-11-18', 'sent': 6, 'digest_sent': True,
                                      'pending': ['p'], 'failed': ['f']}}, tomorrow)
         self.assertEqual(rolled['ops'], {'day': '2026-11-19', 'sent': 0, 'digest_sent': False,
-                                         'pending': [], 'failed': ['f']})
+                                         'pending': [], 'failed': ['f'], 'dwell_groups': {}})
 
 
 class CloseTests(unittest.TestCase):
@@ -517,6 +518,243 @@ class StateTests(unittest.TestCase):
         self.assertEqual(state, before)
         with self.assertRaises(ValueError):
             A.plan_alerts([alert()], [], [], state, 'r1', datetime.datetime(2026, 11, 18))
+
+
+def stuck(name, *ids, now=NOW):
+    """Dwell alerts for items stuck in dwell state `name` (freshness/dwell.check_dwell)."""
+    since = S.iso(now - 30 * DAY)
+    return D.check_dwell(name, [{'id': i, 'since': since} for i in ids], now)
+
+
+def open_list(alerts_, first=60):
+    return [{'number': first + i, 'fingerprint': fp_of(a), 'closed_at': None} for i, a in enumerate(alerts_)]
+
+
+def past_cap():
+    """plan_alerts arguments for one ordinary and two re-review alerts after the day's 6 messages."""
+    state = S.roll_day(S.empty_state(), NOW)
+    state['ops']['sent'] = A.OPS_PER_DAY
+    raised = [alert('p0')] + stuck('re-review', 1, 2)
+    return raised, open_list(raised), [], state, 'r1', NOW
+
+
+class DwellOpsTests(unittest.TestCase):
+    """FRS-17: one ops message per dwell state per UTC day."""
+
+    def test_issue_example_two_items_one_message_with_count(self):
+        raised = stuck('re-review', 3, 4)
+        actions, state = A.plan_alerts(raised, [], [], None, 'r', NOW)
+        sent = ops(actions)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(len(of(actions, 'open_issue')), 2)  # each item keeps its issue
+        rep = min(fp_of(a) for a in raised)
+        self.assertEqual(sent[0]['fingerprint'], rep)
+        self.assertIn('(and 1 more re-review item stuck)', sent[0]['text'])
+        self.assertTrue(sent[0]['text'].endswith(': ' + A.ISSUE_URL_PLACEHOLDER))
+        self.assertEqual(state['ops']['sent'], 1)
+        self.assertTrue(all(state['alerts'][fp_of(a)]['announced'] for a in raised))
+        self.assertEqual(set(state['ops']['dwell_groups']['re-review']['members']), {fp_of(a) for a in raised})
+
+    def test_counts_plural_and_duplicates_once(self):
+        raised = stuck('re-review', 1, 2, 3)
+        actions, _ = A.plan_alerts(raised + raised[:1], [], [], None, 'r', NOW)
+        self.assertEqual(len(ops(actions)), 1)
+        self.assertIn('(and 2 more re-review items stuck)', ops(actions)[0]['text'])
+
+    def test_every_state_prefix_is_grouped_and_states_are_separate(self):
+        for name in D.STATES:
+            raised = [alert(name + ':a'), alert(name + ':b', kind='other-kind')]
+            actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)
+            self.assertEqual(len(ops(actions)), 1, name)
+        raised = stuck('re-review', 1, 2) + [alert('freshness-pr-unreviewed:5'), alert('freshness-pr-unreviewed:6')]
+        actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)
+        self.assertEqual(len(ops(actions)), 2)
+
+    def test_subject_withheld_by_the_scrub_is_still_grouped(self):
+        home = '/' + 'Users' + '/someone/'
+        raised = [alert('re-review:' + home + 'a'), alert('re-review:' + home + 'b')]
+        actions, state = A.plan_alerts(raised, [], [], None, 'r', NOW)
+        self.assertTrue(all('withheld' in state['alerts'][fp_of(a)]['subject'] for a in raised))
+        self.assertEqual(len(ops(actions)), 1)
+        self.assertIn('(and 1 more re-review item stuck)', ops(actions)[0]['text'])
+        # The Mac half still groups them from a state the Actions half wrote.
+        _, actions_state = A.plan_alerts(raised, [], [], None, 'r', NOW, announce=False)
+        actions, _ = A.plan_alerts([], open_list(raised), [], S.load(S.dump(actions_state)), 'r2', NOW + HOUR)
+        self.assertEqual(len(ops(actions)), 1)
+
+    def test_subject_that_looks_like_a_group_count_still_retries(self):
+        a = alert('nightly (and 1 more re-review item stuck)')
+        actions, state = A.plan_alerts([a], [], [], None, 'r1', NOW)
+        A.record_send(state, ops(actions)[0]['text'], False, fingerprint=fp_of(a))
+        self.assertFalse(state['alerts'][fp_of(a)]['announced'])
+        self.assertEqual(state['ops']['failed'], [])
+        actions, state = A.plan_alerts([a], [], [], None, 'r1', NOW)
+        A.record_send(state, ops(actions)[0]['text'], False)
+        self.assertFalse(state['alerts'][fp_of(a)]['announced'])
+        self.assertEqual(state['ops']['failed'], [])
+
+    def test_ambiguous_failed_text_resets_every_match(self):
+        plain, literal = alert('nightly'), alert('nightly (and 1 more re-review item stuck)')
+        actions, state = A.plan_alerts([plain, literal], [], [], None, 'r1', NOW)
+        text = [x['text'] for x in ops(actions) if 'stuck' in x['text']][0]
+        A.record_send(state, text, False)  # no fingerprint, as for a digest line
+        self.assertFalse(state['alerts'][fp_of(literal)]['announced'])
+        self.assertEqual(state['ops']['failed'], [])
+        # With the fingerprint only that alert is due again.
+        actions, state = A.plan_alerts([plain, literal], [], [], None, 'r1', NOW)
+        text = [x for x in ops(actions) if 'stuck' in x['text']][0]
+        A.record_send(state, text['text'], False, fingerprint=text['fingerprint'])
+        self.assertFalse(state['alerts'][fp_of(literal)]['announced'])
+        self.assertTrue(state['alerts'][fp_of(plain)]['announced'])
+
+    def test_group_message_wins_over_a_member_named_like_it(self):
+        raised = [alert('re-review:0'), alert('re-review:0 (and 1 more re-review item stuck)')]
+        args = list(past_cap())
+        args[0], args[1] = raised, open_list(raised)
+        actions, state = A.plan_alerts(*args)
+        A.record_send(state, ops(actions)[-1]['text'], False)  # the digest failed
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised))
+
+    def test_ordinary_line_named_like_a_group_message_is_retried(self):
+        home = '/' + 'Users' + '/someone/'
+        dwells = [alert('re-review:' + home + 'a'), alert('re-review:' + home + 'b')]
+        withheld = '[line withheld by the scrub: home-path]'
+        ordinary = alert(withheld + ' (and 1 more re-review item stuck)')
+        actions, state = A.plan_alerts(dwells + [ordinary], [], [], None, 'r1', NOW)
+        self.assertEqual(state['alerts'][fp_of(dwells[0])]['subject'], withheld)
+        texts = [x['text'] for x in ops(actions)]
+        self.assertEqual(len(texts), 2)
+        self.assertEqual(texts[0].rsplit(': ', 1)[0], texts[1].rsplit(': ', 1)[0])
+        A.record_send(state, texts[0], False)  # no fingerprint: every match is due again
+        self.assertFalse(state['alerts'][fp_of(ordinary)]['announced'])
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in dwells))
+
+    def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
+        raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]
+        actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)
+        self.assertEqual(len(ops(actions)), 5)
+
+    def test_one_slot_against_the_cap_and_group_in_digest(self):
+        raised = [alert('o' + str(i)) for i in range(5)] + stuck('re-review', 1, 2, 3)
+        actions, state = A.plan_alerts(raised, [], [], None, 'r', NOW)
+        self.assertEqual(len(ops(actions)), 6)
+        self.assertEqual(state['ops']['sent'], 6)
+        self.assertFalse(state['ops']['digest_sent'])
+        # Past the cap a group adds one digest line.
+        actions, state = A.plan_alerts(*past_cap())
+        sent = ops(actions)
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0]['text'].startswith(A.DIGEST_PREFIX + 'daily cap of 6 ops messages reached, 2 more'))
+        self.assertIn('(and 1 more re-review item stuck)', sent[0]['text'])
+        self.assertEqual(len(state['ops']['pending']), 2)
+        self.assertIn('re-review', state['ops']['dwell_groups'])
+
+    def test_later_runs_same_day_send_nothing_more_for_the_state(self):
+        first = stuck('re-review', 1, 2)
+        actions, state = A.plan_alerts(first, [], [], None, 'r1', NOW)
+        open_now = open_list(first)
+        later = first + stuck('re-review', 9, now=NOW + HOUR)
+        actions, state = A.plan_alerts(later, open_now, [], state, 'r2', NOW + HOUR)
+        self.assertEqual(ops(actions), [])
+        self.assertEqual(len(of(actions, 'open_issue')), 1)
+        self.assertEqual(state['ops']['sent'], 1)
+        new_fp = fp_of(later[-1])
+        self.assertTrue(state['alerts'][new_fp]['announced'])
+        self.assertIn(new_fp, state['ops']['dwell_groups']['re-review']['members'])
+        # Another state still gets its message.
+        other = [alert('freshness-pr-unreviewed:7')]
+        actions, state = A.plan_alerts(later + other, open_now + open_list(later[-1:], 70), [], state, 'r3',
+                                       NOW + 2 * HOUR)
+        self.assertEqual(len(ops(actions)), 1)
+
+    def test_next_utc_day_one_reminder_for_the_state(self):
+        raised = stuck('re-review', 1, 2, 3)
+        _, state = A.plan_alerts(raised, [], [], None, 'r1', NOW)
+        open_now = open_list(raised)
+        actions, state = A.plan_alerts(raised, open_now, [], state, 'r2', NOW + DAY)
+        sent = ops(actions)
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0]['text'].startswith('skills-catalog freshness-alert still open: '))
+        self.assertIn('(and 2 more re-review items stuck)', sent[0]['text'])
+        self.assertEqual(state['ops']['day'], '2026-11-19')
+        self.assertTrue(all(state['alerts'][fp_of(a)]['last_reminder_at'] == S.iso(NOW + DAY) for a in raised))
+        actions, _ = A.plan_alerts(raised, open_now, [], state, 'r3', NOW + DAY + HOUR)
+        self.assertEqual(ops(actions), [])
+
+    def test_failed_announcement_frees_the_slot_and_retries_with_current_urls(self):
+        raised = stuck('re-review', 1, 2, 3)
+        actions, state = A.plan_alerts(raised, [], [], None, 'r1', NOW)
+        send = ops(actions)[0]
+        text = send['text'].replace(A.ISSUE_URL_PLACEHOLDER, A.ISSUE_URL_BASE + '61')
+        A.record_send(state, text, False, fingerprint=send['fingerprint'])
+        self.assertEqual(state['ops']['sent'], 0)
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertEqual(state['ops']['failed'], [])
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised))
+        # The representative closed in between; the retry names a current issue.
+        rep = send['fingerprint']
+        still = [a for a in raised if fp_of(a) != rep]
+        closed = [{'number': 99, 'fingerprint': rep, 'closed_at': S.iso(NOW + HOUR)}]
+        open_now = open_list(still)
+        actions, state = A.plan_alerts(still, open_now, closed, state, 'r2', NOW + 2 * HOUR)
+        sent = ops(actions)
+        self.assertEqual(len(sent), 1)
+        self.assertNotEqual(sent[0]['fingerprint'], rep)
+        self.assertIn('(and 1 more re-review item stuck)', sent[0]['text'])
+        number = [i['number'] for i in open_now if i['fingerprint'] == sent[0]['fingerprint']][0]
+        self.assertTrue(sent[0]['text'].endswith(A.ISSUE_URL_BASE + str(number)))
+
+    def test_failed_reminder_and_send_without_fingerprint_free_the_slot(self):
+        raised = stuck('re-review', 1, 2)
+        _, state = A.plan_alerts(raised, [], [], None, 'r1', NOW)
+        open_now = open_list(raised)
+        actions, state = A.plan_alerts(raised, open_now, [], state, 'r2', NOW + DAY)
+        A.record_send(state, ops(actions)[0]['text'], False)  # no fingerprint
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertEqual(state['ops']['failed'], [])
+        self.assertTrue(all(state['alerts'][fp_of(a)]['last_reminder_at'] is None for a in raised))
+        actions, _ = A.plan_alerts(raised, open_now, [], state, 'r3', NOW + DAY + HOUR)
+        self.assertEqual(len(ops(actions)), 1)
+
+    def test_successful_send_keeps_the_slot(self):
+        raised = stuck('re-review', 1, 2)
+        actions, state = A.plan_alerts(raised, [], [], None, 'r1', NOW)
+        A.record_send(state, ops(actions)[0]['text'], True, fingerprint=ops(actions)[0]['fingerprint'])
+        self.assertIn('re-review', state['ops']['dwell_groups'])
+
+    def test_failed_digest_with_group_frees_every_member(self):
+        args = past_cap()
+        raised = args[0]
+        actions, state = A.plan_alerts(*args)
+        A.record_send(state, ops(actions)[-1]['text'], False)
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertEqual(state['ops']['failed'], [])
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised[-2:]))
+
+    def test_announce_false_reserves_nothing(self):
+        raised = stuck('re-review', 1, 2)
+        actions, state = A.plan_alerts(raised, [], [], None, 'r1', NOW, announce=False)
+        self.assertEqual(ops(actions), [])
+        self.assertEqual(state['ops']['dwell_groups'], {})
+        # The Mac half announces both later with one message.
+        actions, state = A.plan_alerts([], open_list(raised), [], state, 'r2', NOW + HOUR)
+        self.assertEqual(len(ops(actions)), 1)
+
+    def test_state_round_trip_legacy_load_and_no_mutation(self):
+        legacy = S.dump({'ops': {'day': '2026-11-18', 'sent': 1, 'digest_sent': False, 'pending': [], 'failed': []}})
+        self.assertEqual(S.load(legacy)['ops']['dwell_groups'], {})
+        raised = stuck('re-review', 1, 2)
+        state = S.load(legacy)
+        before = copy.deepcopy(state)
+        actions, planned = A.plan_alerts(raised, [], [], state, 'r1', NOW)
+        self.assertEqual(state, before)
+        reloaded = S.load(S.dump(planned))
+        self.assertEqual(reloaded['ops']['dwell_groups'], planned['ops']['dwell_groups'])
+        actions, _ = A.plan_alerts(stuck('re-review', 5), [], [], reloaded, 'r2', NOW + HOUR)
+        self.assertEqual(ops(actions), [])
+        self.assertEqual(S.roll_day(reloaded, NOW + DAY)['ops']['dwell_groups'], {})
 
 
 if __name__ == '__main__':
