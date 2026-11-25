@@ -23,7 +23,7 @@ def parse_args(argv=None):
         description='Serve the skills of one catalog tag over MCP.',
     )
     parser.add_argument('--repo', default=DEFAULT_REPO, help='catalog git repository (default: the parent of server/)')
-    parser.add_argument('--ref', default=None, help='tag to serve (default: the highest v* tag)')
+    parser.add_argument('--ref', default=None, help='tag to serve (default: the highest v<digit>... tag by version order)')
     parser.add_argument('--exclude-file', default=DEFAULT_EXCLUDE_FILE, help='local exclusion list (default: %(default)s)')
     parser.add_argument('--transport', default='stdio', choices=transport.TRANSPORTS,
                         help='stdio (default) or streamable HTTP on loopback')

@@ -15,13 +15,13 @@ uv run --directory server --frozen python -m skills_catalog_mcp --repo ..
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--repo PATH` | the parent of `server/` | the catalog git repository |
-| `--ref TAG` | the highest `v*` tag in version order, the same one `tools/install-local` picks; a pre-release such as `v1.0-rc1` ranks below `v1.0` | the tag to serve; a branch or a commit sha is refused |
+| `--ref TAG` | the highest `v<digit>...` tag in version order, the same one `tools/install-local` picks; a pre-release such as `v1.0-rc1` ranks below `v1.0`, and git config and tag dates play no part (`tag_sort_key` in `snapshot.py`) | the tag to serve; a branch or a commit sha is refused |
 | `--exclude-file PATH` | `~/.config/skills-catalog/exclude.txt` | the local exclusion list (DESIGN 5.1) |
 | `--transport stdio` | `stdio` | the transport |
 | `--tag-trust reviewed\|any` | `reviewed` for HTTP, `any` for stdio | `reviewed` serves only an annotated tag whose commit is an ancestor of `--main-ref` |
 | `--main-ref REF` | `origin/main` | the branch a reviewed tag must be on |
 
-The server exits with status 2 and `error: no catalog tag` when the repository has no `v*` tag, and `error: ref is not a tag` when `--ref` names anything but a tag.
+The server exits with status 2 and `error: no catalog tag` when the repository has no tag named `v<digit>...`, and `error: ref is not a tag` when `--ref` names anything but a tag.
 
 ### Reviewed tags
 
