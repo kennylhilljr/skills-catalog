@@ -593,11 +593,17 @@ class DwellOpsTests(unittest.TestCase):
         self.assertFalse(state['alerts'][fp_of(a)]['announced'])
         self.assertEqual(state['ops']['failed'], [])
 
-    def test_exact_head_wins_over_a_group_count(self):
+    def test_ambiguous_failed_text_resets_every_match(self):
         plain, literal = alert('nightly'), alert('nightly (and 1 more re-review item stuck)')
         actions, state = A.plan_alerts([plain, literal], [], [], None, 'r1', NOW)
         text = [x['text'] for x in ops(actions) if 'stuck' in x['text']][0]
         A.record_send(state, text, False)  # no fingerprint, as for a digest line
+        self.assertFalse(state['alerts'][fp_of(literal)]['announced'])
+        self.assertEqual(state['ops']['failed'], [])
+        # With the fingerprint only that alert is due again.
+        actions, state = A.plan_alerts([plain, literal], [], [], None, 'r1', NOW)
+        text = [x for x in ops(actions) if 'stuck' in x['text']][0]
+        A.record_send(state, text['text'], False, fingerprint=text['fingerprint'])
         self.assertFalse(state['alerts'][fp_of(literal)]['announced'])
         self.assertTrue(state['alerts'][fp_of(plain)]['announced'])
 
@@ -609,6 +615,20 @@ class DwellOpsTests(unittest.TestCase):
         A.record_send(state, ops(actions)[-1]['text'], False)  # the digest failed
         self.assertEqual(state['ops']['dwell_groups'], {})
         self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised))
+
+    def test_ordinary_line_named_like_a_group_message_is_retried(self):
+        home = '/' + 'Users' + '/someone/'
+        dwells = [alert('re-review:' + home + 'a'), alert('re-review:' + home + 'b')]
+        withheld = '[line withheld by the scrub: home-path]'
+        ordinary = alert(withheld + ' (and 1 more re-review item stuck)')
+        raised = dwells + [ordinary]
+        args = list(past_cap())
+        args[0], args[1] = raised, open_list(raised)
+        actions, state = A.plan_alerts(*args)
+        self.assertEqual(state['alerts'][fp_of(dwells[0])]['subject'], withheld)
+        A.record_send(state, ops(actions)[-1]['text'], False)  # the digest failed
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised))
+        self.assertEqual(state['ops']['dwell_groups'], {})
 
     def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
         raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]

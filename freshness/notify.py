@@ -220,7 +220,7 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
     used, items = set(direct), []
     for line in pending:
         head, _, tail = line.rpartition(': ')
-        kinds = {}
+        kinds, grouped = {}, False
         for grouped, only in amod.match_passes(state):  # a dwell group first (FRS-17)
             for fp in sorted(table):
                 if fp in used or (only is not None and fp not in only):
@@ -248,7 +248,8 @@ def _match_pending(pending, table, opened_urls, open_urls, failed_fps, direct=()
         used.add(fp)
         entry = table[fp]
         link = tail if tail.startswith('http') else link_of(fp)
-        item = {'line': head + ': ' + (link or ''), 'fp': fp, 'type': kinds[fp], 'args': None}
+        item = {'line': head + ': ' + (link or ''), 'fp': fp, 'type': kinds[fp], 'args': None,
+                'grouped': grouped}
         if link is None or fp in failed_fps:
             _due_again(state, item, table)
             continue
@@ -265,6 +266,10 @@ def _due_again(state, item, table=None):
     entry = table.get(item['fp']) if item['fp'] else None
     if state is not None and item['fp']:
         amod.release_dwell_group(state, item['fp'])  # the state's other alerts too (FRS-17)
+        if item.get('grouped'):
+            # Tied by its text without a dwell count, which another alert may
+            # match exactly: reset every match; at worst one is sent twice.
+            amod._reset_alert_message(state, item['line'])
     if item['type'] == 'announce' and entry is not None:
         entry['announced'] = False
         entry['last_reminder_at'] = None

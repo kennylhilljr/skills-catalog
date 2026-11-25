@@ -488,6 +488,21 @@ class DwellGroupTest(unittest.TestCase):
         self.assertLessEqual(len(text), N.MESSAGE_MAX)
         self.assertIn('(and 1 more re-review item stuck): ' + A.ISSUE_URL_BASE, text)
 
+    def test_failed_digest_retries_an_ordinary_line_named_like_a_group(self):
+        home = '/' + 'Users' + '/someone/'
+        withheld = '[line withheld by the scrub: home-path]'
+        subjects = ['re-review:' + home + 'a', 're-review:' + home + 'b',
+                    withheld + ' (and 1 more re-review item stuck)']
+        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(subjects)]
+        state = actions_half([alert(x) for x in subjects], [], S.empty_state())
+        state = S.roll_day(state, NOW)
+        state['ops']['sent'] = A.OPS_PER_DAY
+        state, results = self._planned(state, subjects, open_issues)
+        failed = mac(open_issues, state, FakeRun(fail={1}), ops_results=results)
+        fps = [F.fingerprint('dwell', x) for x in subjects]
+        self.assertFalse(any(failed['alerts'][fp]['announced'] for fp in fps))
+        self.assertEqual(failed['ops']['dwell_groups'], {})
+
     def test_member_whose_issue_was_not_opened_is_due_again(self):
         subjects = ['re-review:a', 're-review:b']
         actions, state = A.plan_alerts([alert(x) for x in subjects], [], [], S.empty_state(), 'run-m', NOW)

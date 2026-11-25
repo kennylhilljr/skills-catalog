@@ -411,9 +411,9 @@ def strip_group_note(head):
 def head_matches(head, entry, prefixes, grouped=False):
     """True when message head `head` is entry's head for one of `prefixes`.
 
-    `grouped` compares the head without its dwell group count instead; a
-    caller tries the exact head first, so a subject that itself ends like a
-    count never matches another alert.
+    `grouped` compares the head without its dwell group count instead, and
+    is False for a head with no count. See `match_passes` for the order in
+    which notify ties a digest line to one alert.
     """
     if grouped:
         bare = strip_group_note(head)
@@ -424,12 +424,12 @@ def head_matches(head, entry, prefixes, grouped=False):
 
 
 def match_passes(state):
-    """The order in which a message head is tied to alerts: `(grouped, fingerprints | None)`.
+    """The order in which notify ties a digest line to one alert: `(grouped, fingerprints | None)`.
 
     First the representative of a dwell group queued today, by its head
-    without the count; then the exact head; then any head without a count.
-    So neither a group's message nor a subject that itself ends like a count
-    is taken for another alert (FRS-17, FRS-25).
+    without the count; then the exact head; then any head without a count
+    (FRS-17, FRS-25). Text can be ambiguous, so a line that was not
+    delivered also resets every alert it matches (`_reset_alert_message`).
     """
     reps = set(g.get('fp') for g in ((state or {}).get('ops') or {}).get('dwell_groups', {}).values())
     return ((True, reps), (False, None), (True, None))
@@ -629,29 +629,25 @@ def _ops_head(prefix, entry):
 def _reset_alert_message(state, text, fingerprint=None):
     """Mark the alerts behind a failed ops message as due again; False if none.
 
-    Without a fingerprint every alert whose message matches is reset, since
-    two subjects can scrub to the same text; at worst one is sent twice.
+    Without a fingerprint every alert whose message matches is reset, with
+    or without a dwell group count (FRS-17), since two subjects can scrub to
+    the same text; at worst one is sent twice.
     """
     table = state.get('alerts') or {}
     head = text.rsplit(': ', 1)[0]
     entries = [(fingerprint, table[fingerprint])] if fingerprint in table else list(table.items())
-    for grouped, only in match_passes(state):
-        matched = False
-        for fp, entry in entries:
-            if only is not None and fp not in only:
-                continue
-            if head_matches(head, entry, (_REMINDER_PREFIX,), grouped):
-                entry['last_reminder_at'] = None
-            elif head_matches(head, entry, _ANNOUNCE_PREFIXES, grouped):
-                entry['announced'] = False
-                entry['last_reminder_at'] = None
-            else:
-                continue
-            matched = True
-            release_dwell_group(state, fp)  # the state's other alerts are due again too
-        if matched:
-            return True
-    return False
+    matched = False
+    for fp, entry in entries:
+        if any(head_matches(head, entry, (_REMINDER_PREFIX,), g) for g in (False, True)):
+            entry['last_reminder_at'] = None
+        elif any(head_matches(head, entry, _ANNOUNCE_PREFIXES, g) for g in (False, True)):
+            entry['announced'] = False
+            entry['last_reminder_at'] = None
+        else:
+            continue
+        matched = True
+        release_dwell_group(state, fp)  # the state's other alerts are due again too
+    return matched
 
 
 def record_send(state, text, ok, fingerprint=None):
