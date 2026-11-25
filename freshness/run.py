@@ -255,6 +255,17 @@ def _b64url(data):
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
 
 
+def _unhex_keychain(value):
+    """`security -w` prints a password holding a newline (every PEM key) as hex; decode it."""
+    text = value.strip()
+    if text and len(text) % 2 == 0 and all(c in b'0123456789abcdefABCDEF' for c in text):
+        try:
+            return bytes.fromhex(text.decode('ascii'))
+        except ValueError:
+            return value
+    return value
+
+
 def keychain_key(service, run=subprocess.run):
     """The App private key from the macOS Keychain; never written or printed."""
     try:
@@ -265,6 +276,7 @@ def keychain_key(service, run=subprocess.run):
     key = proc.stdout or b''
     if isinstance(key, str):
         key = key.encode('utf-8')
+    key = _unhex_keychain(key)
     if proc.returncode != 0 or b'PRIVATE KEY' not in key:
         raise RunError('cannot read the App key from the Keychain')
     return key.strip() + b'\n'
