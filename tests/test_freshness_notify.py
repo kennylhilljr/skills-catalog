@@ -488,20 +488,28 @@ class DwellGroupTest(unittest.TestCase):
         self.assertLessEqual(len(text), N.MESSAGE_MAX)
         self.assertIn('(and 1 more re-review item stuck): ' + A.ISSUE_URL_BASE, text)
 
-    def test_failed_digest_retries_an_ordinary_line_named_like_a_group(self):
+    def test_digest_line_is_not_taken_for_a_group_sent_earlier(self):
         home = '/' + 'Users' + '/someone/'
         withheld = '[line withheld by the scrub: home-path]'
-        subjects = ['re-review:' + home + 'a', 're-review:' + home + 'b',
-                    withheld + ' (and 1 more re-review item stuck)']
-        open_issues = [issue(80 + i, subject=x) for i, x in enumerate(subjects)]
-        state = actions_half([alert(x) for x in subjects], [], S.empty_state())
-        state = S.roll_day(state, NOW)
+        dwells = ['re-review:' + home + 'a', 're-review:' + home + 'b']
+        ordinary = withheld + ' (and 1 more re-review item stuck)'
+        dwell_issues = [issue(80 + i, subject=x) for i, x in enumerate(dwells)]
+        state, results = self._planned(actions_half([alert(x) for x in dwells], [], S.empty_state()),
+                                       dwells, dwell_issues)
+        state = mac(dwell_issues, state, FakeRun(), ops_results=results)  # the group, sent directly
+        self.assertIn('re-review', state['ops']['dwell_groups'])
         state['ops']['sent'] = A.OPS_PER_DAY
-        state, results = self._planned(state, subjects, open_issues)
-        failed = mac(open_issues, state, FakeRun(fail={1}), ops_results=results)
-        fps = [F.fingerprint('dwell', x) for x in subjects]
-        self.assertFalse(any(failed['alerts'][fp]['announced'] for fp in fps))
-        self.assertEqual(failed['ops']['dwell_groups'], {})
+        all_issues = dwell_issues + [issue(90, subject=ordinary)]
+        state = actions_half([alert(x) for x in dwells + [ordinary]], dwell_issues, state, NOW + HOUR)
+        state, results = self._planned(state, dwells + [ordinary], all_issues)
+        self.assertTrue(results[0]['text'].startswith(A.DIGEST_PREFIX))
+        run, att = FakeRun(), FakeAttention()
+        ok = mac(all_issues, state, run, att, now=NOW + HOUR, ops_results=results)
+        self.assertEqual([c[1] for c in att.calls], [url(90)])
+        self.assertTrue(ok['alerts'][F.fingerprint('dwell', ordinary)]['announced'])
+        failed = mac(all_issues, state, FakeRun(fail={1}), now=NOW + HOUR, ops_results=results)
+        self.assertFalse(failed['alerts'][F.fingerprint('dwell', ordinary)]['announced'])
+        self.assertIn('re-review', failed['ops']['dwell_groups'])  # its own message was delivered
 
     def test_member_whose_issue_was_not_opened_is_due_again(self):
         subjects = ['re-review:a', 're-review:b']

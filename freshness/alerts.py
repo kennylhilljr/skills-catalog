@@ -426,12 +426,14 @@ def head_matches(head, entry, prefixes, grouped=False):
 def match_passes(state):
     """The order in which notify ties a digest line to one alert: `(grouped, fingerprints | None)`.
 
-    First the representative of a dwell group queued today, by its head
-    without the count; then the exact head; then any head without a count
+    First the representative of a dwell group whose line is in today's
+    digest, by its head without the count; then the exact head; then any
+    head without a count
     (FRS-17, FRS-25). Text can be ambiguous, so a line that was not
     delivered also resets every alert it matches (`_reset_alert_message`).
     """
-    reps = set(g.get('fp') for g in ((state or {}).get('ops') or {}).get('dwell_groups', {}).values())
+    groups = ((state or {}).get('ops') or {}).get('dwell_groups') or {}
+    reps = set(g.get('fp') for g in groups.values() if g.get('digest'))
     return ((True, reps), (False, None), (True, None))
 
 
@@ -549,6 +551,9 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
         elif not ops['digest_sent']:
             ops['pending'].append(scrub_text(text.replace(ISSUE_URL_PLACEHOLDER, 'new issue')))
             on_queued()
+            for group in ops['dwell_groups'].values():
+                if group.get('fp') == fp:
+                    group['digest'] = True  # its line is in today's digest
         # After the digest, nothing more is sent that day; the item stays due.
     if ops['pending'] and not ops['digest_sent']:
         digest = (DIGEST_PREFIX + 'daily cap of ' + str(OPS_PER_DAY) + ' ops messages reached, '

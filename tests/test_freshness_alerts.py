@@ -621,14 +621,15 @@ class DwellOpsTests(unittest.TestCase):
         dwells = [alert('re-review:' + home + 'a'), alert('re-review:' + home + 'b')]
         withheld = '[line withheld by the scrub: home-path]'
         ordinary = alert(withheld + ' (and 1 more re-review item stuck)')
-        raised = dwells + [ordinary]
-        args = list(past_cap())
-        args[0], args[1] = raised, open_list(raised)
-        actions, state = A.plan_alerts(*args)
+        actions, state = A.plan_alerts(dwells + [ordinary], [], [], None, 'r1', NOW)
         self.assertEqual(state['alerts'][fp_of(dwells[0])]['subject'], withheld)
-        A.record_send(state, ops(actions)[-1]['text'], False)  # the digest failed
-        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in raised))
+        texts = [x['text'] for x in ops(actions)]
+        self.assertEqual(len(texts), 2)
+        self.assertEqual(texts[0].rsplit(': ', 1)[0], texts[1].rsplit(': ', 1)[0])
+        A.record_send(state, texts[0], False)  # no fingerprint: every match is due again
+        self.assertFalse(state['alerts'][fp_of(ordinary)]['announced'])
         self.assertEqual(state['ops']['dwell_groups'], {})
+        self.assertFalse(any(state['alerts'][fp_of(a)]['announced'] for a in dwells))
 
     def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
         raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]
