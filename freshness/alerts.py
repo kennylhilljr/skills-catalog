@@ -340,6 +340,13 @@ def plan_alerts(alerts, open_issues, closed_issues, state, run_id, now, scope=No
             folded.append(alert)
             raised.pop(fp)
 
+    # FRS-17: keep each alert's dwell state, since the scrub can withhold
+    # the stored subject and with it the `<state>:` prefix.
+    for fp, raw in raised.items():
+        name = dwell_state_of(raw.get('subject'))
+        if name and fp in table:
+            table[fp]['dwell_state'] = name
+
     if folded:
         _storm(folded, day, table, open_by_fp, closed_by_fp, issues, actions, raised, fresh, run_id, now)
 
@@ -434,8 +441,8 @@ def _group_dwell(ops, candidates):
     groups = ops.setdefault('dwell_groups', {})
     out, by_state = [], {}
     for cand in candidates:
-        fp, text, on_queued, how, subject = cand
-        name = dwell_state_of(subject) if how else None
+        fp, text, on_queued, how, entry = cand
+        name = (entry.get('dwell_state') or dwell_state_of(entry.get('subject'))) if how else None
         if name is None:
             out.append(cand[:3])
             continue
@@ -472,7 +479,7 @@ def _group_dwell(ops, candidates):
 def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
     """Ops messages under the daily cap, with one digest (FRS-17, FRS-23, FRS-24, FRS-25)."""
     ops = new['ops']
-    candidates = []  # (fingerprint, text, on_queued, 'announce' | 'reminder' | None, subject)
+    candidates = []  # (fingerprint, text, on_queued, 'announce' | 'reminder' | None, alert entry | None)
 
     for text in list(ops.get('failed') or []):
         def retried(text=text):
@@ -491,14 +498,14 @@ def _plan_ops(new, table, open_by_fp, fresh, reminders, now_iso):
         def announced(entry=entry):
             entry['announced'] = True
             entry['last_reminder_at'] = now_iso
-        candidates.append((fp, _ops_text(prefix, entry), announced, 'announce', entry.get('subject')))
+        candidates.append((fp, _ops_text(prefix, entry), announced, 'announce', entry))
 
     for fp in reminders:
         entry = table[fp]
 
         def reminded(entry=entry):
             entry['last_reminder_at'] = now_iso
-        candidates.append((fp, _ops_text(_REMINDER_PREFIX, entry), reminded, 'reminder', entry.get('subject')))
+        candidates.append((fp, _ops_text(_REMINDER_PREFIX, entry), reminded, 'reminder', entry))
 
     candidates = _group_dwell(ops, candidates)
     actions = []

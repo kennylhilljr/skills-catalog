@@ -570,6 +570,18 @@ class DwellOpsTests(unittest.TestCase):
         actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)
         self.assertEqual(len(ops(actions)), 2)
 
+    def test_subject_withheld_by_the_scrub_is_still_grouped(self):
+        home = '/' + 'Users' + '/someone/'
+        raised = [alert('re-review:' + home + 'a'), alert('re-review:' + home + 'b')]
+        actions, state = A.plan_alerts(raised, [], [], None, 'r', NOW)
+        self.assertTrue(all('withheld' in state['alerts'][fp_of(a)]['subject'] for a in raised))
+        self.assertEqual(len(ops(actions)), 1)
+        self.assertIn('(and 1 more re-review item stuck)', ops(actions)[0]['text'])
+        # The Mac half still groups them from a state the Actions half wrote.
+        _, actions_state = A.plan_alerts(raised, [], [], None, 'r', NOW, announce=False)
+        actions, _ = A.plan_alerts([], open_list(raised), [], S.load(S.dump(actions_state)), 'r2', NOW + HOUR)
+        self.assertEqual(len(ops(actions)), 1)
+
     def test_unknown_prefix_and_ordinary_alerts_are_not_grouped(self):
         raised = [alert('nightly'), alert('night'), alert('re-reviewx:1'), alert('re-reviewx:2'), alert('re-review')]
         actions, _ = A.plan_alerts(raised, [], [], None, 'r', NOW)

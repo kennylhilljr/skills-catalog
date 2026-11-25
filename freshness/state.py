@@ -12,7 +12,8 @@ Keys owned here::
     alerts[fp] = {"kind": str, "subject": str, "issue": int | None,
                   "evidence_sha": str, "last_comment_at": iso | None,
                   "last_reminder_at": iso | None, "announced": bool,
-                  "clean_runs": [run_id], "closed_at": iso | None}
+                  "clean_runs": [run_id], "closed_at": iso | None,
+                  "dwell_state"?: str}   # set for `<state>:<item>` dwell subjects (FRS-17)
     ops = {"day": "YYYY-MM-DD", "sent": int, "digest_sent": bool,
            "pending": [text], "failed": [text],
            "dwell_groups": {state: {"fp": fp, "members": {fp: "announce" | "reminder"}}}}
