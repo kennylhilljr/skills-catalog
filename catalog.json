@@ -66,7 +66,7 @@
     {
       "name": "ecc-operator",
       "path": "skills/ecc-operator",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "owner": "ecc-customization",
       "targets": [
         "claude",
@@ -75,7 +75,7 @@
       "consumers": "all",
       "last_verified": "2026-11-11",
       "files": {
-        "SKILL.md": "cbea719ff80ec757168c93a7f9080699cd6190edf87593e7d03931d0d6ee4800"
+        "SKILL.md": "8914987e8a890b58531c29178415f374cd39383fa1ef5dcdfa5d7ee77a29fa40"
       }
     },
     {

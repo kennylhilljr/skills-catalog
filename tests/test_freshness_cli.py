@@ -201,6 +201,14 @@ class TestCheckCommands(Base):
         self.assertEqual(run.calls, [('git', '--version')])
 
 
+class TestCatalogSkillCommands(unittest.TestCase):
+    def test_ecc_operator_does_not_need_ecc_kit_on_path(self):
+        """ecc-kit runs by its full path and exits 2 for --help, so FRS-4 must not check it (#122)."""
+        folder = os.path.join(_repo_root, 'skills', 'ecc-operator')
+        cmds = [c for _, _, c in cli_checks.commands_for(folder)]
+        self.assertNotIn('ecc-kit', cmds)
+
+
 class TestCliRefs(Base):
     TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'WebFetch', 'TodoWrite']
 
