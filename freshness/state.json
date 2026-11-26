@@ -1,0 +1,199 @@
+{
+  "alerts": {},
+  "cli": {
+    "claude": {
+      "checked_at": "2026-11-26T12:15:40Z",
+      "installed": "2.1.326",
+      "latest": "2.1.332"
+    },
+    "codex": {
+      "checked_at": "2026-11-26T12:15:40Z",
+      "installed": "0.169.1",
+      "latest": "0.172.0"
+    }
+  },
+  "findings": {
+    "0598050ce88713d960333e4caaa1b99b5ea584dcdfd80838d2b4c7363504d81d": {
+      "evidence_sha": "bd6f177227a31a9bd5c6db6bc0e0238fb2f2bf9dcdd99e7c2ddd81e0e857cc38"
+    },
+    "c89e305ef1e84fe659eaf5fe29ef0b552eccb8f03b7ef67e94b3ffa57596ba4b": {
+      "evidence_sha": "166e4074849dd6e9ffacecdbf2cf69bde5cee89cda5d7f36f98202f4f4350944"
+    },
+    "ee224e5528bb8add5696389ffa273cf9097f3c33e79be44f9dc16c5bbfc25b92": {
+      "evidence_sha": "f1e01761ca470742b7b2a710c7c777cdec97b469ac52b3fd7abf3fac303ba0a8"
+    }
+  },
+  "heartbeat_watch": {
+    "actions": "2026-11-26T12:15:40+00:00"
+  },
+  "heartbeats": {
+    "mac": {
+      "counts": {
+        "cli-lag": 1,
+        "missing-command": 2
+      },
+      "end": "2026-11-26T12:15:48+00:00",
+      "last_success": "2026-11-26T12:15:48+00:00",
+      "result": "ok",
+      "run_id": "mac-20261126T121540Z",
+      "start": "2026-11-26T12:15:40+00:00"
+    }
+  },
+  "issues": {
+    "day": "2026-11-26",
+    "opened": 0,
+    "storm_issue": null
+  },
+  "links": {},
+  "ops": {
+    "day": "2026-11-26",
+    "digest_sent": false,
+    "dwell_groups": {},
+    "failed": [],
+    "pending": [],
+    "sent": 0
+  },
+  "pr_seen": {},
+  "results": {
+    "agent-debug": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "e77e037eddc5633810870b6419e2441b082d3ed253680ee6c759c5b33d44bbc5",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "cross-review": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "60e5bcc5010cafd0ee88c46e786f5c95c2b272ef4ea53fa2441592acd1ed6d20",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "ctxd-brief": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "909ff18009858843f073f5c9dec2c4f1b9d78f1d58d9625144250039ca821763",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "ears-notation": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "2e761887bab04bda3a8a5a667d5ce87507dae50586bcf1e29322e04a47a888ea",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "ecc-operator": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "864d818b937ce12d5b7b7ecaa0f4120606d11feb314c5b088225c735bf335ecd",
+      "mac_ok": false,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "new-agent": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "622b91ae0330765bfc2d8ff12ca7ad989e74c1fc197e9105c076aff9d578dbd3",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "new-mcp": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "15106a19ebdb99517b72d42519ff2f78ad353eb88f26b2727d10bc31009f5239",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "repo-matrix": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "6efd6f7ff9cd35f46fadf58ca07eacf5e56b25e35d3b2b7e42755a9ae488c8ed",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "review-change": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "22349a52b06c4285db851ae827956d4ae3569889b77a55c5972a7c294949252f",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-adopt": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "5be8739fb9f40e303a1e667a93dfd4217446e2dd0038631273bec3a70350fee6",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-clarify": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "2218dea7d26d4f5506d00d368b08d69841c0e605f3d90ee2df26f4f5e6cb915c",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-hld": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "3ee9b934792b3e92877d5a64506c115817b47e1c8014b7b560fae3a05e6ad287",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-implement": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "8332d5b94c05b1518bf9cfee4d6dfb774d0b906a235d03f12c12c0b1e91e8738",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-intake": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "78fa60cd5719fa34426d0a622141c3d5ba70656ecf7577dcaf6ab0b7313b8306",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-lld": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "3cd43e6eb34c98b7da200e7c6c9a5487db822e6ef6d3f1a5dbad80802f8a1497",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-spec": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "b276bf73cf36482bf90db62c2013918677f9cd54cae574f8f23b0868e960f899",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-tasks": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "64f53cf5a25ffed3bccc6c0b5d222a89a9538a3fef4694360b68ec809bf6d1f0",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-triage": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "e1c86cdde374e4eccf05fcb444626a5d644c8b06502d1d9a15996ab6b0299f85",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "sdd-verify": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "55613d881aac7de8aea113e5480478c82d3e28cd0516174f9d2ec3e147103686",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "security-review": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "a120b3dd10b4200e33d8245bffc1eeb11201e2b2b2787739125280aa8fb5a417",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "simplify-change": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "58a084333165893dbe2ce5d7f2636f74f1c6a2c7861b6c9702da74a6302ca199",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "verify-change": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "34322773ff96dd0b93f38d9c68d63543620bb5a3b5594b9bc37f5f1e0a5e83af",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    },
+    "zz-canary": {
+      "mac_at": "2026-11-26T12:15:40+00:00",
+      "mac_hash": "cd409b6f7228c8669fb8083dd8d81a18188cf3db3ab0f93d2931fd24dd5ef469",
+      "mac_ok": true,
+      "mac_run": "mac-20261126T121540Z"
+    }
+  },
+  "sources": {},
+  "upstream_pending": {}
+}
