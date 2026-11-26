@@ -2,13 +2,13 @@
 name: ecc-operator
 description: Operate the ECC agent team on a project - set a repository up for ECC, record plan approval, start or continue a milestone run, read why a drive stopped and follow its next steps. Use when asked to approve a plan, kick off, drive, resume or check an ECC run, or to make a new project ECC-ready.
 metadata:
-  catalog-version: "1.0.0"
+  catalog-version: "1.0.1"
   catalog-owner: "ecc-customization"
   catalog-provenance: "own"
   catalog-targets: "claude,codex"
   catalog-last-verified: "2026-11-11"
   catalog-max-age-days: "90"
-  catalog-requires: "ecc,ecc-kit,prbot,git,node"
+  catalog-requires: "ecc,prbot,git,node"
 ---
 
 # Operate ECC
@@ -109,10 +109,11 @@ The drive stops only when no unit can move after the delivery lead's recoveries.
 
 - Never push, never run `security` or `launchctl`, never commit to a project's `main` by hand while a run is active.
 - Report what the drive printed; never claim a unit merged without `ecc status` showing it.
-- Lessons: when something generalizes beyond one project, propose it for ecc-customization's `kit/` (run `ecc-kit diff <repo>` to see how a project's practices have moved on from the kit).
+- Lessons: when something generalizes beyond one project, propose it for ecc-customization's `kit/` (run `~/Documents/GitHub/ecc-customization/bin/ecc-kit diff <repo>` to see how a project's practices have moved on from the kit).
 
 ## Changelog
 
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0.0 | 2026-11-11 | Imported into skills-catalog from ecc-customization `skills/ecc-operator` at `0e73281`; body unchanged |
+| 1.0.1 | 2026-11-26 | Dropped `ecc-kit` from `catalog-requires`: the skill runs it by its full path in ecc-customization, not from PATH, and its usage screen exits 2 for `--help`; the `ecc-kit diff` lesson now gives the full path too |
