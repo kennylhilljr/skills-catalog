@@ -89,6 +89,39 @@ class TestFrontmatterLinter(unittest.TestCase):
         findings = _lint.lint_skill(skill_dir)
         return ' '.join(findings)
 
+    # CAT-4: plain scalars YAML would not read as one string (#131)
+    def test_plain_description_with_colon_space_rejected(self):
+        skill_dir = self._make_skill(desc='Use when reviewing an ordered checklist: tool schemas, docs.')
+        result = self._lint(skill_dir)
+        self.assertIn('CAT-4', result)
+        self.assertIn('key "description" is a plain scalar', result)
+
+    def test_plain_description_with_space_hash_rejected(self):
+        skill_dir = self._make_skill(desc='Use when needed #comment')
+        self.assertIn('key "description" is a plain scalar', self._lint(skill_dir))
+
+    def test_plain_description_ending_in_colon_rejected(self):
+        skill_dir = self._make_skill(desc='Use when needed:')
+        self.assertIn('key "description" is a plain scalar', self._lint(skill_dir))
+
+    def test_plain_metadata_value_with_colon_space_rejected(self):
+        skill_dir = self._make_skill(meta_overrides={'catalog-owner': None},
+                                     raw_meta=['  catalog-owner: team: infra'])
+        self.assertIn('metadata key "catalog-owner" is a plain scalar', self._lint(skill_dir))
+
+    def test_block_scalar_lines_with_colon_space_accepted(self):
+        skill_dir = self._make_skill(desc='>-\n  Use when needed.\n  note: a: b #c')
+        self.assertNotIn('is a plain scalar', self._lint(skill_dir))
+
+    def test_quoted_or_safe_plain_values_accepted(self):
+        descs = ['"Use when reviewing an ordered checklist: tool schemas."',
+                 "'Use when needed #1'",
+                 'Use when a#b or x:y appear.',
+                 'Use when needed.']
+        for i, desc in enumerate(descs):
+            skill_dir = self._make_skill(desc=desc, parent=f'p{i}')
+            self.assertNotIn('is a plain scalar', self._lint(skill_dir), desc)
+
     # Test: clean skill with no findings
     def test_clean_skill(self):
         """Test that a valid skill has no findings."""
