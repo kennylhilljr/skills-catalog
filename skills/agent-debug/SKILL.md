@@ -1,8 +1,8 @@
 ---
 name: agent-debug
-description: Debug a misbehaving LLM agent with an ordered diagnostic checklist covering tool schemas, context pressure, tool call pairing, loop termination, prompt conflicts, error handling, model tier and rate limits. Use when an agent loops, stalls, fails tool calls, truncates or returns unexpected output.
+description: Debug a misbehaving LLM agent with an ordered checklist covering tool schemas, context pressure, tool call pairing, loop termination, prompt conflicts, error handling, model tier and rate limits. Use when an agent loops, stalls, fails tool calls, truncates or returns unexpected output.
 metadata:
-  catalog-version: "1.0.0"
+  catalog-version: "1.0.1"
   catalog-owner: "kennylhilljr"
   catalog-provenance: "own"
   catalog-targets: "claude,codex"
@@ -58,3 +58,4 @@ After running through the checklist, report:
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0.0 | 2026-11-11 | Imported from `~/.claude/skills/agent-debug` (local only, no repository; sha256 `f7e6a63b4540`); description given a use clause, dashes replaced |
+| 1.0.1 | 2026-11-26 | Shortened the first sentence of the description to 200 characters or fewer (freshness FRS-7) |
