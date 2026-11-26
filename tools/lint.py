@@ -294,6 +294,43 @@ def check_privileged_keys(text, frontmatter, schema):
     return findings
 
 
+def check_plain_scalars(text, skip=()):
+    """CAT-4: a plain scalar must read as one string in YAML.
+
+    parse_frontmatter is a lenient subset and accepts `key: a: b`, but YAML
+    (and the MCP server's frontmatter reader) rejects `: ` inside a plain
+    value or a trailing `:`, and reads ` #` onward as a comment (issue #125
+    shipped such a description). Quoted values and block scalars are
+    skipped; quote the value to fix a finding. Top-level keys in `skip`
+    (the CAT-28 privileged keys, which check_privileged_keys holds to a
+    stricter rule) are not checked here, so a value is reported once.
+    """
+    findings = []
+    lines = text.split('\n')
+    end = lines.index('---', 1) if '---' in lines[1:] else len(lines)
+    for line in lines[1:end]:
+        m = _TOP_LINE.match(line)
+        label = 'key'
+        if m and m.group(1) in skip:
+            continue
+        if not m:
+            m = _META_LINE.match(line)
+            label = 'metadata key'
+        if not m:
+            continue
+        value = (m.group(2) or '').strip()
+        if not value or value in ('>', '>-', '|', '|-'):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+            continue
+        if (': ' in value or value.endswith(':') or ' #' in value
+                or '\t#' in value or value.startswith('#')):
+            findings.append(
+                f'CAT-4: {label} "{m.group(1)}" is a plain scalar YAML would '
+                f'not read as one string (": " or " #" inside it); quote the value')
+    return findings
+
+
 def lint_skill(skill_dir, schema=None):
     """Lint a single skill directory.
 
@@ -370,6 +407,7 @@ def lint_skill(skill_dir, schema=None):
 
     # CAT-28: allowed-tools, hooks and shell need an allowlist entry
     findings.extend(check_privileged_keys(text, frontmatter, schema))
+    findings.extend(check_plain_scalars(text, schema.get('x-privileged-keys', [])))
 
     # CAT-5: metadata validation
     if isinstance(metadata, dict):
