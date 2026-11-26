@@ -308,9 +308,16 @@ def check_plain_scalars(text, skip=()):
     findings = []
     lines = text.split('\n')
     end = lines.index('---', 1) if '---' in lines[1:] else len(lines)
+    in_block = False
     for line in lines[1:end]:
+        if in_block and (not line.strip() or line.startswith('  ')):
+            continue
+        in_block = False
         m = _TOP_LINE.match(line)
         label = 'key'
+        if m and (m.group(2) or '').strip() in ('>', '>-', '|', '|-'):
+            in_block = True
+            continue
         if m and m.group(1) in skip:
             continue
         if not m:

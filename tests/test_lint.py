@@ -109,6 +109,10 @@ class TestFrontmatterLinter(unittest.TestCase):
                                      raw_meta=['  catalog-owner: team: infra'])
         self.assertIn('metadata key "catalog-owner" is a plain scalar', self._lint(skill_dir))
 
+    def test_block_scalar_lines_with_colon_space_accepted(self):
+        skill_dir = self._make_skill(desc='>-\n  Use when needed.\n  note: a: b #c')
+        self.assertNotIn('is a plain scalar', self._lint(skill_dir))
+
     def test_quoted_or_safe_plain_values_accepted(self):
         descs = ['"Use when reviewing an ordered checklist: tool schemas."',
                  "'Use when needed #1'",
