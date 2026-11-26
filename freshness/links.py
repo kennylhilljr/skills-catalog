@@ -138,7 +138,8 @@ def check_links(items, history, fetch, now, min_gap_hours=20):
     """Apply the FRS-5 rule to `items`, a list of `(skill, file, line, url)`.
 
     `history` maps url to `{"first_fail_at", "last_status", "moved_to"}` and is
-    not mutated; the updated copy is returned. Each URL is fetched once per
+    not mutated; a failing entry also gets `last_checked_at`, this call's
+    `now`, so the canary can tell a failure seen by this run (part 8); the updated copy is returned. Each URL is fetched once per
     call. Returns `(findings, history)`.
     """
     history = {url: dict(entry) for url, entry in (history or {}).items()}
@@ -166,7 +167,7 @@ def check_links(items, history, fetch, now, min_gap_hours=20):
             if first and now - _parse(first) >= timedelta(hours=min_gap_hours):
                 dead.add(url)
             history[url] = {'first_fail_at': first or _stamp(now), 'last_status': status,
-                            'moved_to': None}
+                            'moved_to': None, 'last_checked_at': _stamp(now)}
 
     findings = []
     for skill, file, line, url in items:

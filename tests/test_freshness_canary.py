@@ -128,6 +128,19 @@ class TestCanarySkill(unittest.TestCase):
         self.assertTrue(ok, reason)
         self.assertIn('first failure', reason)
 
+    def test_later_run_inside_the_gap_after_reset_passes(self):
+        """FRS-18: a reset, then runs 8 h and 19 h later: no finding yet, still no false alarm."""
+        _found, history, _calls = canary_findings({})
+        for hours in (8, 19):
+            later = NOW + datetime.timedelta(hours=hours)
+            found, history2, _calls = canary_findings(history, now=later)
+            self.assertNotIn('dead-link', [f['kind'] for f in found])
+            ok, reason = canary.verify(found, history2, now=later)
+            self.assertTrue(ok, (hours, reason))
+        later = NOW + datetime.timedelta(hours=21)
+        found, history3, _calls = canary_findings(history, now=later)
+        self.assertEqual(canary.verify(found, history3, now=later), (True, 'canary ok'))
+
     def test_mac_checks_find_nothing(self):
         """No catalog-requires and no fenced shell blocks: the Mac checks run nothing."""
         calls = []
@@ -209,6 +222,28 @@ class TestVerify(unittest.TestCase):
             self.assertFalse(ok, minutes)
             self.assertIn('missing: dead-link', reason)
         self.assertFalse(canary.verify(THREE[1:], history, now=NOW - datetime.timedelta(minutes=1))[0])
+
+    def test_bootstrap_needs_last_checked_by_this_run(self):
+        """An entry stamped by an earlier run inside the gap is a mismatch (link check skipped)."""
+        first = (NOW - datetime.timedelta(hours=8)).isoformat()
+        stale = {canary.CANARY_URL: {'first_fail_at': first, 'last_status': 404, 'moved_to': None,
+                                     'last_checked_at': (NOW - datetime.timedelta(minutes=5)).isoformat()}}
+        ok, reason = canary.verify(THREE[1:], stale, now=NOW)
+        self.assertFalse(ok)
+        self.assertIn('missing: dead-link', reason)
+        fresh = {canary.CANARY_URL: dict(stale[canary.CANARY_URL], last_checked_at=NOW.isoformat())}
+        self.assertTrue(canary.verify(THREE[1:], fresh, now=NOW)[0])
+        self.assertFalse(canary.verify(THREE[1:], fresh, now=NOW, min_gap_hours=8)[0])
+        future = {canary.CANARY_URL: dict(fresh[canary.CANARY_URL],
+                                          first_fail_at=(NOW + datetime.timedelta(hours=1)).isoformat())}
+        self.assertFalse(canary.verify(THREE[1:], future, now=NOW)[0])
+
+    def test_bootstrap_overdue_dead_link_checked_this_run(self):
+        """Checked this run but first failed past the gap: check_links should have reported it."""
+        first = (NOW - datetime.timedelta(hours=30)).isoformat()
+        history = {canary.CANARY_URL: {'first_fail_at': first, 'last_status': 404, 'moved_to': None,
+                                       'last_checked_at': NOW.isoformat()}}
+        self.assertFalse(canary.verify(THREE[1:], history, now=NOW)[0])
 
     def test_bootstrap_without_now_never_passes(self):
         """The two-argument call cannot prove the entry is from this run."""

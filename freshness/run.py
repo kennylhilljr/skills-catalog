@@ -757,7 +757,8 @@ class Run:
 
     def verify_canary(self):
         self.calls.append('verify')
-        ok, reason = canary.verify(self.findings, self.state['links'], now=self.now)
+        ok, reason = canary.verify(self.findings, self.state['links'], now=self.now,
+                                   min_gap_hours=self.config['link_min_gap_hours'])
         self._print(reason)
         if not ok:
             self.failed = True

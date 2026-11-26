@@ -324,6 +324,7 @@ class LinkTests(Base):
         findings, history = self.run_links({URL: (500, None)}, history, T0 + timedelta(hours=19))
         self.assertEqual(findings, [])
         self.assertEqual(history[URL]['first_fail_at'], T0.isoformat())
+        self.assertEqual(history[URL]['last_checked_at'], (T0 + timedelta(hours=19)).isoformat())
 
     def test_fail_21h_apart_dead_link(self):
         _f, history = self.run_links({URL: OSError('boom')}, {}, T0)
