@@ -427,6 +427,9 @@ _RELEASE_TERMS = re.compile(
 
 def _github_releases(text, params):
     data = _json(text)
+    # `/releases/latest` returns one release object, not a list.
+    if isinstance(data, dict) and 'tag_name' in data:
+        data = [data]
     if not isinstance(data, list):
         raise ExtractError('GitHub releases response is not a list')
     include_pre = params.get('include_prereleases', True)

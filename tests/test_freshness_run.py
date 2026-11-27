@@ -1216,6 +1216,32 @@ class CredentialTests(unittest.TestCase):
 
 
 class FetcherTests(unittest.TestCase):
+    def test_text_fetch_names_an_oversize_response(self):
+        # A page over the cap used to be cut and then fail as "response is not JSON".
+        class Response:
+            status = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                return self.body if n < 0 else self.body[:n]
+
+        fetch = runmod.make_fetch_text()
+        with mock.patch.object(runmod, 'TEXT_MAX_BYTES', 4), \
+                mock.patch('urllib.request.urlopen', return_value=Response(b'[1,2]')):
+            with self.assertRaisesRegex(ValueError, 'response over'):
+                fetch('https://api.github.com/x')
+        with mock.patch.object(runmod, 'TEXT_MAX_BYTES', 5), \
+                mock.patch('urllib.request.urlopen', return_value=Response(b'[1,2]')):
+            self.assertEqual(fetch('https://api.github.com/x'), (200, '[1,2]'))
+
     def test_link_fetch_falls_back_to_get_and_keeps_the_location(self):
         methods = []
 

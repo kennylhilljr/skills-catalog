@@ -56,9 +56,9 @@
     },
     {
       "id": "codex-releases-github",
-      "url": "https://api.github.com/repos/openai/codex/releases?per_page=40",
+      "url": "https://api.github.com/repos/openai/codex/releases/latest",
       "extract": "github-releases",
-      "params": {"limit": 10, "include_prereleases": false}
+      "params": {"limit": 1, "include_prereleases": false}
     },
     {
       "id": "codex-releases-npm",
