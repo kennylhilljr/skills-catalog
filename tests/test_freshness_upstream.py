@@ -203,6 +203,12 @@ class NormalizeTest(unittest.TestCase):
         with self.assertRaises(upstream.ExtractError):
             upstream.normalize(npm, '<html>rate limited</html>')
 
+        # `/releases/latest` returns a single release object.
+        latest = json.dumps(json.loads(fixture('github-releases.json'))[0])
+        self.assertEqual(upstream.normalize(stable, latest).split('\n')[0], 'v2.1.327 2026-11-17')
+        with self.assertRaises(upstream.ExtractError):
+            upstream.normalize(rel, '{"message": "Not Found"}')
+
 
 class WatchTest(unittest.TestCase):
 

@@ -390,9 +390,13 @@ def make_fetch_text(token=None):
         request = urllib.request.Request(url, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=TEXT_TIMEOUT) as response:
-                return response.status, response.read(TEXT_MAX_BYTES).decode('utf-8', 'replace')
+                status, raw = response.status, response.read(TEXT_MAX_BYTES + 1)
         except urllib.error.HTTPError as err:
             return err.code, ''
+        if len(raw) > TEXT_MAX_BYTES:
+            # A cut page fails later as bad JSON or a missing section; name the real cause.
+            raise ValueError('response over %d MiB' % (TEXT_MAX_BYTES // (1024 * 1024)))
+        return status, raw.decode('utf-8', 'replace')
     return fetch
 
 
