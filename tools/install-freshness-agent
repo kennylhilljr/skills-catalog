@@ -24,7 +24,9 @@ from xml.sax.saxutils import escape
 LABEL = 'com.kennylhilljr.skills-freshness'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(ROOT, 'freshness', 'launchd', LABEL + '.plist.in')
-DEFAULT_PYTHON = '/usr/bin/python3'
+# launchd's /usr/bin/python3 has no access to ~/Documents (macOS privacy), so the job
+# cannot import freshness from a checkout there; the python.org Python can.
+DEFAULT_PYTHON = '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3'
 
 
 def paths(home):
